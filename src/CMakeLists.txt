@@ -1,0 +1,45 @@
+set (EXEC_NAME "ufsrvapi")
+
+add_definitions(-DHAVE_CONFIG_H)
+
+add_custom_target (
+        ufsrv_version
+        COMMAND chmod 755 ${CMAKE_CURRENT_SOURCE_DIR}/version.c.sh
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/version.c.sh
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/)
+
+AUX_SOURCE_DIRECTORY(${CMAKE_CURRENT_SOURCE_DIR} source)
+add_executable(${EXEC_NAME} ${source} include/config_nonpublic.h)
+add_dependencies(${EXEC_NAME} ufsrv_version)
+target_include_directories(${EXEC_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(${EXEC_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(${EXEC_NAME} PRIVATE /opt/include)
+target_include_directories(${EXEC_NAME} PRIVATE /opt/mysql/include)
+target_include_directories(${EXEC_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/hiredis/include)
+
+#add_library(boo SHARED IMPORTED)
+#set_target_properties(boo PROPERTIES IMPORTED_LOCATION "/path/to/boo/library")
+
+#system libraries
+find_package(Threads REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+#package libraries
+add_library(utf8proc SHARED IMPORTED)
+set_target_properties(utf8proc PROPERTIES IMPORTED_LOCATION "/opt/lib/libutf8proc.so")
+add_library(lua STATIC IMPORTED)
+set_target_properties(lua PROPERTIES IMPORTED_LOCATION "/opt/lib/liblua.a")
+add_library(json-c SHARED IMPORTED)
+set_target_properties(json-c PROPERTIES IMPORTED_LOCATION "/opt/lib/libjson-c.so")
+add_library(curl STATIC IMPORTED)
+set_target_properties(curl PROPERTIES IMPORTED_LOCATION "/opt/lib/libcurl.a")
+add_library(ssl STATIC IMPORTED)
+set_target_properties(ssl PROPERTIES IMPORTED_LOCATION "/opt/lib/libssl.a")
+add_library(crypto STATIC IMPORTED include/config_nonpublic.h)
+set_target_properties(crypto PROPERTIES IMPORTED_LOCATION "/opt/lib/libcrypto.a")
+add_library(mysqlclient SHARED IMPORTED)
+set_target_properties(mysqlclient PROPERTIES IMPORTED_LOCATION "/opt/lib/libmysqlclient.so")
+
+set ( PROJECT_LINK_LIBS utf8proc lua ${CMAKE_THREAD_LIBS_INIT} nsl json-c curl ssl crypto resolv m mysqlclient dl systemd bsd)
+
+target_link_libraries(${EXEC_NAME} LINK_PUBLIC lzf hiredis curve25519 ${PROJECT_LINK_LIBS})

@@ -1,0 +1,152 @@
+DEP_DIR    		:= .dep
+OBJDIR     		:= obj
+BINDIR     		:= ../bin
+
+EFILE      		:= ufsrv
+
+LZF_INCLUDE		:=	./lzf
+LZF_LIB_PATH	:=	./lzf
+LZF_LIB			:=	-llzf
+
+INCLUDES   		:= -I./include -I. -I/usr/include -I./hiredis -I/opt/include -I/opt/mysql/include
+
+# -I/opt/jemalloc/include
+SHELL      		:= /bin/sh
+
+#CFLAGS     := $(INCLUDES) -fsanitize=address -fsanitize=undefined -std=c11 -Wall -Wno-unused-label -Wno-unused-variable -Wno-comment -ggdb3 -O0 -flto
+CFLAGS     	:= $(INCLUDES) -std=c11 -Wall -Wno-unused-label -Wno-unused-variable -Wno-comment -ggdb3 -O0
+VERSION    	:= 2.0
+#CC         := clang
+CC					:= gcc
+DEFS       	:= -DHAVE_CONFIG_H -D_GNU_SOURCE
+
+LIBS       	:= ${LZF_LIB} -lutf8proc -llua -lhiredis -lpthread -lnsl -ljson-c -lcurl -lssl -lcrypto -lresolv -lm -lmysqlclient -ljemalloc
+
+LDFLAGS    	:=	-Wl,-rpath,/opt/lib -L ./hiredis  -L${LZF_LIB_PATH} -L/opt/lib -L/usr/local/lib64
+INSTALL    	:= /usr/bin/install -c
+prefix     	:= /usr/local
+exec_prefix := ${prefix}
+SBIN_DIR    := ${exec_prefix}/sbin
+MAN_DIR     := ${prefix}/share/man
+ETC_DIR     := ${prefix}/etc
+VAR_DIR     := ${prefix}/var
+
+STRIP     	:= -s
+YACC	      := bison -y
+LEX        	:= flex
+YACCFLAGS  	:= -d
+LEXFLAGS  	:=
+
+vpath %.h include
+
+#DSOURCE      := configparse.c
+#DOBJECTS	 := $(OBJDIR)/configparse.o
+
+SOURCES      := $(wildcard *.c)
+OBJECTS      := $(patsubst %.c,$(OBJDIR)/%.o,$(SOURCES))
+DEP_FILES    := $(patsubst %.c,$(DEP_DIR)/%.d,$(SOURCES))
+
+#UNCOMMENT BELOW TO ENABLE STUN MODULE
+#STUNSERV_DIRNAME	:=	proto_stun
+#STUNSERV_SOURCES	:=	$(wildcard $(STUNSERV_DIRNAME)/*.c)
+##remove 'stun_serv/' from sources
+#STUNSERV_SOURCES_NAMES	:=	$(subst $(STUNSERV_DIRNAME)/,,$(STUNSERV_SOURCES))
+#STUNSERV_OBJECTS  := $(patsubst %.c,$(STUNSERV_DIRNAME)/$(OBJDIR)/%.o,$(STUNSERV_SOURCES_NAMES))
+
+SOURCES		 := $(SOURCES) $(DSOURCE) $(STUNSERV_SOURCES)
+OBJECTS		 := $(OBJECTS) $(DOBJECTS) $(STUNSERV_OBJECTS)
+
+#
+# Cancel built-in implicit rule for %.o
+#
+%.o : %.c
+
+#
+#Redifine the implicit rule fo %.o
+#
+$(OBJDIR)/%.o : %.c
+	$(CC) -c $(CFLAGS) $(DEFS) $< -o $@
+
+
+$(STUNSERV_DIRNAME)/$(OBJDIR)/%.o : $(STUNSERV_DIRNAME)/%.c
+	$(CC) -c $(CFLAGS) $(DEFS) $< -o $@
+
+.PHONY: all
+all : whatsup version lzf hiredis $(EFILE)
+
+
+$(EFILE): $(OBJECTS)
+	@echo
+	@echo " Linking object files..."
+	@echo
+	$(CC)  $(LDFLAGS) $^ -o $(BINDIR)/$(EFILE) $(LIBS)
+
+
+include $(DEP_FILES)
+
+.PHONY: hiredis
+hiredis:
+	@echo "Generating object files for hiredis..."
+	@if [ -r hiredis/Makefile ]; then \
+                cd hiredis;     \
+                make static; \
+	fi
+	
+.PHONY: lzf
+lzf:
+	@echo "Generating object files for lzf..."
+	@if [ -r lzf/Makefile ]; then \
+                cd lzf;     \
+                make; \
+	fi
+	
+.PHONY: whatsup
+whatsup:
+	@echo
+	@echo " `date '+ %A, %d %B %Y'`"
+	@echo " Generating object files for $(EFILE) $(VERSION)..."
+	@echo
+
+$(DEP_DIR)/%.d: %.c
+	$(SHELL) -ec '$(CC) -M $(CFLAGS) $< \
+       | sed '\''s/\($*\)\.o[ :]*/$(OBJDIR)\/\1.o $(@D)\/$(@F) : /g'\'' > $@; \
+       [ -s $@ ] || rm -f $@'
+
+
+.PHONY:	ufsrvmsgproto
+ufsrvmsgproto:
+	@echo "Generating protobuf compiled files for UfsrvMessageQueue.proto..."
+	@if [ -r protobuf/UfsrvMessageQueue.proto ]; then \
+		cd protobuf;	\
+		mv UfsrvMessageQueue.pb-c.c UfsrvMessageQueue.pb-c.c.old;	\
+		mv UfsrvMessageQueue.pb-c.h UfsrvMessageQueue.pb-c.h.old;	\
+		/opt/bin/protoc-c --c_out=. UfsrvMessageQueue.proto;	\
+		if [ -r UfsrvMessageQueue.pb-c.c ]; then \
+    	cp UfsrvMessageQueue.pb-c.c ..; \
+    	cp UfsrvMessageQueue.pb-c.h ../include/; \
+    	cd ..; \
+  	else \
+   	 echo "Error generating compiled protobuf files..."; \
+    	exit; \
+  	fi	\
+	else	\
+		echo "Error: No source protobuf file protobuf/UfsrvMessageQueue.proto..."; \
+	fi
+
+
+.PHONY: version
+version:
+	@chmod 755 version.c.in; ./version.c.in
+
+
+.PHONY: tags
+tags:
+	@echo "Updating tags file..."
+	@ctags --recurse=yes --sort=yes *.[ch]
+
+.PHONY: clean
+clean:
+	rm -rf obj/*.o
+	rm -rf .dep/*.d
+	rm -rf ../bin/*
+	rm -rf core *.core *.a *.so

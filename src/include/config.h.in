@@ -1,0 +1,13 @@
+#ifndef CONFIG_H
+# define CONFIG_H
+#define _REENTRANT
+#define CONFIG_FILE_NAME "ufsrv.conf"
+#define MASTER_LOG_FILE_NAME "ufsrv.log"
+#define CONFIG_DIR "/etc/ufsrv"
+#define MAXHOSTLEN  165
+
+/* configuration */
+
+#define HAVE_SA_LEN  0
+#define HAVE_HSTRERROR 0
+#endif

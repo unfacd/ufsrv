@@ -1,0 +1,6 @@
+cmake-build-debug
+/.ptp-sync/
+/test/
+/tmp/
+/.settings/
+/.idea/
