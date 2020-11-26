@@ -50,7 +50,7 @@ static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
 
 /* Generic hash function (a popular one from Bernstein).
  * I tested a few and this was the best. */
-static unsigned int dictGenHashFunction(const unsigned char *buf, int len) {
+__attribute_used__ static unsigned int dictGenHashFunction(const unsigned char *buf, int len) {
     unsigned int hash = 5381;
 
     while (len--)
@@ -70,7 +70,7 @@ static void _dictReset(dict *ht) {
 }
 
 /* Create a new hash table */
-static dict *dictCreate(dictType *type, void *privDataPtr) {
+__attribute_used__ static dict *dictCreate(dictType *type, void *privDataPtr) {
     dict *ht = malloc(sizeof(*ht));
     _dictInit(ht,type,privDataPtr);
     return ht;
@@ -157,7 +157,7 @@ static int dictAdd(dict *ht, void *key, void *val) {
  * Return 1 if the key was added from scratch, 0 if there was already an
  * element with such key and dictReplace() just performed a value update
  * operation. */
-static int dictReplace(dict *ht, void *key, void *val) {
+__attribute_used__ static int dictReplace(dict *ht, void *key, void *val) {
     dictEntry *entry, auxentry;
 
     /* Try to add the element. If the key
@@ -179,7 +179,7 @@ static int dictReplace(dict *ht, void *key, void *val) {
 }
 
 /* Search and remove an element */
-static int dictDelete(dict *ht, const void *key) {
+__attribute_used__ static int dictDelete(dict *ht, const void *key) {
     unsigned int h;
     dictEntry *de, *prevde;
 
@@ -235,7 +235,7 @@ static int _dictClear(dict *ht) {
 }
 
 /* Clear & Release the hash table */
-static void dictRelease(dict *ht) {
+__attribute_used__ static void dictRelease(dict *ht) {
     _dictClear(ht);
     free(ht);
 }
@@ -255,7 +255,7 @@ static dictEntry *dictFind(dict *ht, const void *key) {
     return NULL;
 }
 
-static dictIterator *dictGetIterator(dict *ht) {
+__attribute_used__ static dictIterator *dictGetIterator(dict *ht) {
     dictIterator *iter = malloc(sizeof(*iter));
 
     iter->ht = ht;
@@ -265,7 +265,7 @@ static dictIterator *dictGetIterator(dict *ht) {
     return iter;
 }
 
-static dictEntry *dictNext(dictIterator *iter) {
+__attribute_used__ static dictEntry *dictNext(dictIterator *iter) {
     while (1) {
         if (iter->entry == NULL) {
             iter->index++;
@@ -285,7 +285,7 @@ static dictEntry *dictNext(dictIterator *iter) {
     return NULL;
 }
 
-static void dictReleaseIterator(dictIterator *iter) {
+__attribute_used__ static void dictReleaseIterator(dictIterator *iter) {
     free(iter);
 }
 

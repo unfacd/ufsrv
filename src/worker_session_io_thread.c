@@ -1,8 +1,18 @@
-/*
-
-    Copyright (C) 1999-2001  Ayman Akt
-    Original Author: Ayman Akt (ayman@pobox.com)
-
+/**
+ * Copyright (C) 2015-2020 unfacd works
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -11,7 +21,7 @@
 
 #include <main.h>
 #include <thread_context_type.h>
-#include <recycler.h>
+#include <recycler/recycler.h>
 #include <sockets.h>
 #include <net.h>
 #include <session.h>
@@ -19,17 +29,17 @@
 #include <utils.h>
 #include <sys/prctl.h>//for naming thread
 #include <nportredird.h>
-#include <protocol.h>
-#include <protocol_io.h>
-#include <instrumentation_backend.h>
+#include <ufsrv_core/protocol/protocol.h>
+#include <ufsrv_core/protocol/protocol_io.h>
+#include <ufsrv_core/instrumentation/instrumentation_backend.h>
 #include <http_request.h>
 #include <delegator_session_worker_thread.h>
-#include <ufsrvmsgqueue.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue.h>
 #include <ufsrvresult_type.h>
-#include <persistance.h>
+#include <ufsrv_core/cache_backend/persistance.h>
 #include <ufsrvcmd_user_callbacks.h>
-#include <ratelimit.h>
-#include <adt_hopscotch_hashtable.h>
+#include <ufsrv_core/ratelimit/ratelimit.h>
+#include <uflib/adt/adt_hopscotch_hashtable.h>
 #include "hiredis/hiredis.h"
 
 static UFSRVResult *_p_ProcessSessionSocketMessage (InstanceHolderForSession *, SocketMessage *, int);
@@ -40,7 +50,7 @@ inline static UFSRVResult *_HandlePostSuccessfulIncomingHandshake (InstanceHolde
 static inline UFSRVResult *_InvokeLifecycleCallbackPostHandshake (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr);
 static inline UFSRVResult *_InvokeLifecycleCallbackMsgOut (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned long);
 inline static bool WorkerDelegatorRaiseRecycleRequest	(InstanceHolderForSession *instance_sesn_ptr, Session *sesn_ptr_ipc);
-inline static void _HandleBusySessionLock (Session *sesnptr);
+inline static void _HandleBusySessionLock (InstanceHolderForSession *);
 
 extern /*thread_local*/ __thread ThreadContext ufsrv_thread_context;
 
@@ -284,7 +294,7 @@ ThreadWebSockets (void *ptr)
 		WorkQueueUnLock(sd_ptr);//other threads are now free to acquire the lock and dequeue further
 
 		__atomic_op:
-		stat_atomic = __sync_add_and_fetch (&(instance_context.sesn_ptr->stat), 0);
+		stat_atomic = __sync_add_and_fetch(&(instance_context.sesn_ptr->stat), 0);
 		if (SESNSTATUS_IS_SET(stat_atomic, SESNSTATUS_IOERROR)) {
 			syslog(LOG_NOTICE, LOGSTR_TSWORKER_FAULTYSESN_OOB, __func__, pthread_self(), instance_context.sesn_ptr, SESSION_ID(instance_context.sesn_ptr), LOGCODE_TSWORKER_FAULTYSESN_OOB);
 
@@ -296,7 +306,7 @@ ThreadWebSockets (void *ptr)
 		//>>>>>>>>>>>>>>>>>>>>>>>
 		SessionLockRWCtx(THREAD_CONTEXT_PTR, instance_context.sesn_ptr, _LOCK_TRY_FLAG_TRUE, __func__);
 		if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_ERR)) {
-			_HandleBusySessionLock(instance_context.sesn_ptr);
+			_HandleBusySessionLock(instance_context.instance_sesn_ptr);
 			continue;
 		}
 		//>>>>>>>>>>>>>>>>>>>>>>>
@@ -904,8 +914,10 @@ ThreadWebSockets (void *ptr)
 #endif
 
 inline static void
-_HandleBusySessionLock (Session *sesnptr)
+_HandleBusySessionLock (InstanceHolderForSession *instance_sesn_ptr)
 {
+  Session *sesnptr = SessionOffInstanceHolder(instance_sesn_ptr);
+
 	//check if session is stuck
 	//due to the semantics of ET we will get notification of readiness because we have not fetched data pending in the buffer
 	if (SESNSTATUS_IS_SET(sesnptr->stat, SESNSTATUS_IOERROR)) {
@@ -929,7 +941,7 @@ _HandleBusySessionLock (Session *sesnptr)
 			//TODO: what if the session is not handshaked? don't read WS
 
 			//__read_from_socket_into_msgqueue:
-			if ((return_value = ReadFromSocket(sesnptr, NULL,
+			if ((return_value = ReadFromSocket(instance_sesn_ptr, NULL,
 					SOCKMSG_READSOCKET|SOCKMSG_DONTDECODE|SOCKMSG_DONTOWNSESNLOCK|SOCKMSG_KEEPMSGQUEUE_LOCKED)) <= 0) {
 				syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p', cid:'%lu', return_value:'%d', queue_size:'%lu'}: END COND_WAIT EVENT: Releasing mutex lock (-1): I/O error: Session request ignored...",\
 					__func__, pthread_self(), THREAD_CONTEXT_PTR, SESSION_ID(sesnptr), return_value, SESSION_INSOCKMSG_QUEUE_SIZE(sesnptr));
@@ -955,9 +967,9 @@ _HandleBusySessionLock (Session *sesnptr)
 		}
 		//end concurrent_session_read:
 	} else if ((sesnptr)&&(((struct epoll_event *)(sesnptr->event_descriptor))->events & EPOLLOUT)) {
-		syslog(LOG_ERR, "%s (pid='%lu', o:'%p', cid='%lu'): RECIEVED EPOLLOUT Event for a LOCKED SESSION: IGNORING...", __func__, pthread_self(), sesnptr, SESSION_ID(sesnptr));
+		syslog(LOG_ERR, "%s {pid:'%lu', th_ctx:'%p', o:'%p', cid:'%lu'}: RECEIVED EPOLLOUT Event for a LOCKED SESSION: IGNORING...", __func__, pthread_self(), THREAD_CONTEXT_PTR, sesnptr, SESSION_ID(sesnptr));
 	} else {
-		syslog(LOG_ERR, "%s (pid='%lu', o:'%p',  cid='%lu'): RECIEVED UNKNOWN EPOLL Event for a LOCKED SESSION: IGNORING...", __func__, pthread_self(), sesnptr, SESSION_ID(sesnptr));
+		syslog(LOG_ERR, "%s {pid:'%lu', th_ctx:'%p', o:'%p', cid:'%lu'}: RECEIVED UNKNOWN EPOLL Event for a LOCKED SESSION: IGNORING...", __func__, pthread_self(), THREAD_CONTEXT_PTR, sesnptr, SESSION_ID(sesnptr));
 	}
 
 	sesnptr->when_serviced_end = time(NULL);
@@ -1031,7 +1043,7 @@ _HandleSuccessfulWorkRequest (SessionsDelegator *sd_ptr, unsigned long session_i
 
 				res_ptr->result_type = RESULT_TYPE_ERR;
 				res_ptr->result_code = RESCODE_IO_SOCKETQUEUE_CONSOLIDTED;
-				res_ptr->result_user_data = sesn_ptr_processed;
+				res_ptr->result_user_data = instance_sesn_ptr_processed;
 
 				goto request_error_pre;
 			}
@@ -1083,7 +1095,7 @@ _HandleSuccessfulWorkRequest (SessionsDelegator *sd_ptr, unsigned long session_i
 
 }
 
-//https://medium.com/where-the-flamingcow-roams/down-the-epoll-rabbit-hole-5c0447cb6329#.seqhl1vxx
+//https://firestuff.org/2016-02-24-down_the_epoll_rabbit_hole.html
 /**
 * @brief	process a single message contained in SocketMessage, which could be in any state other than new connection request (handled in the main loop).
  * Handshake and other regular comms are processed here.
@@ -1142,7 +1154,7 @@ _p_ProcessSessionSocketMessage (InstanceHolderForSession *instance_sesn_ptr, Soc
 				if (_PROTOCOL_CLLBACKS_HANDSHAKE(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))))) {
 					UFSRVResult *res_ptr = _PROTOCOL_CLLBACKS_HANDSHAKE_INVOKE(protocols_registry_ptr,
 														PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))),
-														sesn_ptr, sock_msg_ptr, CALLFLAGS_EMPTY, NULL);
+														instance_sesn_ptr, sock_msg_ptr, CALLFLAGS_EMPTY, NULL);
 
 					switch (res_ptr->result_type)
 					{
@@ -1166,7 +1178,7 @@ _p_ProcessSessionSocketMessage (InstanceHolderForSession *instance_sesn_ptr, Soc
 				syslog(LOG_DEBUG, "%s (pid:'%lu' o:'%p' cid:'%lu'): CONNECTED USER MSG RECEIVED...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr));
 #endif
 
-				//if (IsRateLimitExceeded (sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), RLNS_REQUESTS))	_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_ERR, RESCODE_USER_RATELIMIT_EXCEEDED);
+				//if (IsRateLimitExceededForSession (sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), RLNS_REQUESTS))	_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_ERR, RESCODE_USER_RATELIMIT_EXCEEDED);
 
 				return(_HandleMessageForConnectedSession(instance_sesn_ptr, sock_msg_ptr, flag));
 			} else {
@@ -1186,7 +1198,7 @@ _p_ProcessSessionSocketMessage (InstanceHolderForSession *instance_sesn_ptr, Soc
 			syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu' fd:'%d'): NO-HANDSHAKE CONNECTED USER MSG RECEIVED...", __func__, pthread_self(), SESSION_ID(sesn_ptr), SESSION_SOCKETFD(sesn_ptr));
 #endif
 			//this is too early to identify the user
-			//if (IsRateLimitExceeded (sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), RLNS_REQUESTS))	_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_ERR, RESCODE_USER_RATELIMIT_EXCEEDED);
+			//if (IsRateLimitExceededForSession (sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), RLNS_REQUESTS))	_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_ERR, RESCODE_USER_RATELIMIT_EXCEEDED);
 
 			return (_HandleMessageForConnectedSession(instance_sesn_ptr, sock_msg_ptr, flag));
 		}
@@ -1210,7 +1222,7 @@ _InvokeLifecycleCallbackPostHandshake (InstanceHolderForSession *instance_sesn_p
 	if (_PROTOCOL_CLLBACKS_POST_HANDSHAKE(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))))) {
 		UFSRVResult *res_ptr = _PROTOCOL_CLLBACKS_POST_HANDSHAKE_INVOKE(protocols_registry_ptr,
                                                                     PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))),
-                                                                    sesn_ptr, sock_msg_ptr, CALLFLAGS_EMPTY);
+                                                                    instance_sesn_ptr, sock_msg_ptr, CALLFLAGS_EMPTY);
 
 		switch (_RESULT_TYPE(res_ptr))
 		{
@@ -1220,16 +1232,16 @@ _InvokeLifecycleCallbackPostHandshake (InstanceHolderForSession *instance_sesn_p
 
 				SuspendSession(instance_sesn_ptr, SOFT_SUSPENSE);
 
-				_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_ERR, RESCODE_PROTOCOL_WSHANDSHAKE);
+				_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_ERR, RESCODE_PROTOCOL_WSHANDSHAKE)
 
 			default:
 				//could have fallen through to _exit_sucess: below
-				_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_SUCCESS, RESULT_CODE_USER_AUTHENTICATION);
+				_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_SUCCESS, RESULT_CODE_USER_AUTHENTICATION)
 		}
 	}
 
 	exit_success:
-	_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_SUCCESS, RESULT_CODE_USER_AUTHENTICATION);
+	_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_SUCCESS, RESULT_CODE_USER_AUTHENTICATION)
 }
 
 static inline UFSRVResult *
@@ -1237,12 +1249,12 @@ _InvokeLifecycleCallbackMsgOut (InstanceHolderForSession *instance_sesn_ptr, Soc
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
-	DispatchSocketMessageQueue (sesn_ptr, sesn_ptr->message_queue_out.queue.nEntries);
+	DispatchSocketMessageQueue (instance_sesn_ptr, sesn_ptr->message_queue_out.queue.nEntries);
 
 	if (_PROTOCOL_CLLBACKS_MSG_OUT(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))))) {
 		UFSRVResult *res_ptr = _PROTOCOL_CLLBACKS_MSG_OUT_INVOKE(protocols_registry_ptr,
 											PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))),
-											sesn_ptr, sock_msg_ptr, call_flags, 0);
+											instance_sesn_ptr, sock_msg_ptr, call_flags, 0);
 
 		switch (_RESULT_TYPE(res_ptr))
 		{
@@ -1309,14 +1321,12 @@ _HandlePostSuccessfulIncomingHandshake (InstanceHolderForSession *instance_sesn_
 			_RETURN_RESULT_SESN(sesn_ptr_transient, instance_sesn_ptr_transient, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 		}
 
-		UFSRVResult res = {0};
+    CacheBackendGetRawSessionRecordByCookie(SESSION_COOKIE(sesn_ptr_transient), CALLFLAGS_EMPTY);
 
-    CacheBackendGetRawSessionRecordByCookie(sesn_ptr_transient, SESSION_COOKIE(sesn_ptr_transient), CALLFLAGS_EMPTY, &res);
-
-		if ((res.result_type == RESULT_TYPE_SUCCESS) && (res.result_code == RESCODE_BACKEND_DATA)) { /*important to check for RESCODE_BACKEND_DATA*/
+		if (THREAD_CONTEXT_UFSRV_RESULT_IS_SUCCESS_WITH_BACKEND_DATA) { /*important to check for RESCODE_BACKEND_DATA*/
 			UFSRVResult *res_ptr_backend = NULL;
 			//user has a valid cookie even though not known locally to this instance: this server could have rebooted, or user coming from another server
-			res_ptr_backend = AuthenticateForBackendCookieHashedSession(instance_sesn_ptr_transient, &res, sock_msg_ptr);
+			res_ptr_backend = AuthenticateForBackendCookieHashedSession(instance_sesn_ptr_transient, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), sock_msg_ptr);
 
 			if (_RESULT_TYPE_SUCCESS(res_ptr_backend)) {
 				InstanceHolderForSession *instance_sesn_ptr_processed = (InstanceHolderForSession *)_RESULT_USERDATA(res_ptr_backend);
@@ -1355,7 +1365,7 @@ _HandleMessageForConnectedSession (InstanceHolderForSession *instance_sesn_ptr, 
 	if (_PROTOCOL_CLLBACKS_MSG(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))))) {
 		UFSRVResult *res_ptr = _PROTOCOL_CLLBACKS_MSG_INVOKE(protocols_registry_ptr,
 											PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))),
-											sesn_ptr, sock_msg_ptr, flag/*callflags*/, 0);
+											instance_sesn_ptr, sock_msg_ptr, flag, 0);
 
 		switch (res_ptr->result_type)
 		{

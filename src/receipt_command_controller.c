@@ -22,17 +22,17 @@
 #include <main.h>
 #include <misc.h>
 #include <fence.h>
-#include <fence_state.h>
-#include <fence_utils.h>
+#include <ufsrv_core/fence/fence_state.h>
+#include <ufsrv_core/fence/fence_utils.h>
 #include <fence_proto.h>
-#include <user_backend.h>
-#include <users_proto.h>
-#include <protocol_websocket.h>
+#include <ufsrv_core/user/user_backend.h>
+#include <ufsrv_core/user/users_protobuf.h>
+#include <ufsrvwebsock/include/protocol_websocket.h>
 #include <ufsrvcmd_user_callbacks.h>
 #include <ufsrvcmd_callbacks.h>
-#include <ufsrvcmd_broadcast.h>
-#include <SignalService.pb-c.h>
-#include <location.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <ufsrv_core/SignalService.pb-c.h>
+#include <ufsrv_core/location/location.h>
 #include <command_controllers.h>
 #include <share_list.h>
 #include <ufsrvuid.h>
@@ -45,25 +45,25 @@ extern __thread ThreadContext ufsrv_thread_context;
  * 	in the same fence (sesn_ptr_target)
  */
 typedef struct ReceiptContext {
-	FenceStateDescriptor *fence_state_target;
-	Session 							*sesn_ptr_originator, //user for whom receipt is sent (original sender) matches uid_originator in protobuf
-												*sesn_ptr_sender;
+	InstanceHolderForFenceStateDescriptor *instance_fstate_ptr_target;
+	InstanceHolderForSession 							*instance_sesn_ptr_originator, //user for whom receipt is sent (original sender) matches uid_originator in protobuf
+												                *instance_sesn_ptr_sender;
 	FenceEvent						*fence_event_ptr;
 	unsigned long					**eids;//user can send many receipts for the same fence for the same target
 }	ReceiptContext;
 
-inline static UFSRVResult *_CommandControllerReceiptRead (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
-inline static UFSRVResult *_CommandControllerReceiptDelivery (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+inline static UFSRVResult *_CommandControllerReceiptRead (InstanceContextForSession *, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+inline static UFSRVResult *_CommandControllerReceiptDelivery (InstanceContextForSession *, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
 
-inline static UFSRVResult *_MarshalReceiptForRead(Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, ReceiptContext *context_ptr);
-static inline UFSRVResult *_MarshalReceiptForDelivery(Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, ReceiptContext *context_ptr);
+inline static UFSRVResult *_MarshalReceiptForRead(InstanceHolderForSession *, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, ReceiptContext *context_ptr);
+static inline UFSRVResult *_MarshalReceiptForDelivery(InstanceHolderForSession *, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, ReceiptContext *context_ptr);
 
-static UFSRVResult *_HandleReceiptCommandError (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_originator, int rescode, int command_type);
+static UFSRVResult *_HandleReceiptCommandError (InstanceHolderForSession *, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_originator, int rescode, int command_type);
 static void	_BuildErrorHeaderForReceiptCommand (CommandHeader *header_ptr, CommandHeader *header_ptr_originator, int errcode, int command_type);
 
 
-UFSRVResult *IsUserAllowedToGenerateReceipt(Session *sesn_ptr, unsigned long fid, unsigned long uid_origintor, ReceiptContext *, bool *fence_lock_state, unsigned long fence_call_flags);
-UFSRVResult *IsUserAllowedToGenerateDeliveryReceipt (Session *sesn_ptr_sender, unsigned long uid_origintor, ReceiptContext *context_ptr);
+UFSRVResult *IsUserAllowedToGenerateReceipt(InstanceHolderForSession *instance_sesn_ptr, unsigned long fid, unsigned long uid_origintor, ReceiptContext *, bool *fence_lock_state, unsigned long fence_call_flags);
+UFSRVResult *IsUserAllowedToGenerateDeliveryReceipt (InstanceHolderForSession *instance_sesn_ptr_sender, unsigned long uid_origintor, ReceiptContext *context_ptr);
 
 struct MarshalMessageEnvelopeForReceipt {
 	UfsrvCommandWire		*ufsrv_command_wire;
@@ -128,24 +128,24 @@ _PrepareMarshalMessageForReceipt (MarshalMessageEnvelopeForReceipt *envelope_ptr
     MakeFenceRecordInProtoAsIdentifier(sesn_ptr, f_ptr, envelope_ptr->fence_record);
   }
 
-	envelope_ptr->envelope->source											=	"0";
-	envelope_ptr->envelope->timestamp										=	GetTimeNowInMillis(); envelope_ptr->envelope->has_timestamp=1;
+	envelope_ptr->envelope->sourceufsrvuid							=	"0";
+	envelope_ptr->envelope->timestamp										=	GetTimeNowInMillis(); envelope_ptr->envelope->has_timestamp = 1;
 
-	envelope_ptr->header->when													=	envelope_ptr->envelope->timestamp; 	envelope_ptr->header->has_when=1;
-	envelope_ptr->header->cid														=	SESSION_ID(sesn_ptr); 							envelope_ptr->header->has_cid=1;
+	envelope_ptr->header->when													=	envelope_ptr->envelope->timestamp; 	envelope_ptr->header->has_when = 1;
+	envelope_ptr->header->cid														=	SESSION_ID(sesn_ptr); 							envelope_ptr->header->has_cid = 1;
 	envelope_ptr->header->command												=	command_type;
-	envelope_ptr->header->args													=	command_arg;												envelope_ptr->header->has_args=1;
+	envelope_ptr->header->args													=	command_arg;												envelope_ptr->header->has_args = 1;
 
 	if (IS_PRESENT(event_ptr)) {
-		envelope_ptr->header->when_eid										=	event_ptr->when; 					envelope_ptr->header->has_when_eid=1;
-		envelope_ptr->header->eid													=	event_ptr->eid; 					envelope_ptr->header->has_eid=1;
+		envelope_ptr->header->when_eid										=	event_ptr->when; 					envelope_ptr->header->has_when_eid = 1;
+		envelope_ptr->header->eid													=	event_ptr->eid; 					envelope_ptr->header->has_eid = 1;
 	} else if IS_PRESENT(f_ptr) {
-		envelope_ptr->header->eid													=	FENCE_LAST_EID(f_ptr); 					envelope_ptr->header->has_eid=1;
+		envelope_ptr->header->eid													=	FENCE_LAST_EID(f_ptr); 					envelope_ptr->header->has_eid = 1;
 	}
 
 	if (IS_PRESENT(data_msg_ptr_orig)) {
 		envelope_ptr->header->when_client								=	data_msg_ptr_orig->ufsrvcommand->receiptcommand->header->when;
-		envelope_ptr->header->has_when_client						=	data_msg_ptr_orig->ufsrvcommand->receiptcommand->header->has_when_client=1;
+		envelope_ptr->header->has_when_client						=	data_msg_ptr_orig->ufsrvcommand->receiptcommand->header->has_when_client = 1;
 	}
 
 }
@@ -166,7 +166,7 @@ _PrepareMarshalMessageForReceipt (MarshalMessageEnvelopeForReceipt *envelope_ptr
  * 	@unlocks NONE:
  */
 UFSRVResult *
-CommandCallbackControllerReceiptCommand (Session *sesn_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, MessageQueueMsgPayload *mqp_ptr)
+CommandCallbackControllerReceiptCommand (InstanceContextForSession *ctx_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
 {
 	CommandHeader *command_header = data_msg_ptr->ufsrvcommand->receiptcommand->header;
 
@@ -175,23 +175,23 @@ CommandCallbackControllerReceiptCommand (Session *sesn_ptr_local_user, WebSocket
 	switch (command_header->command)
 	{
     case RECEIPT_COMMAND__COMMAND_TYPES__READ:
-      _CommandControllerReceiptRead (sesn_ptr_local_user, NULL, data_msg_ptr);
+      _CommandControllerReceiptRead(ctx_ptr_local_user, NULL, data_msg_ptr);
       break;
 
     case RECEIPT_COMMAND__COMMAND_TYPES__DELIVERY:
-      _CommandControllerReceiptDelivery (sesn_ptr_local_user, NULL, data_msg_ptr);
+      _CommandControllerReceiptDelivery(ctx_ptr_local_user, NULL, data_msg_ptr);
       break;
 
     default:
-      syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', command:'%d'}: RECEIVED UKNOWN RECEIPT COMMAND", __func__, pthread_self(), sesn_ptr_local_user, command_header->command);
+      syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', command:'%d'}: RECEIVED UNKNOWN RECEIPT COMMAND", __func__, pthread_self(), ctx_ptr_local_user->sesn_ptr, command_header->command);
 	}
 
 	exit_release:
-	return SESSION_RESULT_PTR(sesn_ptr_local_user);
+	return SESSION_RESULT_PTR(ctx_ptr_local_user->sesn_ptr);
 
   exit_ufsrvuid_error:
-  syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', command:'%d'): ERROR: UFSRVUID WAS NOT DEFINED ", __func__, pthread_self(), sesn_ptr_local_user, SESSION_ID(sesn_ptr_local_user), command_header->command);
-  _RETURN_RESULT_SESN(sesn_ptr_local_user, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER);
+  syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', command:'%d'): ERROR: UFSRVUID WAS NOT DEFINED ", __func__, pthread_self(), ctx_ptr_local_user->sesn_ptr, SESSION_ID(ctx_ptr_local_user->sesn_ptr), command_header->command);
+  _RETURN_RESULT_SESN(ctx_ptr_local_user->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 }
 
 /**
@@ -203,7 +203,7 @@ CommandCallbackControllerReceiptCommand (Session *sesn_ptr_local_user, WebSocket
  * 	@unlocks f_ptr:
  */
 inline static UFSRVResult *
-_CommandControllerReceiptRead (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
+_CommandControllerReceiptRead (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
 {
 	bool								fence_already_locked = false;
 	ReceiptCommand			*recptcmd_ptr;
@@ -211,24 +211,24 @@ _CommandControllerReceiptRead (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig
 	UserRecord					*user_record_to		=	NULL;
 	ReceiptContext			receipt_context		=	{0};
 
-	recptcmd_ptr=data_msg_ptr->ufsrvcommand->receiptcommand;
+	recptcmd_ptr = data_msg_ptr->ufsrvcommand->receiptcommand;
 
-	if (recptcmd_ptr->fid>0 && UfsrvUidGetSequenceId((const UfsrvUid *)recptcmd_ptr->uid_originator.data)>0) {
-		IsUserAllowedToGenerateReceipt(sesn_ptr, recptcmd_ptr->fid, UfsrvUidGetSequenceId((const UfsrvUid *)recptcmd_ptr->uid_originator.data), &receipt_context, &fence_already_locked, FENCE_CALLFLAG_KEEP_FENCE_LOCKED);
+	if (recptcmd_ptr->fid > 0 && UfsrvUidGetSequenceId((const UfsrvUid *)recptcmd_ptr->uid_originator.data) > 0) {
+		IsUserAllowedToGenerateReceipt(ctx_ptr->instance_sesn_ptr, recptcmd_ptr->fid, UfsrvUidGetSequenceId((const UfsrvUid *)recptcmd_ptr->uid_originator.data), &receipt_context, &fence_already_locked, FENCE_CALLFLAG_KEEP_FENCE_LOCKED);
 
-		if (SESSION_RESULT_TYPE_ERROR(sesn_ptr)) {
-			_HandleReceiptCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, SESSION_RESULT_CODE(sesn_ptr), data_msg_ptr->ufsrvcommand->receiptcommand->header->command);
+		if (SESSION_RESULT_TYPE_ERROR(ctx_ptr->sesn_ptr)) {
+			_HandleReceiptCommandError (ctx_ptr->instance_sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, SESSION_RESULT_CODE(ctx_ptr->sesn_ptr), data_msg_ptr->ufsrvcommand->receiptcommand->header->command);
 
-			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER);
+			_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 		}
 
-    _MarshalReceiptForRead(sesn_ptr, wsm_ptr_orig, data_msg_ptr, &receipt_context);
-		if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(receipt_context.fence_state_target), THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
+    _MarshalReceiptForRead(ctx_ptr->instance_sesn_ptr, wsm_ptr_orig, data_msg_ptr, &receipt_context);
+		if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(FenceStateDescriptorOffInstanceHolder(receipt_context.instance_fstate_ptr_target)), THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
 
-		return SESSION_RESULT_PTR(sesn_ptr);
+		return SESSION_RESULT_PTR(ctx_ptr->sesn_ptr);
 	}
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 }
 
 /**
@@ -242,33 +242,39 @@ _CommandControllerReceiptRead (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig
  *  @dynamic_memory fence_records_ptr: array of FenceRecord initiated with dynamic values. Must be freed with DestructFenceRecordProto (FenceRecord **fence_records_ptr, unsigned count)
  */
 inline static UFSRVResult *
-_MarshalReceiptForRead(Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, ReceiptContext *context_ptr)
+_MarshalReceiptForRead(InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, ReceiptContext *context_ptr)
 {
-	Fence *f_ptr=	FENCESTATE_FENCE(context_ptr->fence_state_target);
+	Fence *f_ptr=	FENCESTATE_FENCE(FenceStateDescriptorOffInstanceHolder(context_ptr->instance_fstate_ptr_target));
 
 	_GENERATE_RECEIPT_COMMAND_ENVELOPE_INITIALISATION();
 
-	_PrepareMarshalMessageForReceipt (&envelope_marshal, context_ptr->sesn_ptr_originator, f_ptr, context_ptr->fence_event_ptr, NULL, RECEIPT_COMMAND__COMMAND_TYPES__READ, COMMAND_ARGS__SYNCED);
+	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
+
+	_PrepareMarshalMessageForReceipt (&envelope_marshal, SessionOffInstanceHolder(context_ptr->instance_sesn_ptr_originator), f_ptr, context_ptr->fence_event_ptr, NULL, RECEIPT_COMMAND__COMMAND_TYPES__READ, COMMAND_ARGS__SYNCED);
 	receipt_command.type						=	data_msg_ptr_received->ufsrvcommand->receiptcommand->type; data_msg_ptr_received->ufsrvcommand->receiptcommand->has_type=1;
 	receipt_command.eid							=	data_msg_ptr_received->ufsrvcommand->receiptcommand->eid;
 	receipt_command.n_eid						=	data_msg_ptr_received->ufsrvcommand->receiptcommand->n_eid;
 	receipt_command.fid							=	data_msg_ptr_received->ufsrvcommand->receiptcommand->fid; receipt_command.has_fid = data_msg_ptr_received->ufsrvcommand->receiptcommand->has_fid;
-	receipt_command.uid_originator	=	data_msg_ptr_received->ufsrvcommand->receiptcommand->uid_originator;
-	receipt_command.has_uid_originator = data_msg_ptr_received->ufsrvcommand->receiptcommand->has_uid_originator;
+  MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(receipt_command.uid_originator), true);//don't reference data_msg_ptr_received->ufsrvcommand->receiptcommand->uid_originator;
+	receipt_command.has_uid_originator = 1;
 	receipt_command.timestamp				=	data_msg_ptr_received->ufsrvcommand->receiptcommand->timestamp;
 	receipt_command.n_timestamp			=	data_msg_ptr_received->ufsrvcommand->receiptcommand->n_timestamp;
 
-	size_t legacymessage_encoded_sz=data_message__get_packed_size(data_msg_ptr_received);
+	size_t legacymessage_encoded_sz = data_message__get_packed_size(data_msg_ptr_received);
 	uint8_t legacymessage_encoded[legacymessage_encoded_sz];
 	data_message__pack(data_msg_ptr_received, legacymessage_encoded);
-	command_envelope.legacymessage.data=legacymessage_encoded;
-	command_envelope.legacymessage.len=legacymessage_encoded_sz;
-	command_envelope.has_legacymessage=1;
+	command_envelope.legacymessage.data = legacymessage_encoded;
+	command_envelope.legacymessage.len = legacymessage_encoded_sz;
+	command_envelope.has_legacymessage = 1;
 
-	command_envelope.sourcedevice=1; command_envelope.has_sourcedevice=1;
+	command_envelope.sourcedevice = DEFAULT_DEVICE_ID; command_envelope.has_sourcedevice = 1;
 
-	UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
-	UfsrvCommandInvokeCommand (sesn_ptr, context_ptr->sesn_ptr_originator, wsm_ptr_orig, NULL, &ufsrv_descpription, uSETACCOUNT_ATTRS_V1_IDX);//todo: update command name
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
+  UfsrvCommandInvokeUserCommand(
+          &(InstanceContextForSession) {instance_sesn_ptr, sesn_ptr},
+          &(InstanceContextForSession) {context_ptr->instance_sesn_ptr_originator,
+                                        SessionOffInstanceHolder(context_ptr->instance_sesn_ptr_originator)},
+          wsm_ptr_orig, NULL, &ufsrv_descpription, uSETACCOUNT_ATTRS_V1_IDX);//todo: update command name
 
 	DestructFenceRecordProto (&fence_record, false);
 
@@ -277,7 +283,7 @@ _MarshalReceiptForRead(Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMe
 }
 
 inline static UFSRVResult *
-_CommandControllerReceiptDelivery (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
+_CommandControllerReceiptDelivery (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
 {
 	ReceiptCommand			*recptcmd_ptr;
 	ReceiptContext			receipt_context		=	{0};
@@ -285,19 +291,21 @@ _CommandControllerReceiptDelivery (Session *sesn_ptr, WebSocketMessage *wsm_ptr_
 	recptcmd_ptr  = data_msg_ptr->ufsrvcommand->receiptcommand;
 
 	if  (UfsrvUidGetSequenceId((const UfsrvUid *)recptcmd_ptr->uid_originator.data) > 0) {
-		IsUserAllowedToGenerateDeliveryReceipt(sesn_ptr, UfsrvUidGetSequenceId((const UfsrvUid *)recptcmd_ptr->uid_originator.data), &receipt_context);
-    if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
-      _MarshalReceiptForDelivery(sesn_ptr, wsm_ptr_orig, data_msg_ptr, &receipt_context);
+		IsUserAllowedToGenerateDeliveryReceipt(ctx_ptr->instance_sesn_ptr, UfsrvUidGetSequenceId((const UfsrvUid *)recptcmd_ptr->uid_originator.data), &receipt_context);
+    if (SESSION_RESULT_TYPE_SUCCESS(ctx_ptr->sesn_ptr)) {
+      _MarshalReceiptForDelivery(ctx_ptr->instance_sesn_ptr, wsm_ptr_orig, data_msg_ptr, &receipt_context);
 
-      return SESSION_RESULT_PTR(sesn_ptr);
+      return SESSION_RESULT_PTR(ctx_ptr->sesn_ptr);
     }
 	}
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 }
 
 /**
- * 	@brief: Marshaled for delivery receipt
+ * 	@brief: Marshaled for delivery receipt to the user who originally sent the message (uid_originator). This user will be referenced in the receipt message generated
+ * 	by the user who received the message and confirmed it its delivery by generating delivery receipt, refercing the original sender.
+ * 	The server will on-send this receipt to the original sender, referencing this user as the originator, so the client can keep track of of who'd confirmed delivery of message.
  *
  * 	@param data_msg_ptr: is the original wire message sent by the client. We'll have to copy bits and pieces from  it for this transmission
  *  @locked f_ptr (as contained in FenceStateDescriptor in CallContext):
@@ -307,55 +315,63 @@ _CommandControllerReceiptDelivery (Session *sesn_ptr, WebSocketMessage *wsm_ptr_
  *  @dynamic_memory fence_records_ptr: array of FenceRecord initiated with dynamic values. Must be freed with DestructFenceRecordProto (FenceRecord **fence_records_ptr, unsigned count)
  */
 inline static UFSRVResult *
-_MarshalReceiptForDelivery (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, ReceiptContext *context_ptr)
+_MarshalReceiptForDelivery (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, ReceiptContext *context_ptr)
 {
   _GENERATE_DELIVERY_RECEIPT_COMMAND_ENVELOPE_INITIALISATION();
+  Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
-  _PrepareMarshalMessageForReceipt (&envelope_marshal, context_ptr->sesn_ptr_originator, NULL, context_ptr->fence_event_ptr, NULL, RECEIPT_COMMAND__COMMAND_TYPES__DELIVERY, COMMAND_ARGS__SYNCED);
+  _PrepareMarshalMessageForReceipt(&envelope_marshal, SessionOffInstanceHolder(context_ptr->instance_sesn_ptr_originator), NULL, context_ptr->fence_event_ptr, NULL, RECEIPT_COMMAND__COMMAND_TYPES__DELIVERY, COMMAND_ARGS__SYNCED);
   receipt_command.eid							   =	data_msg_ptr_received->ufsrvcommand->receiptcommand->eid;
   receipt_command.n_eid						   =	data_msg_ptr_received->ufsrvcommand->receiptcommand->n_eid;
   receipt_command.timestamp				   =	data_msg_ptr_received->ufsrvcommand->receiptcommand->timestamp;
   receipt_command.n_timestamp			   =	data_msg_ptr_received->ufsrvcommand->receiptcommand->n_timestamp;
-  receipt_command.uid_originator	   =	data_msg_ptr_received->ufsrvcommand->receiptcommand->uid_originator;
-  receipt_command.has_uid_originator =  data_msg_ptr_received->ufsrvcommand->receiptcommand->has_uid_originator;
+  MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(receipt_command.uid_originator), true);//don't reference data_msg_ptr_received->ufsrvcommand->receiptcommand->uid_originator;
+  receipt_command.has_uid_originator =  1;
 
-  size_t legacymessage_encoded_sz=data_message__get_packed_size(data_msg_ptr_received);
+  size_t legacymessage_encoded_sz = data_message__get_packed_size(data_msg_ptr_received);
   uint8_t legacymessage_encoded[legacymessage_encoded_sz];
   data_message__pack(data_msg_ptr_received, legacymessage_encoded);
-  command_envelope.legacymessage.data=legacymessage_encoded;
-  command_envelope.legacymessage.len=legacymessage_encoded_sz;
-  command_envelope.has_legacymessage=1;
+  command_envelope.legacymessage.data = legacymessage_encoded;
+  command_envelope.legacymessage.len = legacymessage_encoded_sz;
+  command_envelope.has_legacymessage = 1;
 
-  command_envelope.sourcedevice=1; command_envelope.has_sourcedevice=1;
+  command_envelope.sourcedevice = DEFAULT_DEVICE_ID; command_envelope.has_sourcedevice = 1;
 
-  UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, 0, header.when, &EnvelopeMetaData, &command_envelope};
-  UfsrvCommandInvokeCommand (sesn_ptr, context_ptr->sesn_ptr_originator, wsm_ptr_orig, NULL, &ufsrv_descpription, uSETACCOUNT_ATTRS_V1_IDX);//todo: update command name
+  UfsrvCommandMarshallingDescriptor ufsrv_descpription = {header.eid, 0, header.when, &EnvelopeMetaData, &command_envelope};
+  UfsrvCommandInvokeUserCommand(
+          &(InstanceContextForSession) {instance_sesn_ptr, sesn_ptr},
+          &(InstanceContextForSession) {context_ptr->instance_sesn_ptr_originator,
+                                        SessionOffInstanceHolder(context_ptr->instance_sesn_ptr_originator)},
+          wsm_ptr_orig, NULL, &ufsrv_descpription, uSETACCOUNT_ATTRS_V1_IDX);//todo: update command name
 
   _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
-
 /////////////////////////////////////////////
-
 
 /**
  * 	@brief: Generalised command sending
  */
-__unused inline static UFSRVResult *
-_MarshalCommandToUser	(Session *sesn_ptr, Session *sesn_ptr_target, Fence *f_ptr, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
+inline static UFSRVResult *
+_MarshalCommandToUser	(InstanceHolderForSession *instance_sesn_ptr, InstanceHolderForSession *instance_sesn_ptr_target, Fence *f_ptr, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
 {
+  Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
+  Session *sesn_ptr_target = IS_PRESENT(instance_sesn_ptr_target)?SessionOffInstanceHolder(instance_sesn_ptr_target):NULL;
+
 	CommandHeader *command_header_ptr	=	command_envelope_ptr->ufsrvcommand->header;
 
-	WebSocketMessage wsmsg; wsmsg.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST;//dummy
-	UfsrvCommandMarshallingDescription ufsrv_descpription={command_header_ptr->eid, IS_PRESENT(f_ptr)?FENCE_ID(f_ptr):0, command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription={command_header_ptr->eid, IS_PRESENT(f_ptr) ? FENCE_ID(f_ptr) : 0, command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
 
 #ifdef __UF_TESTING
 	syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cid_target:'%lu', uname_target:'%s', fid:'%lu'} Marshaling command... ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),
 				SESSION_ID((sesn_ptr_target?sesn_ptr_target:sesn_ptr)), SESSION_USERNAME((sesn_ptr_target?sesn_ptr_target:sesn_ptr)), IS_PRESENT(f_ptr)?FENCE_ID(f_ptr):0);
 #endif
 
-	UfsrvCommandInvokeCommand (sesn_ptr, sesn_ptr_target, &wsmsg, NULL, &ufsrv_descpription, req_cmd_idx);
+  UfsrvCommandInvokeUserCommand(&(InstanceContextForSession) {instance_sesn_ptr, sesn_ptr},
+                                (IS_PRESENT(instance_sesn_ptr_target) ? (&(InstanceContextForSession) {
+                                        instance_sesn_ptr_target, sesn_ptr_target}) : NULL),
+                                wsm_ptr_received, NULL, &ufsrv_descpription, req_cmd_idx);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
@@ -424,12 +440,14 @@ _BuildErrorHeaderForReceiptCommand (CommandHeader *header_ptr, CommandHeader *he
  * 	@unlocks: none
  */
 static UFSRVResult *
-_HandleReceiptCommandError (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_originator, int rescode, int command_type)
+_HandleReceiptCommandError (InstanceHolderForSession *instance_sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_originator, int rescode, int command_type)
 {
 	Envelope 					command_envelope	= ENVELOPE__INIT;
 	CommandHeader 		header						= COMMAND_HEADER__INIT;
 	UfsrvCommandWire	ufsrv_command			= UFSRV_COMMAND_WIRE__INIT;
 	ReceiptCommand 		receipt_command		= RECEIPT_COMMAND__INIT;
+
+	Session           *sesn_ptr         = SessionOffInstanceHolder(instance_sesn_ptr);
 
 	command_envelope.ufsrvcommand				=	&ufsrv_command;
 	ufsrv_command.header								=	&header;
@@ -446,7 +464,7 @@ _HandleReceiptCommandError (Session *sesn_ptr, FenceStateDescriptor *fence_state
     receipt_command.has_fid           = data_msg_ptr_originator->ufsrvcommand->receiptcommand->has_fid;
 	}
 
-	command_envelope.source							=	"0";
+	command_envelope.sourceufsrvuid			=	"0";
 	command_envelope.timestamp					=	GetTimeNowInMillis(); command_envelope.has_timestamp=1;
 
 	header.when													=	command_envelope.timestamp; header.has_when		=	1;
@@ -458,14 +476,14 @@ _HandleReceiptCommandError (Session *sesn_ptr, FenceStateDescriptor *fence_state
 	syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', uid:'%lu', cid:'%lu', arg_error:'%d', rescode:'%d'}: Marshaling Error response message...", __func__, pthread_self(), sesn_ptr, SESSION_USERID(sesn_ptr), SESSION_ID(sesn_ptr), header.args_error, rescode);
 #endif
 
-	return (_MarshalCommandToUser(sesn_ptr, NULL,  IS_PRESENT(fence_state_ptr)?FENCESTATE_FENCE(fence_state_ptr):NULL, &command_envelope,  uSETACCOUNT_ATTRS_V1_IDX));
+	return (_MarshalCommandToUser(instance_sesn_ptr, NULL,  IS_PRESENT(fence_state_ptr)?FENCESTATE_FENCE(fence_state_ptr):NULL, wsm_ptr_received, &command_envelope,  uSETACCOUNT_ATTRS_V1_IDX));
 
 }
 
 /**
  *  For a user(sender) to generate a receipt to another user(originator):
  *  1)sender musn't be on originator's blocked list, 2)originator must be on sender's sharelist for ReadReceipt
- *  Also, since ReadReceipts are bound to fences, both users need to be members of a given fence.
+ *  Also, since ReadReceipts are bound to fences, both users need to be members of the given fence.
  *	@param sesn_ptr_sender: the user who is generating the Receipt
  * 	@locked sesn_ptr_sender
  * 	@locks f_ptr:
@@ -474,16 +492,18 @@ _HandleReceiptCommandError (Session *sesn_ptr, FenceStateDescriptor *fence_state
  * 	@unlocks sesn_ptr_originator: on error or just before exit
  */
 UFSRVResult *
-IsUserAllowedToGenerateReceipt (Session *sesn_ptr_sender, unsigned long fid, unsigned long uid_origintor, ReceiptContext *context_ptr, bool *fence_lock_state, unsigned long fence_call_flags)
+IsUserAllowedToGenerateReceipt (InstanceHolderForSession *instance_sesn_ptr_sender, unsigned long fid, unsigned long uid_origintor, ReceiptContext *context_ptr, bool *fence_lock_state, unsigned long fence_call_flags)
 {
-	unsigned 	rescode;
 	Fence			*f_ptr							    = NULL;
 	Session 	*sesn_ptr_originator		=	NULL;
 
-  bool		lock_already_owned=false;
+  bool		lock_already_owned = false;
   unsigned long sesn_call_flags	=	(CALL_FLAG_LOCK_SESSION|CALL_FLAG_LOCK_SESSION_BLOCKING|
                                      CALL_FLAG_HASH_SESSION_LOCALLY|CALL_FLAG_HASH_UID_LOCALLY| CALL_FLAG_HASH_USERNAME_LOCALLY|
                                      CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION);
+
+  Session *sesn_ptr_sender = SessionOffInstanceHolder(instance_sesn_ptr_sender);
+
   GetSessionForThisUserByUserId(sesn_ptr_sender, uid_origintor, &lock_already_owned, sesn_call_flags);
   InstanceHolderForSession *instance_sesn_ptr_originator = (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr_sender);
 
@@ -501,14 +521,14 @@ IsUserAllowedToGenerateReceipt (Session *sesn_ptr_sender, unsigned long fid, uns
     _RETURN_RESULT_SESN(sesn_ptr_sender, NULL, RESULT_TYPE_ERR, RESCODE_USER_SHARELIST_PRESENT)
   }
 
-	unsigned long fence_call_flags_final=FENCE_CALLFLAG_SEARCH_BACKEND|FENCE_CALLFLAG_HASH_FENCE_LOCALLY|FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE;
+	unsigned long fence_call_flags_final = FENCE_CALLFLAG_SEARCH_BACKEND|FENCE_CALLFLAG_HASH_FENCE_LOCALLY|FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE;
 
-	if (fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED)	fence_call_flags_final|=(FENCE_CALLFLAG_KEEP_FENCE_LOCKED|FENCE_CALLFLAG_LOCK_FENCE_BLOCKING);
+	if (fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED)	fence_call_flags_final |= (FENCE_CALLFLAG_KEEP_FENCE_LOCKED|FENCE_CALLFLAG_LOCK_FENCE_BLOCKING);
 
 	FindFenceById(sesn_ptr_sender, fid, fence_call_flags_final);
-	InstanceHolderForFence *instance_holder_ptr = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr_sender);
+	InstanceHolderForFence *instance_f_ptr = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr_sender);
 
-	if (IS_EMPTY(instance_holder_ptr)) {
+	if (IS_EMPTY(instance_f_ptr)) {
 		if (SESSION_RESULT_CODE_EQUAL(sesn_ptr_sender, RESCODE_FENCE_DOESNT_EXIST)|| SESSION_RESULT_CODE_EQUAL(sesn_ptr_sender, RESCODE_BACKEND_RESOURCE_NULL)) {
       if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_originator, __func__);
 
@@ -517,22 +537,18 @@ IsUserAllowedToGenerateReceipt (Session *sesn_ptr_sender, unsigned long fid, uns
 		else 	SESSION_RETURN_RESULT(sesn_ptr_sender, NULL, RESULT_TYPE_ERR, SESSION_RESULT_CODE(sesn_ptr_sender))
 	}
 
-	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr_sender, RESCODE_PROG_LOCKED_THIS_THREAD));
+	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr_sender, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
-	f_ptr = FenceOffInstanceHolder(instance_holder_ptr);
+	f_ptr = FenceOffInstanceHolder(instance_f_ptr);
 
 	//>>> Fence RW LOCKED
 
-	__unused FenceStateDescriptor *fence_state_ptr_originator	=	NULL;
-	FenceStateDescriptor *fence_state_ptr_sender	=	NULL;
 	InstanceHolderForFenceStateDescriptor *instance_fstate_ptr_sender;
-  InstanceHolderForFenceStateDescriptor *instance_fstate_ptr_originator;
+  __unused InstanceHolderForFenceStateDescriptor *instance_fstate_ptr_originator;
 
 	#define FLAG_FENCE_LOCK_FALSE false
 
 	if (!IS_PRESENT((instance_fstate_ptr_sender = IsUserMemberOfThisFence(&(SESSION_FENCE_LIST(sesn_ptr_sender)), f_ptr, FLAG_FENCE_LOCK_FALSE)))) {
-    fence_state_ptr_sender = FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr_sender);
-
 		if (!lock_already_owned)				SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_originator, __func__);
 		if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr_sender));
 
@@ -540,34 +556,41 @@ IsUserAllowedToGenerateReceipt (Session *sesn_ptr_sender, unsigned long fid, uns
 	}
 
 	if (!IS_PRESENT((instance_fstate_ptr_originator = IsUserMemberOfThisFence(&(SESSION_FENCE_LIST(sesn_ptr_originator)), f_ptr, FLAG_FENCE_LOCK_FALSE)))) {
-    fence_state_ptr_originator = FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr_originator);
-
 		if (!lock_already_owned)				SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_originator, __func__);
 		if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr_sender));
+
 		_RETURN_RESULT_SESN(sesn_ptr_sender, NULL, RESULT_TYPE_ERR, RESCODE_USER_FENCE_ALREADYIN)
 	}
 
 	//TODO: check sesn_ptr_called prefs whilst session is locked allow/disallow event
 
   return_success:
-  context_ptr->fence_state_target			=	fence_state_ptr_sender;
-  context_ptr->sesn_ptr_originator		=	sesn_ptr_originator;
-  context_ptr->sesn_ptr_sender				=	sesn_ptr_sender;
+  context_ptr->instance_fstate_ptr_target			=	instance_fstate_ptr_sender;
+  context_ptr->instance_sesn_ptr_originator		=	instance_sesn_ptr_originator;
+  context_ptr->instance_sesn_ptr_sender				=	instance_sesn_ptr_sender;
 
   if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_originator, __func__);
 
   *fence_lock_state = fence_lock_already_owned;
 
-  _RETURN_RESULT_SESN(sesn_ptr_sender, context_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED);
+  _RETURN_RESULT_SESN(sesn_ptr_sender, context_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED)
 
 }
 
+/**
+ *
+ * @param instance_sesn_ptr_sender
+ * @param uid_origintor this is the id of the sender, who originally sent the message.
+ * @param context_ptr
+ * @return
+ */
 UFSRVResult *
-IsUserAllowedToGenerateDeliveryReceipt (Session *sesn_ptr_sender, unsigned long uid_origintor, ReceiptContext *context_ptr)
+IsUserAllowedToGenerateDeliveryReceipt (InstanceHolderForSession *instance_sesn_ptr_sender, unsigned long uid_origintor, ReceiptContext *context_ptr)
 {
   unsigned 	rescode;
   Fence			*f_ptr							    = NULL;
   Session 	*sesn_ptr_originator		=	NULL;
+  Session   *sesn_ptr_sender = SessionOffInstanceHolder(instance_sesn_ptr_sender);
 
   bool		lock_already_owned    = false;
   unsigned long sesn_call_flags	=	(CALL_FLAG_LOCK_SESSION|CALL_FLAG_LOCK_SESSION_BLOCKING|
@@ -584,11 +607,11 @@ IsUserAllowedToGenerateDeliveryReceipt (Session *sesn_ptr_sender, unsigned long 
 
   sesn_ptr_originator = SessionOffInstanceHolder(instance_sesn_ptr_originator);
   return_success:
-  context_ptr->sesn_ptr_originator		=	sesn_ptr_originator;
-  context_ptr->sesn_ptr_sender				=	sesn_ptr_sender;
+  context_ptr->instance_sesn_ptr_originator		=	instance_sesn_ptr_originator;
+  context_ptr->instance_sesn_ptr_sender				=	instance_sesn_ptr_sender;
 
   //no need to propagate lock at this stage, because UfsrvCommandMarshalTransmission will lock it prior to transmission
   if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_originator, __func__);
 
-  _RETURN_RESULT_SESN(sesn_ptr_sender, context_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED);
+  _RETURN_RESULT_SESN(sesn_ptr_sender, context_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED)
 }

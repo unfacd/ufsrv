@@ -24,23 +24,24 @@
 #include <utils_str.h>
 #include <thread_context_type.h>
 #include <fence.h>
-#include <fence_state.h>
-#include <fence_utils.h>
+#include <ufsrv_core/fence/fence_state.h>
+#include <ufsrv_core/fence/fence_utils.h>
 #include <fence_proto.h>
-#include <fence_permission.h>
-#include <user_backend.h>
-#include <users_proto.h>
-#include <recycler.h>
-#include <protocol_websocket.h>
+#include <ufsrv_core/fence/fence_permission.h>
+#include <ufsrv_core/user/user_backend.h>
+#include <ufsrv_core/user/users_protobuf.h>
+#include <recycler/recycler.h>
+#include <ufsrvwebsock/include/protocol_websocket.h>
 #include <ufsrvcmd_user_callbacks.h>
 #include <ufsrvcmd_callbacks.h>
-#include <ufsrvcmd_broadcast.h>
-#include <SignalService.pb-c.h>
-#include <message_broadcast.h>
-#include <location.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <ufsrv_core/SignalService.pb-c.h>
+#include <message_command_broadcast.h>
+#include <ufsrv_core/location/location.h>
 #include <command_controllers.h>
 #include <attachments.h>
 #include <ufsrvuid.h>
+#include <ufsrv_core/fence/fence_permission.h>
 
 extern ufsrv							*const masterptr;
 extern __thread ThreadContext ufsrv_thread_context;
@@ -63,21 +64,21 @@ inline static UFSRVResult *_CommandControllerFenceInviteSynced (InstanceHolderFo
 inline static UFSRVResult *_CommandControllerFenceMessageExpiry (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
 inline static UFSRVResult *_CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
 
-inline static UFSRVResult *_MarshalFenceStateSync(Session *sesn_ptr, Session *sesn_ptr_target, Fence *f_ptr, Envelope *command_envelope_ptr);
-static inline UFSRVResult *_MarshalServerRequestForFenceStateSync (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags);
-static inline UFSRVResult *_MarshalFenceInvitation(Session *sesn_ptr, Session *sesn_ptr_target, Fence *f_ptr, Envelope *command_envelope_ptr, unsigned long eid);
+inline static UFSRVResult *_MarshalFenceStateSync(InstanceContextForSession *, InstanceContextForSession *, Fence *f_ptr, Envelope *command_envelope_ptr);
+static inline UFSRVResult *_MarshalServerRequestForFenceStateSync (InstanceContextForSession *ctx_ptr, Fence *f_ptr, WebSocketMessage *, DataMessage *data_msg_ptr_received, unsigned long call_flags);
+static inline UFSRVResult *_MarshalFenceInvitation(InstanceContextForSession *, InstanceContextForSession *, Fence *f_ptr, WebSocketMessage *, Envelope *command_envelope_ptr, unsigned long eid);
 //static UFSRVResult 				*_MarshalNewFenceInvitation (Session *sesn_ptr, Fence *f_ptr, Envelope *command_envelope_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags);
-inline static UFSRVResult *_MarshalFenceInvitationReceipt (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, CollectionDescriptor *rejected_collection_ptr);
-inline static UFSRVResult *_MarshalNewFenceJoin (Session *sesn_ptr, UFSRVResult *res_ptr, WebSocketMessage *wsm_ptr_orig, FenceRecord *fence_record_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr);
-inline static UFSRVResult *_MarshalNewFenceReJoin (Session *sesn_ptr, UFSRVResult *res_ptr, WebSocketMessage *wsm_ptr_orig, FenceRecord *fence_record_ptr, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_MarshalFenceNameUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr, unsigned long call_flags, FenceEvent *fence_event_ptr);
-inline static UFSRVResult *_MarshalFenceAvatarUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr, unsigned long call_flags, FenceEvent *fence_event_ptr);
-inline static UFSRVResult *_MarshalFenceMessageExpiryUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr, unsigned long call_flags, FenceEvent *fence_event_ptr);
-inline static UFSRVResult *_MarshalFenceMAxMembersUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr);
-inline static UFSRVResult *_MarshalFenceDeliveryModeUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr);
-inline static UFSRVResult *_MarshalCommandToUser	(Session *sesn_ptr, Session *sesn_ptr_target, Fence *f_ptr, Envelope *command_envelope_ptr, unsigned req_cmd_idx);
+inline static UFSRVResult *_MarshalFenceInvitationReceipt (InstanceContextForSession *ctx_ptr, Fence *f_ptr, WebSocketMessage *, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, CollectionDescriptor *rejected_collection_ptr);
+inline static UFSRVResult *_MarshalNewFenceJoin (InstanceContextForSession *, UFSRVResult *res_ptr, WebSocketMessage *wsm_ptr_orig, FenceRecord *fence_record_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr);
+inline static UFSRVResult *_MarshalNewFenceReJoin (InstanceContextForSession *, const InstanceContextForFenceStateDescriptor  *, WebSocketMessage *wsm_ptr_orig, FenceRecord *fence_record_ptr, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_MarshalFenceNameUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *, WebSocketMessage *, DataMessage *data_msg_ptr, unsigned long call_flags, FenceEvent *fence_event_ptr);
+inline static UFSRVResult *_MarshalFenceAvatarUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *, WebSocketMessage *, DataMessage *data_msg_ptr, unsigned long call_flags, FenceEvent *fence_event_ptr);
+inline static UFSRVResult *_MarshalFenceMessageExpiryUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *, WebSocketMessage *, DataMessage *data_msg_ptr, unsigned long call_flags, FenceEvent *fence_event_ptr);
+inline static UFSRVResult *_MarshalFenceMAxMembersUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *, WebSocketMessage *, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr);
+inline static UFSRVResult *_MarshalFenceDeliveryModeUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *, WebSocketMessage *, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr);
+inline static UFSRVResult *_MarshalCommandToUser	(InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_target, Fence *f_ptr, WebSocketMessage *,Envelope *command_envelope_ptr, unsigned req_cmd_idx);
 
-static UFSRVResult *_HandleFenceCommandError (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, int rescode, int command_type, CallbackRestoreFenceValue restore_callback);
+static UFSRVResult *_HandleFenceCommandError (InstanceContextForSession *ctx_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, int rescode, int command_type, CallbackRestoreFenceValue restore_callback);
 static void	_BuildErrorHeaderForFenceCommand (FenceCommand *fence_command_ptr, FenceCommand *fence_command_ptr_incoming, int errcode, int command_type);
 
 
@@ -133,7 +134,7 @@ _PrepareMarshalMessageForFence (MarshalMessageEnvelopeForFence *envelope_ptr, Se
 //	envelope_ptr->fence_command->originator		=	MakeUserRecordForSelfInProto (sesn_ptr, PROTO_USER_RECORD_MINIMAL);
 	//todo: enable this in place of above
 	envelope_ptr->fence_command->originator		=	MakeUserRecordFromSessionInProto (sesn_ptr, envelope_ptr->user_record_originator, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
-	envelope_ptr->envelope->source						=	"0";
+	envelope_ptr->envelope->sourceufsrvuid	  =	"0";
 	envelope_ptr->envelope->timestamp					=	GetTimeNowInMillis(); envelope_ptr->envelope->has_timestamp=1;
 
 	envelope_ptr->header->when								=	envelope_ptr->envelope->timestamp; 	envelope_ptr->header->has_when=1;
@@ -163,18 +164,18 @@ _PrepareMarshalMessageForFence (MarshalMessageEnvelopeForFence *envelope_ptr, Se
  *	@param sesn_ptr_local_user: The user who sent this message, for whom a local Session has been found. This Session may be concurrently
  *	operated on by a Worker thread (in which case the lock on it will fail. However, in the context of this routine,
  *	it is operated on by a Ufsrv Worker Thread
- *
+ *  @param wsm_ptr_received Packed WebSocket message. Only set if command came through WebSocket, containing some metadata such as id set by sender
  * 	@param data_msg_ptr: The raw DataMessage protobuf as provided by the sending user. This message will have been previously verified
- * 	by the caller, being bearer of structurally valid  data
+ * 	by the caller, being bearer of structurally valid command.
  *
  *	@locked sesn_ptr_local_user: must be locked by the caller
  * 	@locks: NONE directly, but downstream will, eg Fence
  * 	@unlocks NONE:
  */
 UFSRVResult *
-CommandCallbackControllerFenceCommand (InstanceHolderForSession *instance_sesn_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, MessageQueueMsgPayload *mqp_ptr)
+CommandCallbackControllerFenceCommand (InstanceHolderForSession *instance_sesn_ptr_local_user, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr)
 {
-	void *command_types []={
+	void *command_types [] = {
 					&&FENCE_COMMAND_JOIN,
 					&&FENCE_COMMAND_LEAVE,
 					&&FENCE_COMMAND_INVITE,
@@ -207,28 +208,28 @@ CommandCallbackControllerFenceCommand (InstanceHolderForSession *instance_sesn_p
 	goto *command_types[command_header->command];
 
 	FENCE_COMMAND_JOIN:
-		return (_CommandControllerFenceJoin (instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFenceJoin(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_LEAVE:
-		return (_CommandControllerFenceLeave (instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFenceLeave(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_INVITE:
-		return (_CommandControllerFenceInvite (instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFenceInvite(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_BLOCK:
 		goto return_unknown;
 
 	FENCE_COMMAND_FNAME:
-		return (_CommandControllerFenceName (instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFenceName(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_BANNER:
 		goto return_unknown;
 
 	FENCE_COMMAND_AVATAR:
-		return (_CommandControllerFenceAvatar(instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFenceAvatar(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_MAXUSERS:
-		return (_CommandControllerFenceMaxMembers(instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFenceMaxMembers(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_TTL:
 		goto return_unknown;
@@ -237,7 +238,7 @@ CommandCallbackControllerFenceCommand (InstanceHolderForSession *instance_sesn_p
 		goto return_unknown;
 
 	FENCE_COMMAND_JOIN_MODE:
-	return (_CommandControllerFenceJoinMode(instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+	return (_CommandControllerFenceJoinMode(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_TAGS:
 		goto return_unknown;
@@ -246,16 +247,16 @@ CommandCallbackControllerFenceCommand (InstanceHolderForSession *instance_sesn_p
 		goto return_unknown;
 
 	FENCE_COMMAND_STATE:
-		return (_CommandControllerFenceStateSync (instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFenceStateSync(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_EXPIRY:
-		return (_CommandControllerFenceMessageExpiry(instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFenceMessageExpiry(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_MUTE:
 		goto return_unknown;
 
 	FENCE_COMMAND_PERMISSION:
-		return (_CommandControllerFencePermission(instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFencePermission(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_NICKNAME:
 		goto return_unknown;
@@ -267,10 +268,10 @@ CommandCallbackControllerFenceCommand (InstanceHolderForSession *instance_sesn_p
 		goto return_unknown;
 
 	FENCE_COMMAND_PRIVACY_MODE:
-		return (_CommandControllerFencePrivacyMode(instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFencePrivacyMode(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
 	FENCE_COMMAND_DELIVERY_MODE:
-		return (_CommandControllerFenceDeliveryMode(instance_sesn_ptr_local_user, NULL, data_msg_ptr));
+		return (_CommandControllerFenceDeliveryMode(instance_sesn_ptr_local_user, wsm_ptr_received, data_msg_ptr));
 
   FENCE_COMMAND_PERMISSION_LIST_SEMANTICS:
 	//todo: currently this mode is not supported. Can only be set once at fence creation time. send proper error message
@@ -278,7 +279,7 @@ CommandCallbackControllerFenceCommand (InstanceHolderForSession *instance_sesn_p
 
 	return_unknown:
 		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', command:'%d'}: RECEIVED UKNOWN FENCE COMMAND", __func__, pthread_self(), sesn_ptr_local_user, command_header->command);
-	SESSION_RETURN_RESULT (sesn_ptr_local_user, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_UKNOWN_TYPE);
+	SESSION_RETURN_RESULT (sesn_ptr_local_user, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_UKNOWN_TYPE)
 
 }
 
@@ -318,14 +319,14 @@ _CommandControllerFenceJoin (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 		if (SESSION_RESULT_TYPE_ERROR(sesn_ptr)) {
 			if (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 				//no fence lock
-				_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_DOESNT_EXIST, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+				_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_DOESNT_EXIST, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 				return SESSION_RESULT_PTR(sesn_ptr);
 			}
 
 			//fence invitation only and user is not on it
 			if (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_INVITATION_LIST)) {
 				if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, (Fence *)SESSION_RESULT_USERDATA(sesn_ptr), SESSION_RESULT_PTR(sesn_ptr));
-				_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_INVITATION_LIST, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+				_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_INVITATION_LIST, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 				return SESSION_RESULT_PTR(sesn_ptr);
 			}
 
@@ -334,7 +335,7 @@ _CommandControllerFenceJoin (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 			  InstanceHolderForFence *instance_f_ptr_impaired = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr);
 			  Fence *f_ptr_impaired = FenceOffInstanceHolder(instance_f_ptr_impaired);
 				RepairFenceMembershipForUser(instance_sesn_ptr, instance_f_ptr_impaired, ImpairedFenceMembershipFence);
-				if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) _MarshalServerRequestForFenceStateSync(sesn_ptr, f_ptr_impaired, data_msg_ptr, CALLFLAGS_EMPTY);
+				if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) _MarshalServerRequestForFenceStateSync(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, f_ptr_impaired, wsm_ptr_orig, data_msg_ptr, CALLFLAGS_EMPTY);
 
 				if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr_impaired, SESSION_RESULT_PTR(sesn_ptr));
 				return SESSION_RESULT_PTR(sesn_ptr);
@@ -345,7 +346,7 @@ _CommandControllerFenceJoin (InstanceHolderForSession *instance_sesn_ptr, WebSoc
         InstanceHolderForFence *instance_f_ptr_impaired = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr);
         Fence *f_ptr_impaired = FenceOffInstanceHolder(instance_f_ptr_impaired);
 				RepairFenceMembershipForUser(instance_sesn_ptr, instance_f_ptr_impaired, ImpairedFenceMembershipSession);
-				if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	_MarshalServerRequestForFenceStateSync (sesn_ptr, f_ptr_impaired, data_msg_ptr, CALLFLAGS_EMPTY);
+				if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	_MarshalServerRequestForFenceStateSync(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, f_ptr_impaired, wsm_ptr_orig, data_msg_ptr, CALLFLAGS_EMPTY);
 				if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr_impaired, SESSION_RESULT_PTR(sesn_ptr));
 				return SESSION_RESULT_PTR(sesn_ptr);
 			}
@@ -370,7 +371,7 @@ _CommandControllerFenceJoin (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 
 		//>>>>>>>>f_ptr MAY BE LOCKED depending on return value on success only <<<<<<<<<<<
 		//TODO: IsUserAllowedToJoinFenceById doesn't always return FenceState -> check is needed
-		HandleJoinFence(sesn_ptr, (InstanceHolderForFenceStateDescriptor *)_RESULT_USERDATA(res_ptr), data_msg_ptr, join_type, res_ptr);
+		HandleJoinFence(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, (InstanceHolderForFenceStateDescriptor *)_RESULT_USERDATA(res_ptr), wsm_ptr_orig, data_msg_ptr, join_type, res_ptr);
 		if (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_USER_FENCE_ALREADYIN) || SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_USER_FENCE_JOINED)) {
       f_ptr = FENCESTATE_FENCE(fstate_ptr);
     } else f_ptr = (Fence *)SESSION_RESULT_USERDATA(sesn_ptr);
@@ -411,7 +412,7 @@ _CommandControllerFenceJoin (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 				InstanceHolderForFenceStateDescriptor *instance_fstate_ptr_processed = (InstanceHolderForFenceStateDescriptor *)_RESULT_USERDATA(res_ptr);
 				InstanceHolderForFence *instance_f_ptr_processed = FENCESTATE_INSTANCE_HOLDER(FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr_processed));
 				Fence *f_ptr_processed = FenceOffInstanceHolder(instance_f_ptr_processed);
-				UFSRVResult res = {.result_user_data=f_ptr_processed, .result_code=res_ptr->result_code, .result_type=res_ptr->result_type};
+				UFSRVResult res = {.result_user_data=instance_f_ptr_processed, .result_code=res_ptr->result_code, .result_type=res_ptr->result_type};
 
 //				UpdateFenceTypeAssignment (sesn_ptr, f_ptr_processed, fence_record_ptr->fence_type, 0);
 //				UpdateFencePrivacyModeAssignment (sesn_ptr, f_ptr_processed, fence_record_ptr->privacy_mode, 0);
@@ -424,18 +425,18 @@ _CommandControllerFenceJoin (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 					invited_collections_for_result.first.collection			=(collection_t **)invited_eids;
 					invited_collections_for_result.first.collection_sz	=	0;
 
-					for (size_t i=0; i<fence_record_ptr->n_invited_members; i++)	invited_eids[i]=0;
+					for (size_t i=0; i<fence_record_ptr->n_invited_members; i++)	invited_eids[i] = 0;
 #ifdef __UF_FULLDEBUG
 					syslog(LOG_DEBUG, "%s {pid:'%lu, o:'%p', cname:'%s', list_sz:'%lu} Fence with invitation list...", __func__, pthread_self(), sesn_ptr, fence_record_ptr->cname, fence_record_ptr->n_invited_members);
 #endif
 					AddToFenceInvitedListFromProtoRecord(instance_sesn_ptr, instance_f_ptr_processed, fence_record_ptr->invited_members, fence_record_ptr->n_invited_members, &invited_collections_for_result, true);
 
-					_MarshalNewFenceJoin (sesn_ptr, &res, wsm_ptr_orig, fence_record_ptr, data_msg_ptr, &(invited_collections_for_result.first));
+					_MarshalNewFenceJoin (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &res, wsm_ptr_orig, fence_record_ptr, data_msg_ptr, &(invited_collections_for_result.first));
 					//note: we use thread ufsrv result ptr because we want to preserve the return of the call function
 					if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr_processed, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
 					return SESSION_RESULT_PTR(sesn_ptr);
 				} else {
-					_MarshalNewFenceJoin (sesn_ptr, &res, wsm_ptr_orig, fence_record_ptr, data_msg_ptr, NULL);
+					_MarshalNewFenceJoin (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &res, wsm_ptr_orig, fence_record_ptr, data_msg_ptr, NULL);
 					if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr_processed, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
 					return SESSION_RESULT_PTR(sesn_ptr);
 				}
@@ -447,17 +448,22 @@ _CommandControllerFenceJoin (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 			break;
 
 		case RESCODE_USER_FENCE_ALREADYIN:
-			if (IS_PRESENT((FenceStateDescriptor *)res_ptr->result_user_data)) {
-			  InstanceHolderForFenceStateDescriptor *instance_fstate_ptr = (InstanceHolderForFenceStateDescriptor *)res_ptr->result_user_data;
-				f_ptr = FenceOffInstanceHolder(FENCESTATE_INSTANCE_HOLDER(FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr)));
+			if (IS_PRESENT(_RESULT_USERDATA(res_ptr))) {
+			  InstanceHolderForFenceStateDescriptor *instance_fstate_ptr = (InstanceHolderForFenceStateDescriptor *)_RESULT_USERDATA(res_ptr);
 
-				syslog (LOG_DEBUG, "%s (pid:'%lu' cid:'%lu', fo:'%p', bid:'%lu'): WARNING: DOUBLE MAKE: 'uid='%lu' IS ALREADY IN", __func__, pthread_self(), SESSION_ID(sesn_ptr), f_ptr, FENCE_ID(f_ptr), SESSION_USERID(sesn_ptr));
-
-				res_ptr->result_user_data = f_ptr; //no need for state
+#ifdef __UF_TESTING
+        Fence *f_ptr_already_in = FenceOffInstanceHolder(FENCESTATE_INSTANCE_HOLDER(FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr)));
+				syslog (LOG_DEBUG, "%s {pid:'%lu' cid:'%lu', fo:'%p', bid:'%lu'}: WARNING: DOUBLE MAKE: 'uid:'%lu' IS ALREADY IN", __func__, pthread_self(), SESSION_ID(sesn_ptr), f_ptr_already_in, FENCE_ID(f_ptr_already_in), SESSION_USERID(sesn_ptr));
+#endif
+//				res_ptr->result_user_data = FENCESTATE_INSTANCE_HOLDER(FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr)); //no need for state
 
 				//indicates  across client/server state
-				if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, (Fence *)SESSION_RESULT_USERDATA(sesn_ptr), THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
-				_MarshalNewFenceReJoin(sesn_ptr, res_ptr, wsm_ptr_orig, fence_record_ptr, data_msg_ptr);
+				if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr_already_in, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
+
+				_MarshalNewFenceReJoin(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr},
+                           &(InstanceContextForFenceStateDescriptor){instance_fstate_ptr, FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr), &(InstanceContextForFence){FENCESTATE_INSTANCE_HOLDER(FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr)), FenceOffInstanceHolder(FENCESTATE_INSTANCE_HOLDER(FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr)))}},
+                           wsm_ptr_orig, fence_record_ptr, data_msg_ptr);
+
 				return SESSION_RESULT_PTR(sesn_ptr);
 			}
 			break;
@@ -467,15 +473,15 @@ _CommandControllerFenceJoin (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 		case RESCODE_USER_FENCE_LOCATION:
 		case RESCODE_USER_FENCE_KEY:
 
-			if (IS_PRESENT((InstanceHolderForFence *)res_ptr->result_user_data)) {
-			  f_ptr = FenceOffInstanceHolder((InstanceHolderForFence *)res_ptr->result_user_data);
+			if (IS_PRESENT(_RESULT_USERDATA(res_ptr))) {
+			  f_ptr = FenceOffInstanceHolder((InstanceHolderForFence *)_RESULT_USERDATA(res_ptr));
 				if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
-				syslog (LOG_DEBUG, "%s (pid:'%lu' cid:'%lu' uid:'%lu'): NOTICE: UNSUPPORTED RETURN CONDITION 'bid=%lu'",  __func__, pthread_self(), SESSION_ID(sesn_ptr), SESSION_USERID(sesn_ptr), FENCE_ID(f_ptr));
+				syslog (LOG_DEBUG, "%s (pid:'%lu' cid:'%lu' uid:'%lu'): NOTICE: UNSUPPORTED RETURN CONDITION 'bid:'%lu'",  __func__, pthread_self(), SESSION_ID(sesn_ptr), SESSION_USERID(sesn_ptr), FENCE_ID(f_ptr));
 			}
 			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 
 		case RESCODE_FENCE_DOESNT_EXIST:
-			return _HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_DOESNT_EXIST, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			return _HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_DOESNT_EXIST, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 
 		default:
 			//Irrecoverable errors: f_ptr unlocked at source
@@ -494,9 +500,10 @@ _CommandControllerFenceJoin (InstanceHolderForSession *instance_sesn_ptr, WebSoc
  * @locked RW f_ptr: must be locked by the caller
  */
 UFSRVResult *
-MarshalGeoFenceJoinToUser (Session *sesn_ptr, Session *sesn_ptr_target, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr, unsigned call_flags)
+MarshalGeoFenceJoinToUser (InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_target, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr, unsigned call_flags)
 {
-	Fence *f_ptr=FENCESTATE_FENCE(fence_state_ptr);
+	Fence *f_ptr = FENCESTATE_FENCE(fence_state_ptr);
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
 	Envelope command_envelope				=	ENVELOPE__INIT;
 	UfsrvCommandWire ufsrv_command	=	UFSRV_COMMAND_WIRE__INIT;
@@ -507,26 +514,26 @@ MarshalGeoFenceJoinToUser (Session *sesn_ptr, Session *sesn_ptr_target, FenceSta
 	ufsrv_command.header					=	&header;	//connect header to outer ufrsrv command
 	ufsrv_command.fencecommand		=	&fence_command; //connect user command
 
-	command_envelope.source="0";
+	command_envelope.sourceufsrvuid = "0";
 	//command_envelope.sourcedevice=1; command_envelope.has_sourcedevice=1;
-	command_envelope.timestamp=GetTimeNowInMillis(); command_envelope.has_timestamp=1;
+	command_envelope.timestamp = GetTimeNowInMillis(); command_envelope.has_timestamp = 1;
 
 	//header initialisation
-	header.cid			=	SESSION_ID(sesn_ptr); header.has_cid=1;
-	header.when			=	command_envelope.timestamp; header.has_when=1;
+	header.cid			=	SESSION_ID(sesn_ptr); header.has_cid = 1;
+	header.when			=	command_envelope.timestamp; header.has_when = 1;
 	header.command	=	FENCE_COMMAND__COMMAND_TYPES__JOIN;
-	header.args			=	COMMAND_ARGS__GEO_BASED; header.has_args=1;
+	header.args			=	COMMAND_ARGS__GEO_BASED; header.has_args = 1;
 
 	//ufsrvcommand initialisation
-	ufsrv_command.ufsrvtype=UFSRV_COMMAND_WIRE__UFSRV_TYPE__UFSRV_FENCE;
-	fence_command.header=&header;
+	ufsrv_command.ufsrvtype = UFSRV_COMMAND_WIRE__UFSRV_TYPE__UFSRV_FENCE;
+	fence_command.header = &header;
 
 	//setup fences
 	UserRecord user_record_originator;
 	FenceRecord *fence_records[1];
 	FenceRecord	fence_record;
-	fence_records[0]=&fence_record;
-	fence_command.fences=fence_records;
+	fence_records[0] = &fence_record;
+	fence_command.fences = fence_records;
 
 	MakeUserRecordFromSessionInProto (GetUfsrvSystemUser(), &user_record_originator, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
 	fence_command.originator		=	&user_record_originator;
@@ -535,13 +542,14 @@ MarshalGeoFenceJoinToUser (Session *sesn_ptr, Session *sesn_ptr_target, FenceSta
 	fence_record.has_invited_by	=	1;
 	fence_record.invited_when		=	fence_state_ptr->when_invited;	fence_record.has_invited_when	=	1;
 
-	fence_records[0]=MakeFenceRecordInProto (sesn_ptr, f_ptr, &fence_record);
+	fence_records[0] = MakeFenceRecordInProto (ctx_ptr, &(InstanceContextForFence){FENCESTATE_INSTANCE_HOLDER(fence_state_ptr), f_ptr}, &fence_record);
 	MakeFenceUserPreferencesInProto(sesn_ptr, fence_state_ptr, &fence_record);
-	fence_command.n_fences=1;
+	fence_command.n_fences = 1;
 
 	wsm_ptr->type=WEB_SOCKET_MESSAGE__TYPE__REQUEST;
-	UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
-	UFSRVResult *res_ptr=UfsrvCommandInvokeCommand (sesn_ptr, sesn_ptr_target, wsm_ptr, NULL, (void *)&ufsrv_descpription/*&ufsrv_command*/, uFENCE_V1_IDX);
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription = {header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
+	UFSRVResult *res_ptr = UfsrvCommandInvokeUserCommand(ctx_ptr, ctx_ptr_target, wsm_ptr, NULL,
+                                                       (void *) &ufsrv_descpription/*&ufsrv_command*/, uFENCE_V1_IDX);
 
 	//DestructFenceRecordsProto (fence_records, fence_command.n_fences, false);//fence_records statically allocated
 	DestructFenceRecordProto (&fence_record, false);
@@ -560,74 +568,77 @@ MarshalGeoFenceJoinToUser (Session *sesn_ptr, Session *sesn_ptr_target, FenceSta
  *  @dynamic_memory fence_records_ptr: array of FenceRecord initiated with dynamic values. Must be freed with DestructFenceRecordProto (FenceRecord **fence_records_ptr, unsigned count)
  */
 inline static UFSRVResult *
-_MarshalNewFenceJoin (Session *sesn_ptr, UFSRVResult *res_ptr, WebSocketMessage *wsm_ptr_orig, FenceRecord *fence_record_ptr, DataMessage *data_msg_ptr_received, CollectionDescriptor *invited_eids_collection_ptr)
+_MarshalNewFenceJoin (InstanceContextForSession *ctx_ptr, UFSRVResult *res_ptr, WebSocketMessage *wsm_ptr_received, FenceRecord *fence_record_ptr, DataMessage *data_msg_ptr_received, CollectionDescriptor *invited_eids_collection_ptr)
 {
-	Fence *f_ptr;
+	if (unlikely(IS_EMPTY(res_ptr->result_user_data))) {_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)}
 
-	if (unlikely(IS_EMPTY((f_ptr=(Fence *)res_ptr->result_user_data))))	{_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)}
+  InstanceHolderForFence *instance_f_ptr = (InstanceHolderForFence *)res_ptr->result_user_data;
+	Fence *f_ptr = FenceOffInstanceHolder((InstanceHolderForFence *)res_ptr->result_user_data);
 
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 
-	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__JOIN, COMMAND_ARGS__CREATED);
-	MakeFenceRecordInProto(sesn_ptr, f_ptr, &fence_record);
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
-	size_t legacymessage_encoded_sz=data_message__get_packed_size(data_msg_ptr_received);
+	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__JOIN, COMMAND_ARGS__CREATED);
+	MakeFenceRecordInProto(ctx_ptr, &(InstanceContextForFence){instance_f_ptr, f_ptr}, &fence_record);
+
+	size_t legacymessage_encoded_sz = data_message__get_packed_size(data_msg_ptr_received);
 	uint8_t legacymessage_encoded[legacymessage_encoded_sz];
 	data_message__pack(data_msg_ptr_received, legacymessage_encoded);
-	command_envelope.legacymessage.data=legacymessage_encoded;
-	command_envelope.legacymessage.len=legacymessage_encoded_sz;
-	command_envelope.has_legacymessage=1;
+	command_envelope.legacymessage.data = legacymessage_encoded;
+	command_envelope.legacymessage.len = legacymessage_encoded_sz;
+	command_envelope.has_legacymessage = 1;
 	//command_envelope.type=ENVE//this originally comes from the incoming json msg read by the api endpoint /v1/Fence
 
-	command_envelope.sourcedevice=1; command_envelope.has_sourcedevice=1;
+	command_envelope.sourcedevice = DEFAULT_DEVICE_ID; command_envelope.has_sourcedevice = 1;
 
-	UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
-	UfsrvCommandInvokeCommand (sesn_ptr, NULL, wsm_ptr_orig, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription = {header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
+  UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr_received, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
 
 	if (IS_PRESENT(invited_eids_collection_ptr) && invited_eids_collection_ptr->collection_sz>0)
-		MarshalFenceInvitation (sesn_ptr, f_ptr, wsm_ptr_orig, data_msg_ptr_received, invited_eids_collection_ptr, NULL, 0);
+		MarshalFenceInvitation (ctx_ptr, instance_f_ptr, wsm_ptr_received, data_msg_ptr_received, invited_eids_collection_ptr, NULL, 0);
 
 	DestructFenceRecordProto (&fence_record, false);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
-
 
 /**
  * 	@brief: Similar to '_MarshalNewFenceJoin', except the user is given an indication of rejoining a group of which it is already
  * 	a member. Invitations are not re-sent for invited users.
  */
 inline static UFSRVResult *
-_MarshalNewFenceReJoin (Session *sesn_ptr, UFSRVResult *res_ptr, WebSocketMessage *wsm_ptr_orig, FenceRecord *fence_record_ptr, DataMessage *data_msg_ptr_received)
+_MarshalNewFenceReJoin (InstanceContextForSession *ctx_ptr, const InstanceContextForFenceStateDescriptor  *instance_ctx_fstate_ptr, WebSocketMessage *wsm_ptr_orig, FenceRecord *fence_record_ptr, DataMessage *data_msg_ptr_received)
 {
-	Fence *f_ptr;
 
-	if (unlikely(IS_EMPTY((f_ptr=(Fence *)res_ptr->result_user_data))))	{_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)}
+  Fence *f_ptr = instance_ctx_fstate_ptr->instance_f_ptr->f_ptr;
 
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 
-	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__JOIN, COMMAND_ARGS__UNCHANGED);
-	MakeFenceRecordInProto(sesn_ptr, f_ptr, &fence_record);
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
-	size_t legacymessage_encoded_sz=data_message__get_packed_size(data_msg_ptr_received);
+	_PrepareMarshalMessageForFence(&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__JOIN, COMMAND_ARGS__UNCHANGED);
+	MakeFenceRecordInProto(ctx_ptr, instance_ctx_fstate_ptr->instance_f_ptr, &fence_record);
+  MakeFenceUserPreferencesInProto(sesn_ptr, instance_ctx_fstate_ptr->fstate_ptr, &fence_record);
+
+	size_t legacymessage_encoded_sz = data_message__get_packed_size(data_msg_ptr_received);
 	uint8_t legacymessage_encoded[legacymessage_encoded_sz];
 	data_message__pack(data_msg_ptr_received, legacymessage_encoded);
-	command_envelope.legacymessage.data=legacymessage_encoded;
-	command_envelope.legacymessage.len=legacymessage_encoded_sz;
-	command_envelope.has_legacymessage=1;
+	command_envelope.legacymessage.data = legacymessage_encoded;
+	command_envelope.legacymessage.len  = legacymessage_encoded_sz;
+	command_envelope.has_legacymessage  = 1;
 
-	command_envelope.sourcedevice=1; command_envelope.has_sourcedevice=1;
+	command_envelope.sourcedevice = DEFAULT_DEVICE_ID; command_envelope.has_sourcedevice = 1;
 
-	UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
-	UfsrvCommandInvokeCommand (sesn_ptr, NULL, wsm_ptr_orig, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription = {header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
+  UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr_orig, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
 
 	DestructFenceRecordProto (&fence_record, false);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
-
 
 /**
  * 	@brief:	Marshal a confirmation of a fence join event, which could've been based on prior invitation, or self-initiated.
@@ -640,92 +651,33 @@ _MarshalNewFenceReJoin (Session *sesn_ptr, UFSRVResult *res_ptr, WebSocketMessag
  *  @dynamic_memory fence_records_ptr: array of FenceRecord initiated with dynamic values. Must be freed with DestructFenceRecordProto (FenceRecord **fence_records_ptr, unsigned count)
  */
 UFSRVResult *
-MarshalFenceJoinToUser (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
+MarshalFenceJoinToUser (InstanceContextForSession *ctx_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
 {
-	Fence *f_ptr=FENCESTATE_FENCE(fence_state_ptr);
+	Fence *f_ptr = FENCESTATE_FENCE(fence_state_ptr);
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr, FENCE_COMMAND__COMMAND_TYPES__JOIN, COMMAND_ARGS__ACCEPTED);
-	MakeFenceRecordInProto(sesn_ptr, f_ptr, &fence_record);
+	MakeFenceRecordInProto(ctx_ptr, &(InstanceContextForFence){FENCESTATE_INSTANCE_HOLDER(fence_state_ptr), f_ptr}, &fence_record);
 	MakeFenceUserPreferencesInProto(sesn_ptr, fence_state_ptr, &fence_record);
 
-	if (IS_PRESENT(data_msg_ptr))
-	{
-		size_t 	legacymessage_encoded_sz=data_message__get_packed_size(data_msg_ptr);
+	if (IS_PRESENT(data_msg_ptr)) {
+		size_t 	legacymessage_encoded_sz = data_message__get_packed_size(data_msg_ptr);
 		uint8_t legacymessage_encoded[legacymessage_encoded_sz];
 		data_message__pack(data_msg_ptr, legacymessage_encoded);
-		command_envelope.legacymessage.data=legacymessage_encoded;
-		command_envelope.legacymessage.len=legacymessage_encoded_sz;
-		command_envelope.has_legacymessage=1;
+		command_envelope.legacymessage.data = legacymessage_encoded;
+		command_envelope.legacymessage.len = legacymessage_encoded_sz;
+		command_envelope.has_legacymessage = 1;
 	}
 
-	UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
-	UfsrvCommandInvokeCommand (sesn_ptr, NULL, wsm_ptr_orig, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription = {header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
+  UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr_orig, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
 
 	DestructFenceRecordProto (&fence_record, false);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
-
-#if 0
-	unsigned long eid;
-
-	eid=GetFenceEventId (f_ptr, 0/*LOCK_FLAG*/);
-
-	Envelope 			command_envelope	= ENVELOPE__INIT;
-	CommandHeader 		header				= COMMAND_HEADER__INIT;
-	UfsrvCommandWire	ufsrv_command		= UFSRV_COMMAND_WIRE__INIT;
-	FenceCommand 		fence_command		= FENCE_COMMAND__INIT;
-
-	//plumb in static elements
-	command_envelope.ufsrvcommand=&ufsrv_command;	//connect ufrsvcommand
-	ufsrv_command.header=&header;	//connect header to outer ufrsrv command
-	fence_command.header=&header;	//connect header to fence command
-
-	//plumb in FenceRecords array
-	FenceRecord *fence_records[1];
-	ufsrv_command.fencecommand=&fence_command;	//connect command
-	ufsrv_command.ufsrvtype=UFSRV_COMMAND_WIRE__UFSRV_TYPE__UFSRV_FENCE;
-
-	FenceRecord *fence_record_ptr=MakeFenceRecordInProto(sesn_ptr, f_ptr, NULL);
-
-	fence_records[0]=fence_record_ptr;
-	fence_command.fences=fence_records;
-	fence_command.n_fences=1;
-
-	//envelope initialisations
-	if (IS_PRESENT(data_msg_ptr))
-	{
-		size_t legacymessage_encoded_sz=data_message__get_packed_size(data_msg_ptr);
-		unsigned char *legacymessage_encoded=calloc(1, legacymessage_encoded_sz);
-		data_message__pack(data_msg_ptr, legacymessage_encoded);
-		command_envelope.legacymessage.data=legacymessage_encoded;
-		command_envelope.legacymessage.len=legacymessage_encoded_sz;
-		command_envelope.has_legacymessage=1;
-		//command_envelope.type=ENVE//this originally comes from the incoming json msg read by the api endpoint /v1/Fence
-	}
-
-	command_envelope.source="0";
-	command_envelope.sourcedevice=1; command_envelope.has_sourcedevice=1;
-	command_envelope.timestamp=GetTimeNowInMillis(); command_envelope.has_timestamp=1;
-
-	header.cid=SESSION_ID(sesn_ptr); header.has_cid=1;
-	header.eid=eid; header.has_eid=1;
-	header.when=command_envelope.timestamp; header.has_when=1;
-	header.command=FENCE_COMMAND__COMMAND_TYPES__JOIN;
-	header.args=COMMAND_ARGS__ACCEPTED; header.has_args=1;
-
-	UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
-	UfsrvCommandInvokeCommand (sesn_ptr, NULL, wsm_ptr_orig, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
-
-	DestructFenceRecordsProto (fence_records, fence_command.n_fences, false);//false because fence_records array was stack allocation
-
-	MarshalFenceStateSyncForJoin (sesn_ptr, sesn_ptr, f_ptr, 0);
-
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
-#endif
 }
-
 
 /**
  * 	@brief:	Marshal a confirmation of a fence join event, which is based on prior invitation either GEO or by a another user
@@ -738,30 +690,30 @@ MarshalFenceJoinToUser (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr
  *  @dynamic_memory fence_records_ptr: array of FenceRecord initiated with dynamic values. Must be freed with DestructFenceRecordProto (FenceRecord **fence_records_ptr, unsigned count)
  */
 UFSRVResult *
-MarshalFenceJoinInvitedToUser (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
+MarshalFenceJoinInvitedToUser (InstanceContextForSession *ctx_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
 {
-	Fence *f_ptr=FENCESTATE_FENCE(fence_state_ptr);
+	Fence *f_ptr = FENCESTATE_FENCE(fence_state_ptr);
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr, FENCE_COMMAND__COMMAND_TYPES__JOIN, COMMAND_ARGS__ACCEPTED_INVITE);
-	MakeFenceRecordInProto(sesn_ptr, f_ptr, &fence_record); //we have to reinitialise record with full load, because it is anew fence join
+	MakeFenceRecordInProto(ctx_ptr, &(InstanceContextForFence){FENCESTATE_INSTANCE_HOLDER(fence_state_ptr), f_ptr}, &fence_record); //we have to reinitialise record with full load, because it is anew fence join
 	MakeFenceUserPreferencesInProto(sesn_ptr, fence_state_ptr, &fence_record);
 
 	MakeUfsrvUidInProto(&(fence_state_ptr->invited_by), &(fence_record.invited_by), false); //dynamically allocates buffer
 	fence_record.has_invited_by	=	1;
 	fence_record.invited_when		=	fence_state_ptr->when_invited;	fence_record.has_invited_when	=	1;
 
-	wsm_ptr_orig->type=WEB_SOCKET_MESSAGE__TYPE__REQUEST;
-	UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
-	UfsrvCommandInvokeCommand (sesn_ptr, NULL, wsm_ptr_orig, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
+	wsm_ptr_orig->type = WEB_SOCKET_MESSAGE__TYPE__REQUEST;
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription = {header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
+  UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr_orig, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
 
 	DestructFenceRecordProto (&fence_record, false);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
-
 
 /**
  * 	@brief: Marshals a Fence state sync message with emphasis on new join to Fence participants, enabling clients to refresh their views.
@@ -774,25 +726,25 @@ MarshalFenceJoinInvitedToUser (Session *sesn_ptr, FenceStateDescriptor *fence_st
  *
  */
 UFSRVResult *
-MarshalFenceStateSyncForJoin (Session *sesn_ptr, Session *sesn_ptr_newly_joined, Fence *f_ptr, unsigned call_flags)
+MarshalFenceStateSyncForJoin (InstanceContextForSession *ctx_ptr, Session *sesn_ptr_newly_joined, InstanceHolderForFence *instance_f_ptr, unsigned call_flags)
 {
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+  Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
 
-	if (FENCE_SESSIONS_LIST_SIZE(f_ptr)<=0)
-	{
+	if (FENCE_SESSIONS_LIST_SIZE(f_ptr) <= 0) {
 #ifdef __UF_TESTING
 		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cname:'%s', fid:'%lu'} Fence has zero members ", __func__, pthread_self(), sesn_ptr, FENCE_CNAME(f_ptr), FENCE_ID(f_ptr));
 #endif
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_EMPTY_INVITATION_LIST);
+		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_EMPTY_INVITATION_LIST)
 	}
 
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, NULL, NULL, FENCE_COMMAND__COMMAND_TYPES__JOIN, COMMAND_ARGS__SYNCED);
 
 	UserRecord user_record_originator;
-//	DestructUserInfoInProto (fence_command.originator, true);//we don't need this, as it's the wrong user
 	fence_command.originator	=	MakeUserRecordFromSessionInProto(sesn_ptr_newly_joined, &user_record_originator, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
 
-	MakeFenceRecordInProto(sesn_ptr, f_ptr, &fence_record);
+	MakeFenceRecordInProto(ctx_ptr, &(InstanceContextForFence){instance_f_ptr, f_ptr}, &fence_record);
 
 	ListEntry *eptr				= NULL;
 
@@ -806,10 +758,8 @@ MarshalFenceStateSyncForJoin (Session *sesn_ptr, Session *sesn_ptr_newly_joined,
 //			_MarshalFenceStateSync(sesn_ptr, NULL, f_ptr, &command_envelope, false);
 //			fence_command.originator=originator_ptr;
 //			header.has_when_client	=	0;
-		}
-		else
-		{
-			_MarshalFenceStateSync(sesn_ptr, sesn_ptr_listed, f_ptr, &command_envelope);
+		} else {
+			_MarshalFenceStateSync(ctx_ptr, &(InstanceContextForSession){(InstanceHolderForSession *)eptr->whatever,sesn_ptr_listed}, f_ptr, &command_envelope);
 		}
 	}
 
@@ -817,62 +767,6 @@ MarshalFenceStateSyncForJoin (Session *sesn_ptr, Session *sesn_ptr_newly_joined,
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
-#if 0
-	UserRecord 				*originator_ptr		= NULL;
-	Envelope 					command_envelope	= ENVELOPE__INIT;
-	CommandHeader 		header						= COMMAND_HEADER__INIT;
-	UfsrvCommandWire	ufsrv_command			= UFSRV_COMMAND_WIRE__INIT;
-	FenceCommand 			fence_command			= FENCE_COMMAND__INIT;
-
-	//plumb in static elements
-	command_envelope.ufsrvcommand				=	&ufsrv_command;	//connect ufrsvcommand
-	ufsrv_command.header								=	&header;	//connect header to outer ufrsrv command
-	fence_command.header								=	&header;	//connect header to fence command
-
-	//plumb in FenceRecords array
-	FenceRecord *fence_records[1];
-	ufsrv_command.fencecommand					=	&fence_command;	//connect command
-	ufsrv_command.ufsrvtype							=	UFSRV_COMMAND_WIRE__UFSRV_TYPE__UFSRV_FENCE;
-
-	FenceRecord *fence_record_ptr				=	MakeFenceRecordInProto(sesn_ptr, f_ptr, NULL);
-
-	if (sesn_ptr_newly_joined )	originator_ptr=MakeUserRecordForSelfInProto (sesn_ptr_newly_joined, PROTO_USER_RECORD_MINIMAL);
-
-	fence_records[0]=fence_record_ptr;
-	fence_command.fences=fence_records;
-	fence_command.n_fences=1;
-	fence_command.originator=originator_ptr;
-
-	command_envelope.source="0";//ufsrv initiated origin
-	command_envelope.timestamp=GetTimeNowInMillis(); command_envelope.has_timestamp=1;
-
-	header.when=command_envelope.timestamp; header.has_when=1;
-	header.command=FENCE_COMMAND__COMMAND_TYPES__JOIN;
-	header.args=COMMAND_ARGS__SYNCED; header.has_args=1;
-
-	ListEntry *eptr				= NULL;
-
-	for (eptr=f_ptr->fence_user_sessions_list.head; eptr; eptr=eptr->next)
-	{
-		//source user
-		if ((!IS_EMPTY(sesn_ptr_newly_joined)) && (SESSION_ID(sesn_ptr_newly_joined)==SESSION_ID(SESSION_IN_LISTENTRY(eptr))))
-		{
-			header.command=FENCE_COMMAND__COMMAND_TYPES__STATE;
-			fence_command.originator=NULL;
-			_MarshalFenceStateSync(sesn_ptr, NULL, f_ptr, &command_envelope, false);
-			header.command=FENCE_COMMAND__COMMAND_TYPES__JOIN;//restore for other users
-			fence_command.originator=originator_ptr;
-		}
-		else
-		{
-			_MarshalFenceStateSync(sesn_ptr, SESSION_IN_LISTENTRY(eptr), f_ptr, &command_envelope, false);
-		}
-	}
-
-	DestructFenceRecordsProto (fence_records, fence_command.n_fences, false);
-
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
-#endif
 }
 
 //// END JOIN \\\\
@@ -892,7 +786,7 @@ _CommandControllerFenceLeave (InstanceHolderForSession *instance_sesn_ptr, WebSo
 	FenceCommand	*fcmd_ptr;
 	UFSRVResult 	*res_ptr = NULL;
 	FenceRecord 	*fence_record_ptr = NULL;
-	InstanceHolder *instance_holder_ptr = NULL;
+	InstanceHolderForFence *instance_f_ptr = NULL;
 
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
@@ -911,35 +805,35 @@ _CommandControllerFenceLeave (InstanceHolderForSession *instance_sesn_ptr, WebSo
 				FENCE_CALLFLAG_SEARCH_BACKEND|FENCE_CALLFLAG_HASH_FENCE_LOCALLY|
 				FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE|FENCE_CALLFLAG_KEEP_FENCE_LOCKED|FENCE_CALLFLAG_LOCK_FENCE_BLOCKING);
 
-    instance_holder_ptr = (InstanceHolder *)SESSION_RESULT_USERDATA(sesn_ptr);
-		fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+    instance_f_ptr = (InstanceHolder *)SESSION_RESULT_USERDATA(sesn_ptr);
+		fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 	} else if	(IS_STR_LOADED(fence_record_ptr->cname)) {
 		FindFenceByCanonicalName (sesn_ptr, fence_record_ptr->cname, &fence_lock_already_owned,
 				FENCE_CALLFLAG_SEARCH_BACKEND|FENCE_CALLFLAG_HASH_FENCE_LOCALLY|
 				FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE|FENCE_CALLFLAG_KEEP_FENCE_LOCKED|FENCE_CALLFLAG_LOCK_FENCE_BLOCKING);
-		instance_holder_ptr = (InstanceHolder *)SESSION_RESULT_USERDATA(sesn_ptr);
+    instance_f_ptr = (InstanceHolder *)SESSION_RESULT_USERDATA(sesn_ptr);
 	}
 
-	if (IS_EMPTY(instance_holder_ptr)) {
+	if (IS_EMPTY(instance_f_ptr)) {
 	  //try flag is off, so if empty fence could not be located
-		if (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)||
-				SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_BACKEND_RESOURCE_NULL)) {
+		if (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST) || SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_BACKEND_RESOURCE_NULL)) {
 #ifdef __UF_TESTING
-			syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', uname:'%s', fid:'%lu'}: ERROR: COULD NOT FIND FENCE: LEAVE COMMAND IGNORED: User not part of fence", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), SESSION_USERNAME(sesn_ptr), fence_record_ptr->fid);
+			syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', uname:'%s', fid:'%lu'}: ERROR: COULD NOT FIND FENCE: LEAVE COMMAND IGNORED: User not part of fence?", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), SESSION_USERNAME(sesn_ptr), fence_record_ptr->fid);
 #endif
 
-			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_FENCE_MEMBERSHIP);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_DOESNT_EXIST, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_FENCE_MEMBERSHIP)
 		} else {
 			//could be locking issue
-			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, SESSION_RESULT_CODE(sesn_ptr));
+			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, SESSION_RESULT_CODE(sesn_ptr))
 		}
 	}
 
 	//>>> FENCE SHOULD BE IN RW LOCKED STATE
 
-	f_ptr = (Fence *)GetInstance(instance_holder_ptr);
+	f_ptr = (Fence *)GetInstance(instance_f_ptr);
 
-	NetworkRemoveUserFromFence (instance_sesn_ptr, f_ptr, COMMAND_CTX_DATA(data_msg_ptr), LT_USER_INITIATED, 0);
+	NetworkRemoveUserFromFence (instance_sesn_ptr, &(InstanceContextForFence){instance_f_ptr, f_ptr}, COMMAND_CTX_DATA(data_msg_ptr), LT_USER_INITIATED, 0);
 	if (SESSION_RESULT_TYPE_ERROR(sesn_ptr)) {
 		NetworkRemoveUserFromInvitedFence (instance_sesn_ptr, f_ptr, COMMAND_CTX_DATA(data_msg_ptr), LT_USER_INITIATED, 0);
 	}
@@ -960,7 +854,7 @@ _CommandControllerFenceLeave (InstanceHolderForSession *instance_sesn_ptr, WebSo
  *	@locked RW f_ptr: must be locked by the caller
  */
 UFSRVResult *
-MarshalFenceStateSyncForLeave (Session *sesn_ptr, Session *sesn_ptr_newly_left, Fence *f_ptr, DataMessage *data_msg_ptr_orig, unsigned call_flags)
+MarshalFenceStateSyncForLeave (InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_newly_left, InstanceContextForFence *ctx_f_ptr, DataMessage *data_msg_ptr_orig, unsigned call_flags)
 {
 #if 0
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
@@ -982,35 +876,39 @@ MarshalFenceStateSyncForLeave (Session *sesn_ptr, Session *sesn_ptr_newly_left, 
 	ufsrv_command.fencecommand	=	&fence_command;
 	ufsrv_command.ufsrvtype			=	UFSRV_COMMAND_WIRE__UFSRV_TYPE__UFSRV_FENCE;
 
-	FenceRecord *fence_record_ptr=MakeFenceRecordInProto(sesn_ptr, f_ptr, NULL);
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
+	Session *sesn_ptr_newly_left = ctx_ptr_newly_left->sesn_ptr;
+	Fence *f_ptr = ctx_f_ptr->f_ptr;
 
-	if (!IS_EMPTY(sesn_ptr_newly_left))	originator_ptr=MakeUserRecordForSelfInProto (sesn_ptr_newly_left, PROTO_USER_RECORD_MINIMAL);
+	FenceRecord *fence_record_ptr = MakeFenceRecordInProto(ctx_ptr, ctx_f_ptr, NULL);
+
+	if (!IS_EMPTY(sesn_ptr_newly_left))	originator_ptr = MakeUserRecordForSelfInProto (sesn_ptr_newly_left, PROTO_USER_RECORD_MINIMAL);
 
 	fence_records[0]				=	fence_record_ptr;
 	fence_command.fences		=	fence_records;
 	fence_command.n_fences	=	1;
 	fence_command.originator=	NULL;
 
-	command_envelope.source			=	"0";
-	command_envelope.timestamp	=	GetTimeNowInMillis(); command_envelope.has_timestamp=1;
+	command_envelope.sourceufsrvuid			=	"0";
+	command_envelope.timestamp	=	GetTimeNowInMillis(); command_envelope.has_timestamp = 1;
 
-	header.when									=	command_envelope.timestamp; header.has_when=1;
+	header.when									=	command_envelope.timestamp; header.has_when = 1;
 	header.command							=	FENCE_COMMAND__COMMAND_TYPES__LEAVE;
-	header.eid									=	f_ptr->fence_events.last_event_id;	header.has_eid=1;
-	if (call_flags == LT_GEO_BASED)		header.args=COMMAND_ARGS__GEO_BASED;
+	header.eid									=	f_ptr->fence_events.last_event_id;	header.has_eid = 1;
+	if (call_flags == LT_GEO_BASED)		header.args = COMMAND_ARGS__GEO_BASED;
 	//else if (call_flags==LT_BANNED)	header.args=COMMAND_ARGS__BANNED;
 	else header.args = COMMAND_ARGS__ACCEPTED;
 	header.has_args = 1;
 
 	if (IS_PRESENT(data_msg_ptr_orig)) {
-    header.when_client					=	data_msg_ptr_orig->ufsrvcommand->fencecommand->header->when;
+    header.when_client			=	data_msg_ptr_orig->ufsrvcommand->fencecommand->header->when;
     header.has_when_client	= 1;
 	}
 
-	_MarshalFenceStateSync(sesn_ptr, NULL, f_ptr, &command_envelope);
+	_MarshalFenceStateSync(ctx_ptr, NULL, f_ptr, &command_envelope);
 
 	if (FENCE_SESSIONS_LIST_SIZE(f_ptr) <= 0) {
-		DestructFenceRecordsProto (fence_records, fence_command.n_fences, false);
+		DestructFenceRecordsProto (fence_records, fence_command.n_fences, false, true);
 #ifdef __UF_TESTING
 			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cname:'%s', fid:'%lu'} Fence has zero members ", __func__, pthread_self(), sesn_ptr, FENCE_CNAME(f_ptr), FENCE_ID(f_ptr));
 #endif
@@ -1027,11 +925,11 @@ MarshalFenceStateSyncForLeave (Session *sesn_ptr, Session *sesn_ptr_newly_left, 
 	ListEntry	*eptr		= 	NULL;
 
 	for (eptr=FENCE_USER_SESSION_LIST(f_ptr).head; eptr; eptr=eptr->next) {
-    _MarshalFenceStateSync(sesn_ptr, SessionOffInstanceHolder((InstanceHolderForSession *)eptr->whatever), f_ptr, &command_envelope);
+    _MarshalFenceStateSync(ctx_ptr, &(InstanceContextForSession){(InstanceHolderForSession *)eptr->whatever, SessionOffInstanceHolder((InstanceHolderForSession *)eptr->whatever)}, f_ptr, &command_envelope);
 	}
 
 	DestructUserInfoInProto (originator_ptr, true);
-	DestructFenceRecordsProto (fence_records, fence_command.n_fences, false);
+	DestructFenceRecordsProto (fence_records, fence_command.n_fences, false, true);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 #endif
@@ -1043,10 +941,10 @@ MarshalFenceStateSyncForLeave (Session *sesn_ptr, Session *sesn_ptr_newly_left, 
 
 #if 1
 
-static inline UFSRVResult *_VerifyInviteCommand (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, DataMessage *data_msg_ptr, WebSocketMessage *wsm_ptr_received, unsigned long fence_call_flags);
-static inline UFSRVResult *_MarshalFenceStateSyncForInvite (Session *sesn_ptr, Session *sesn_ptr_newly_invited, Fence *f_ptr, FenceEvent *fence_event_ptr, unsigned call_flags);
-static inline UFSRVResult *_MarshalFenceSyncInviteForSelf (Session *sesn_ptr, Session *sesn_ptr_newly_invited, FenceStateDescriptor *, FenceEvent *fence_event_ptr, unsigned call_flags);
-static inline UFSRVResult *_MarshalFenceInviteUnchanged (Session *sesn_ptr, unsigned long userid, Fence *f_ptr, DataMessage *data_msg_ptr, unsigned call_flags);
+static inline UFSRVResult *_VerifyInviteCommand (InstanceContextForSession *, FenceStateDescriptor *fence_state_ptr, DataMessage *data_msg_ptr, WebSocketMessage *wsm_ptr_received, unsigned long fence_call_flags);
+static inline UFSRVResult *_MarshalFenceStateSyncForInvite (InstanceContextForSession *, InstanceContextForSession *, Fence *f_ptr, FenceEvent *fence_event_ptr, unsigned call_flags);
+static inline UFSRVResult *_MarshalFenceSyncInviteForSelf (InstanceContextForSession *, InstanceContextForSession *, FenceStateDescriptor *, FenceEvent *fence_event_ptr, unsigned call_flags);
+static inline UFSRVResult *_MarshalFenceInviteUnchanged (InstanceContextForSession *, unsigned long userid, Fence *f_ptr, DataMessage *data_msg_ptr, unsigned call_flags);
 
 /**
  * 	@brief: The main controller for handling user commands for adding/removing users to groups
@@ -1065,7 +963,7 @@ _CommandControllerFenceInvite (InstanceHolderForSession *instance_sesn_ptr, WebS
 	switch (data_msg_ptr->ufsrvcommand->fencecommand->header->args)
 	{
 		case COMMAND_ARGS__ADDED://user added members to invite list
-			res_ptr=_CommandControllerFenceInviteAdd (instance_sesn_ptr, wsm_ptr_recieved, data_msg_ptr);
+			res_ptr=_CommandControllerFenceInviteAdd(instance_sesn_ptr, wsm_ptr_recieved, data_msg_ptr);
 			break;
 
 		case COMMAND_ARGS__DELETED:
@@ -1073,12 +971,11 @@ _CommandControllerFenceInvite (InstanceHolderForSession *instance_sesn_ptr, WebS
 			break;
 
 		case COMMAND_ARGS__SYNCED:
-				res_ptr = _CommandControllerFenceInviteSynced	(instance_sesn_ptr, wsm_ptr_recieved, data_msg_ptr);
+				res_ptr = _CommandControllerFenceInviteSynced(instance_sesn_ptr, wsm_ptr_recieved, data_msg_ptr);
 		break;
 		default:
 			syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', arg:'%d'}: ERROR: UKNOWN FENCE INVITE COMMAND ARG...", __func__, pthread_self(), sesn_ptr, data_msg_ptr->ufsrvcommand->fencecommand->header->args);
 	}
-
 
 	exit_final:
 	if (IS_EMPTY(res_ptr))	goto exit_catch_all; //this catches the default case
@@ -1095,7 +992,7 @@ _CommandControllerFenceInvite (InstanceHolderForSession *instance_sesn_ptr, WebS
  *	@unlocks Fence *:
  */
 inline static UFSRVResult *
-_CommandControllerFenceInviteAdd (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
+_CommandControllerFenceInviteAdd (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr)
 {
 	bool 									fence_already_locked = false;
 	InstanceHolderForFenceStateDescriptor *instance_fstate_ptr;
@@ -1107,11 +1004,7 @@ _CommandControllerFenceInviteAdd (InstanceHolderForSession *instance_sesn_ptr, W
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
 	//locks by default
-	IsUserAllowedToChangeFence (sesn_ptr,
-															data_msg_ptr->ufsrvcommand->fencecommand->fences[0]->fid,
-															data_msg_ptr->ufsrvcommand->fencecommand->fences[0]->cname,
-															&fence_already_locked,
-															_FENCE_CALL_FLAGS_STATESYNC);
+	IsUserAllowedToChangeFence(sesn_ptr,data_msg_ptr->ufsrvcommand->fencecommand->fences[0]->fid, data_msg_ptr->ufsrvcommand->fencecommand->fences[0]->cname, &fence_already_locked, _FENCE_CALL_FLAGS_STATESYNC);
 
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	{
 	  instance_fstate_ptr = (InstanceHolderForFenceStateDescriptor *)SESSION_RESULT_USERDATA(sesn_ptr);
@@ -1125,10 +1018,10 @@ _CommandControllerFenceInviteAdd (InstanceHolderForSession *instance_sesn_ptr, W
       if (SESSION_RESULT_CODE(sesn_ptr) == RESCODE_FENCE_OWNERSHIP) {
 				fstate_ptr = FenceStateDescriptorOffInstanceHolder((InstanceHolderForFenceStateDescriptor *)SESSION_RESULT_USERDATA(sesn_ptr));
 				f_ptr		=	FenceOffInstanceHolder(fstate_ptr->instance_holder_fence);
-        _HandleFenceCommandError (sesn_ptr, fstate_ptr, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+        _HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, fstate_ptr, wsm_ptr_received, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
       } else { //RESCODE_FENCE_FENCE_MEMBERSHIP
 				f_ptr		=	FenceOffInstanceHolder((InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr));
-        _HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=(InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr)}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+        _HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=(InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr)}), wsm_ptr_received, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
       }
 
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
@@ -1144,7 +1037,7 @@ _CommandControllerFenceInviteAdd (InstanceHolderForSession *instance_sesn_ptr, W
 
 	//>>> FENCE SHOULD BE IN RW LOCKED STATE
 
-	_VerifyInviteCommand(sesn_ptr, fstate_ptr, data_msg_ptr, wsm_ptr_orig, FENCE_CALLFLAG_MARSHAL_COMMAND_ERROR);
+	_VerifyInviteCommand(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, fstate_ptr, data_msg_ptr, wsm_ptr_received, FENCE_CALLFLAG_MARSHAL_COMMAND_ERROR);
 	if (SESSION_RESULT_TYPE_ERROR(sesn_ptr)) {
 		//no change to fence state just command semantics are wrong
 		if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
@@ -1161,8 +1054,7 @@ _CommandControllerFenceInviteAdd (InstanceHolderForSession *instance_sesn_ptr, W
 
 	AddToFenceInvitedListFromProtoRecord(instance_sesn_ptr, FENCESTATE_INSTANCE_HOLDER(fstate_ptr), fence_record_ptr->invited_members, fence_record_ptr->n_invited_members, &invited_collections_for_result, true);
 
-	MarshalFenceInvitation (sesn_ptr, FENCESTATE_FENCE(fstate_ptr), wsm_ptr_orig, data_msg_ptr, &(invited_collections_for_result.first), &(invited_collections_for_result.second), 0);
-	//_MarshalFenceInvitationReceipt (sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), data_msg_ptr, &invited_eids_collection, NULL);
+	MarshalFenceInvitation(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, FENCESTATE_INSTANCE_HOLDER(fstate_ptr), wsm_ptr_received, data_msg_ptr, &(invited_collections_for_result.first), &(invited_collections_for_result.second), 0);
 
 	if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
 
@@ -1233,7 +1125,7 @@ _CommandControllerFenceInviteSynced (InstanceHolderForSession *instance_sesn_ptr
 
 	sesn_ptr_inviter = SessionOffInstanceHolder(instance_sesn_ptr_inviter);
 
-	_MarshalFenceSyncInviteForSelf (sesn_ptr_inviter, sesn_ptr/*invited*/, fence_state_ptr, &((FenceEvent){0}), 0);
+	_MarshalFenceSyncInviteForSelf (&(InstanceContextForSession){instance_sesn_ptr_inviter, sesn_ptr_inviter}, &(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}/*invited*/, fence_state_ptr, &((FenceEvent){0}), 0);
 
 	if (invited_by == 1)	SessionReturnToRecycler (instance_sesn_ptr_inviter, (ContextData *)NULL, CALLFLAGS_EMPTY);//this is not locked
 	else if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_inviter, __func__);
@@ -1245,13 +1137,13 @@ _CommandControllerFenceInviteSynced (InstanceHolderForSession *instance_sesn_ptr
 
 	return_error_membership:
 	rescode		=	RESCODE_FENCE_FENCE_MEMBERSHIP;
-	_HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=instance_holder_ptr_fence}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+	_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=instance_holder_ptr_fence}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 	if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 	return_error_internal_state:
 	rescode		=	RESCODE_FENCE_STATE;
-	_HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=instance_holder_ptr_fence}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+	_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=instance_holder_ptr_fence}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 	if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
@@ -1259,7 +1151,7 @@ _CommandControllerFenceInviteSynced (InstanceHolderForSession *instance_sesn_ptr
 	{
 		InstanceHolderForSession *instance_sesn_ptr_carrier			=	InstantiateCarrierSession(NULL, WORKERTYPE_UFSRVWORKER, CALL_FLAG_INSTANTIATE_FROM_SYSTEM_USER);
 		rescode												=	RESCODE_FENCE_FENCE_MEMBERSHIP;
-		size_t 	dangling_users_counter=	NetworkRemoveUsersFromInviteList (SessionOffInstanceHolder(instance_sesn_ptr_carrier), instance_holder_ptr_fence);
+		size_t 	dangling_users_counter=	NetworkRemoveUsersFromInviteList(&(InstanceContextForSession){instance_sesn_ptr_carrier, SessionOffInstanceHolder(instance_sesn_ptr_carrier)}, instance_holder_ptr_fence);
 
 		if (dangling_users_counter)	syslog(LOG_NOTICE, "%s {pid:'%lu, o:'%p', cid:'%lu', fo:'%p', fid:'%lu', dangling_sz:'%lu}: NOTICE: COULD NOT REMOVE ALL INVITED USERS", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), f_ptr, FENCE_ID(f_ptr), dangling_users_counter);
 
@@ -1278,83 +1170,49 @@ _CommandControllerFenceInviteSynced (InstanceHolderForSession *instance_sesn_ptr
  * 	@brief: Acknowledge the outcome of previous user request for which invited others
  */
 inline static UFSRVResult *
-_MarshalFenceInvitationReceipt (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, CollectionDescriptor *rejected_collection_ptr)
+_MarshalFenceInvitationReceipt (InstanceContextForSession *ctx_ptr, Fence *f_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, CollectionDescriptor *rejected_collection_ptr)
 {
-
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 
 	enum _CommandArgs command_arg;
 	if (IS_PRESENT(rejected_collection_ptr))	command_arg		=	COMMAND_ARGS__ACCEPTED_PARTIAL;
 	else 																			command_arg		=	COMMAND_ARGS__ACCEPTED;
 
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr, FENCE_COMMAND__COMMAND_TYPES__INVITE, command_arg);
 
-	_MarshalCommandToUser(sesn_ptr, NULL, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+	_MarshalCommandToUser(ctx_ptr, NULL, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
-#if 0
-	Envelope 					command_envelope	= ENVELOPE__INIT;
-	CommandHeader 		header						= COMMAND_HEADER__INIT;
-	UfsrvCommandWire	ufsrv_command			= UFSRV_COMMAND_WIRE__INIT;
-	FenceCommand 			fence_command			= FENCE_COMMAND__INIT;
-
-	command_envelope.ufsrvcommand=&ufsrv_command;
-	ufsrv_command.header=&header;
-	fence_command.header=&header;
-
-	FenceRecord	fence_record;
-	FenceRecord *fence_records[1];
-	ufsrv_command.fencecommand	=	&fence_command;
-	ufsrv_command.ufsrvtype			=	UFSRV_COMMAND_WIRE__UFSRV_TYPE__UFSRV_FENCE;
-
-	FenceRecord *fence_record_ptr=MakeFenceRecordInProto(sesn_ptr, f_ptr, NULL);
-
-	fence_records[0]						=	MakeFenceRecordInProtoAsIdentifier(sesn_ptr, f_ptr, &fence_record);
-	fence_command.fences				=	fence_records;
-	fence_command.n_fences			=	1;
-
-	command_envelope.source			=	"0";
-	command_envelope.timestamp	=	GetTimeNowInMillis(); command_envelope.has_timestamp=1;
-
-	header.cid									=	SESSION_ID(sesn_ptr); header.has_cid=1;
-	header.when									=	command_envelope.timestamp; header.has_when=1;
-	header.command							=	FENCE_COMMAND__COMMAND_TYPES__INVITE;
-	header.when_client					=	data_msg_ptr->ufsrvcommand->fencecommand->header->when;	header.has_when_client=data_msg_ptr->ufsrvcommand->fencecommand->header->has_when_client;
-	if (IS_PRESENT(rejected_collection_ptr))	header.args		=	COMMAND_ARGS__ACCEPTED_PARTIAL;
-	else 																			header.args		=	COMMAND_ARGS__ACCEPTED;
-	header.has_args=1;
-
-	_MarshalCommandToUser(sesn_ptr, NULL, f_ptr, &command_envelope,  uFENCE_V1_IDX);
-
-
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
-#endif
 }
 
-static inline UFSRVResult *_MarshalFenceInvitationFromWireSource (Session *sesn_ptr, Fence *f_ptr, Envelope *command_envelope_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags);
-static inline UFSRVResult *_MarshalFenceInvitationFromSystemSource (Session *sesn_ptr, Fence *f_ptr, Envelope *command_envelope_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags);
+static inline UFSRVResult *_MarshalFenceInvitationFromWireSource (InstanceContextForSession *, Fence *f_ptr, WebSocketMessage *, Envelope *command_envelope_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags);
+static inline UFSRVResult *_MarshalFenceInvitationFromSystemSource (InstanceContextForSession *, Fence *f_ptr, Envelope *command_envelope_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags);
 
 /**
  * 	@brief: Helper method to deal with marshaling a fully formed invitation messages for a collection of users, based
- * 	on prior invitation request from another user. The request has come through the wire, from a user, as opposed to system initiated,
- * 	for example, geofence roaming mode.
+ * 	on prior invitation request from another user. The request has come through the wire, from a user, as opposed to system initiated (
+ * 	for example, geofence roaming mode).
  *
  * 	@param sesn_ptr: the user initiating the invite
  */
 static inline UFSRVResult *
-_MarshalFenceInvitationFromWireSource (Session *sesn_ptr, Fence *f_ptr, Envelope *command_envelope_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags)
+_MarshalFenceInvitationFromWireSource (InstanceContextForSession *ctx_ptr, Fence *f_ptr, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags)
 {
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	for (struct{size_t i; FenceRecord *frec_ptr;} loop={0, data_msg_ptr->ufsrvcommand->fencecommand->fences[0]}; loop.i<loop.frec_ptr->n_invited_members; loop.i++) {
-		unsigned long sesn_call_flags=(CALL_FLAG_HASH_SESSION_LOCALLY|CALL_FLAG_HASH_UID_LOCALLY|CALL_FLAG_HASH_USERNAME_LOCALLY|
+		unsigned long sesn_call_flags = (CALL_FLAG_HASH_SESSION_LOCALLY|CALL_FLAG_HASH_UID_LOCALLY|CALL_FLAG_HASH_USERNAME_LOCALLY|
 																		CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION);
 		Session *sesn_ptr_invited;
 
-		if (((unsigned long *)invited_eids_collection_ptr->collection)[loop.i]==0) {
+		if (((unsigned long *)invited_eids_collection_ptr->collection)[loop.i] == 0) {
 			syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', uid_invited:'%lu', idx:'%lu'}: ERROR: Invited Events Collection contain eid=0: Skipping this user", __func__, pthread_self(), sesn_ptr, UfsrvUidGetSequenceId((UfsrvUid *)loop.frec_ptr->invited_members[loop.i]->ufsrvuid.data), loop.i);
 			continue;
 		}
-    if ((memcmp(SESSION_UFSRVUID(sesn_ptr), loop.frec_ptr->invited_members[loop.i]->ufsrvuid.data, CONFIG_MAX_UFSRV_ID_SZ)==0))	continue;	//found myself in the list
+    if ((memcmp(SESSION_UFSRVUID(sesn_ptr), loop.frec_ptr->invited_members[loop.i]->ufsrvuid.data, CONFIG_MAX_UFSRV_ID_SZ) == 0))	continue;	//found myself in the list
 
 		//TODO: check if user already in fence..
 		__unused bool lock_already_owned = false;
@@ -1366,8 +1224,8 @@ _MarshalFenceInvitationFromWireSource (Session *sesn_ptr, Fence *f_ptr, Envelope
 		if (IS_PRESENT(instance_sesn_ptr_invited)) {
 		  sesn_ptr_invited = SessionOffInstanceHolder(instance_sesn_ptr_invited);
 
-			_MarshalFenceInvitation(sesn_ptr, sesn_ptr_invited, f_ptr, command_envelope_ptr, ((unsigned long *)invited_eids_collection_ptr->collection)[loop.i]);
-			_MarshalFenceStateSyncForInvite (sesn_ptr, sesn_ptr_invited, f_ptr, &((FenceEvent){.eid=((unsigned long *)invited_eids_collection_ptr->collection)[loop.i]}), 0);
+			_MarshalFenceInvitation(ctx_ptr, &(InstanceContextForSession){instance_sesn_ptr_invited, sesn_ptr_invited}, f_ptr, wsm_ptr_received, command_envelope_ptr, ((unsigned long *)invited_eids_collection_ptr->collection)[loop.i]);
+			_MarshalFenceStateSyncForInvite(ctx_ptr, &(InstanceContextForSession){instance_sesn_ptr_invited, sesn_ptr_invited}, f_ptr, &((FenceEvent){.eid=((unsigned long *)invited_eids_collection_ptr->collection)[loop.i]}), 0);
 		}
 	}
 
@@ -1385,20 +1243,20 @@ _MarshalFenceInvitationFromWireSource (Session *sesn_ptr, Fence *f_ptr, Envelope
  * @return
  */
 static inline UFSRVResult *
-_MarshalUnchangedFenceInvitationFromWireSource (Session *sesn_ptr, Fence *f_ptr, Envelope *command_envelope_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *unchanged_collection_ptr, unsigned call_flags)
+_MarshalUnchangedFenceInvitationFromWireSource (InstanceContextForSession *ctx_ptr, Fence *f_ptr, Envelope *command_envelope_ptr, DataMessage *data_msg_ptr, CollectionDescriptor *unchanged_collection_ptr, unsigned call_flags)
 {
 	for (size_t i=0; i<unchanged_collection_ptr->collection_sz; i++) {
-		unsigned long userid=(((unsigned long *)unchanged_collection_ptr->collection)[i]);
+		unsigned long userid = (((unsigned long *)unchanged_collection_ptr->collection)[i]);
 
-		if (userid==0) {
-			syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', uid_invited:'%lu', idx:'%lu'}: NOTICE: unchanged invite userids contain eid=0: Skipping this user", __func__, pthread_self(), sesn_ptr, userid, i);
+		if (userid == 0) {
+			syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', uid_invited:'%lu', idx:'%lu'}: NOTICE: unchanged invite userids contain eid=0: Skipping this user", __func__, pthread_self(), ctx_ptr->sesn_ptr, userid, i);
 			continue;
 		}
 
-		_MarshalFenceInviteUnchanged (sesn_ptr, userid, f_ptr, data_msg_ptr, call_flags);
+		_MarshalFenceInviteUnchanged (ctx_ptr, userid, f_ptr, data_msg_ptr, call_flags);
 	}
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
+	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 }
 
 /**
@@ -1408,24 +1266,23 @@ _MarshalUnchangedFenceInvitationFromWireSource (Session *sesn_ptr, Fence *f_ptr,
  * 	@param sesn_ptr: the user being invited, which is different in semantics from WireInitiated above
  */
 static inline UFSRVResult *
-_MarshalFenceInvitationFromSystemSource (Session *sesn_ptr, Fence *f_ptr, Envelope *command_envelope_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags)
+_MarshalFenceInvitationFromSystemSource (InstanceContextForSession *ctx_ptr, Fence *f_ptr, Envelope *command_envelope_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags)
 {
-	//for (struct{size_t i; FenceRecord *frec_ptr;} loop={0, data_msg_ptr->ufsrvcommand->fencecommand->fences[0]}; loop.i<loop.frec_ptr->n_invited_members; loop.i++)
-	for (struct{size_t i, i_max; unsigned long *eids;} loop={0, invited_eids_collection_ptr->collection_sz, (unsigned long *)invited_eids_collection_ptr->collection}; loop.i<loop.i_max; loop.i++) {
-		unsigned long sesn_call_flags=(CALL_FLAG_LOCK_SESSION|CALL_FLAG_HASH_SESSION_LOCALLY|CALL_FLAG_HASH_UID_LOCALLY|CALL_FLAG_HASH_USERNAME_LOCALLY|CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION);
-		//Session *sesn_ptr_invited;
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
-		if (((unsigned long *)invited_eids_collection_ptr->collection)[loop.i]==0) {
+	for (struct{size_t i, i_max; unsigned long *eids;} loop={0, invited_eids_collection_ptr->collection_sz, (unsigned long *)invited_eids_collection_ptr->collection}; loop.i<loop.i_max; loop.i++) {
+		unsigned long sesn_call_flags = (CALL_FLAG_LOCK_SESSION|CALL_FLAG_HASH_SESSION_LOCALLY|CALL_FLAG_HASH_UID_LOCALLY|CALL_FLAG_HASH_USERNAME_LOCALLY|CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION);
+
+		if (((unsigned long *)invited_eids_collection_ptr->collection)[loop.i] == 0) {
 			syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', uname_invited:'%s', idx:'%lu'}: ERROR: Invited Events Collection contain eid=0: Skipping this user", __func__, pthread_self(), sesn_ptr, SESSION_USERNAME(sesn_ptr), loop.i);
 			continue;
 		}
 
-		_MarshalFenceInvitation(sesn_ptr, NULL, f_ptr, command_envelope_ptr, ((unsigned long *)invited_eids_collection_ptr->collection)[loop.i]);
+		_MarshalFenceInvitation(ctx_ptr, NULL, f_ptr, NULL, command_envelope_ptr, ((unsigned long *)invited_eids_collection_ptr->collection)[loop.i]);
 	}
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 }
-
 
 /**
  * 	@brief: Given a COLLECTION of invitees, marshal to/inform the invitee the invitation to join. They may decline it.
@@ -1439,12 +1296,15 @@ _MarshalFenceInvitationFromSystemSource (Session *sesn_ptr, Fence *f_ptr, Envelo
  *
  */
 UFSRVResult *
-MarshalFenceInvitation (Session *sesn_ptr, Fence *f_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, CollectionDescriptor *unchanged_collection_ptr, unsigned call_flags)
+MarshalFenceInvitation (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *instance_f_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, CollectionDescriptor *unchanged_collection_ptr, unsigned call_flags)
 {
-	if (invited_eids_collection_ptr->collection_sz==0 && unchanged_collection_ptr->collection_sz==0) {
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+  Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
+
+	if (invited_eids_collection_ptr->collection_sz == 0 && unchanged_collection_ptr->collection_sz == 0) {
 		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', cname:'%s', fid:'%lu', invited_sz:'%d', collection_sz:'%lu', unchanged:'%lu'} Invited Members: Fence has zero invited members ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), f_ptr, FENCE_CNAME(f_ptr), FENCE_ID(f_ptr), f_ptr->fence_user_sessions_invited_list.nEntries, invited_eids_collection_ptr?invited_eids_collection_ptr->collection_sz:0, unchanged_collection_ptr->collection_sz);
 
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_EMPTY_INVITATION_LIST);
+		_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_EMPTY_INVITATION_LIST)
 	}
 
 	Envelope 					command_envelope= ENVELOPE__INIT;
@@ -1453,9 +1313,9 @@ MarshalFenceInvitation (Session *sesn_ptr, Fence *f_ptr, WebSocketMessage *wsm_p
 	FenceCommand 			fence_command		= FENCE_COMMAND__INIT;
 
 	//plumb in static elements
-	command_envelope.ufsrvcommand=&ufsrv_command;
-	ufsrv_command.header=&header;
-	fence_command.header=&header;
+	command_envelope.ufsrvcommand = &ufsrv_command;
+	ufsrv_command.header = &header;
+	fence_command.header = &header;
 
 	//plumb in FenceRecords array
 	FenceRecord *fence_records[1];
@@ -1463,107 +1323,43 @@ MarshalFenceInvitation (Session *sesn_ptr, Fence *f_ptr, WebSocketMessage *wsm_p
 	ufsrv_command.ufsrvtype			=	UFSRV_COMMAND_WIRE__UFSRV_TYPE__UFSRV_FENCE;
 
 
-	FenceRecord *fence_record_ptr	=	MakeFenceRecordInProto(sesn_ptr, f_ptr, NULL);//MakeFenceRecordInProtoAsIdentifier
+	FenceRecord *fence_record_ptr	=	MakeFenceRecordInProto(ctx_ptr, &(InstanceContextForFence){instance_f_ptr, f_ptr}, NULL);//MakeFenceRecordInProtoAsIdentifier
 	fence_records[0]							=	fence_record_ptr;
 	fence_command.fences					=	fence_records;
 	fence_command.n_fences				=	1;
 
-	command_envelope.source				=	"0";
-	command_envelope.sourcedevice	=	1; command_envelope.has_sourcedevice=1;
-	command_envelope.timestamp		=	GetTimeNowInMillis(); command_envelope.has_timestamp=1;
+	command_envelope.sourceufsrvuid				=	"0";
+	command_envelope.sourcedevice	=	1; command_envelope.has_sourcedevice = 1;
+	command_envelope.timestamp		=	GetTimeNowInMillis(); command_envelope.has_timestamp = 1;
 
-	header.cid			=	SESSION_ID(sesn_ptr); header.has_cid=1;
-	header.when			=	command_envelope.timestamp; header.has_when=1;
+	header.cid			=	SESSION_ID(sesn_ptr); header.has_cid = 1;
+	header.when			=	command_envelope.timestamp; header.has_when = 1;
 	header.command	=	FENCE_COMMAND__COMMAND_TYPES__JOIN;
-
-	//UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
-	//UfsrvCommandInvokeCommand (sesn_ptr, NULL, wsm_ptr_orig, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
 
 	UFSRVResult *res_ptr;
 	UserRecord user_record_originator;
 
 	if (IS_PRESENT(data_msg_ptr)) {
-		fence_command.originator	=	MakeUserRecordFromSessionInProto (sesn_ptr, &user_record_originator, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
-		header.args								=	COMMAND_ARGS__INVITED; header.has_args=1;
-		if (invited_eids_collection_ptr->collection_sz>0) {
-      res_ptr = _MarshalFenceInvitationFromWireSource(sesn_ptr, f_ptr, &command_envelope, data_msg_ptr, invited_eids_collection_ptr, call_flags);
+		fence_command.originator	=	MakeUserRecordFromSessionInProto(sesn_ptr, &user_record_originator, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
+		header.args								=	COMMAND_ARGS__INVITED; header.has_args = 1;
+		if (invited_eids_collection_ptr->collection_sz > 0) {
+      res_ptr = _MarshalFenceInvitationFromWireSource(ctx_ptr, f_ptr, wsm_ptr_received, &command_envelope, data_msg_ptr, invited_eids_collection_ptr, call_flags);
     }
-		if (IS_PRESENT(unchanged_collection_ptr) && unchanged_collection_ptr->collection_sz>0) {
-			_MarshalUnchangedFenceInvitationFromWireSource (sesn_ptr, f_ptr, &command_envelope, data_msg_ptr, unchanged_collection_ptr, call_flags);
+		if (IS_PRESENT(unchanged_collection_ptr) && unchanged_collection_ptr->collection_sz > 0) {
+			_MarshalUnchangedFenceInvitationFromWireSource(ctx_ptr, f_ptr, &command_envelope, data_msg_ptr, unchanged_collection_ptr, call_flags);
 		}
 	} else {
 		//TODO: use static originator ptr overall when invoking MakeUserRecordForSelfInProto and generate a static one for system user or reuse
-		fence_command.originator	=	MakeUserRecordFromSessionInProto (GetUfsrvSystemUser(), &user_record_originator, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
+		fence_command.originator	=	MakeUserRecordFromSessionInProto(GetUfsrvSystemUser(), &user_record_originator, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
 		header.args								=	COMMAND_ARGS__INVITED_GEO; header.has_args=1;
-		res_ptr										=	_MarshalFenceInvitationFromSystemSource (sesn_ptr, f_ptr, &command_envelope, invited_eids_collection_ptr, call_flags);
+		res_ptr										=	_MarshalFenceInvitationFromSystemSource(ctx_ptr, f_ptr, &command_envelope, invited_eids_collection_ptr, call_flags);
 	}
 
-	DestructFenceRecordsProto (fence_records, fence_command.n_fences, false);//false because fence_records array was stack allocation
+	DestructFenceRecordsProto(fence_records, fence_command.n_fences, false, true);//false because fence_records array was stack allocation
 
 	return res_ptr;
 
 }
-
-#if 0
-/**
- * 	@brief: Given a NEWLY formed fence with an invitation list, marshal to/inform the invitee the invitation to join. They may decline it.
- * 	The collection index and fence_user_sessions_invited_list are aligned index-wise, because tthe events were generated based on that list
- * 	and since the Fence is locked, no modification is possible since the events collections was created.
- * 	Where the value of eid is zer, we skip the user.
- *
- *	@param invited_eid_collection_ptr: contains array of unsigned long eids
- * 	@locked f_ptr: must be locked in the caller's environment
- * 	@locked sesn_ptr: must be locked in the callers environment
- *
- */
-static UFSRVResult *
-_MarshalNewFenceInvitation (Session *sesn_ptr, Fence *f_ptr, Envelope *command_envelope_ptr, CollectionDescriptor *invited_eids_collection_ptr, unsigned call_flags)
-{
-	FenceRecord *fence_record_ptr=command_envelope_ptr->ufsrvcommand->fencecommand->fences[0];
-
-	if (f_ptr->fence_user_sessions_invited_list.nEntries<=0)
-	{
-#ifdef __UF_FULLDEBUG
-		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cname:'%s', fid:'%lu', invited_sz:'%d'} Invited Members: Fence has zero invited members ", __func__, pthread_self(), sesn_ptr, fence_record_ptr->cname, fence_record_ptr->fid, f_ptr->fence_user_sessions_invited_list.nEntries);
-#endif
-
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_EMPTY_INVITATION_LIST);
-	}
-
-
-	if (IS_EMPTY(invited_eids_collection_ptr) || invited_eids_collection_ptr->collection_sz==0)
-	{
-		syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', cname:'%s', fid:'%lu', invited_sz:'%d', collection_sz:'%lu'} Invited Members: Fence has zero invited members ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), f_ptr, fence_record_ptr->cname, fence_record_ptr->fid, f_ptr->fence_user_sessions_invited_list.nEntries, invited_eids_collection_ptr?invited_eids_collection_ptr->collection_sz:0);
-
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_EMPTY_INVITATION_LIST);
-	}
-
-
-	ListEntry	*eptr				= NULL;
-	UserRecord	*originator_ptr		= NULL;
-
-	originator_ptr=MakeUserRecordForSelfInProto (sesn_ptr, PROTO_USER_RECORD_MINIMAL);
-
-	size_t i=0;
-	for (eptr=f_ptr->fence_user_sessions_invited_list.head; eptr; i++, eptr=eptr->next)
-	{
-		if (((unsigned long *)invited_eids_collection_ptr->collection)[i])
-		{
-			command_envelope_ptr->ufsrvcommand->fencecommand->originator=originator_ptr;
-			command_envelope_ptr->ufsrvcommand->header->args=COMMAND_ARGS__INVITED; command_envelope_ptr->ufsrvcommand->header->has_args=1;
-			command_envelope_ptr->source="0"; //orignally was set to the user who created the fence. This has important effect on how the client handle the request. "0'means usfsrv native command
-			_MarshalFenceInvitation(sesn_ptr, (Session *)eptr->whatever, f_ptr, command_envelope_ptr, ((unsigned long *)invited_eids_collection_ptr->collection)[i]);
-		}
-		else
-		{
-			syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid_invited:'%lu', idx:'%lu'}: ERROR: Invited Events Collection contain eid=0: Skipping this user", __func__, pthread_self(), sesn_ptr, ((Session *)eptr->whatever)->session_id, i);
-		}
-	}
-
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
-
-}
-#endif
 
 /**
  * 	@brief: Works in tandem with _MarshalNewFenceInvitation(), specialising the command message to the target user
@@ -1574,25 +1370,28 @@ _MarshalNewFenceInvitation (Session *sesn_ptr, Fence *f_ptr, Envelope *command_e
  * 	@unlocks: NONE
  */
 static inline UFSRVResult *
-_MarshalFenceInvitation(Session *sesn_ptr, Session *sesn_ptr_target, Fence *f_ptr, Envelope *command_envelope_ptr, unsigned long eid)
+_MarshalFenceInvitation(InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_target, Fence *f_ptr, WebSocketMessage*wsm_ptr_received,  Envelope *command_envelope_ptr, unsigned long eid)
 {
-	CommandHeader *command_header_ptr=command_envelope_ptr->ufsrvcommand->header;
+	CommandHeader *command_header_ptr = command_envelope_ptr->ufsrvcommand->header;
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
+	Session *sesn_ptr_target = IS_PRESENT(ctx_ptr_target)? ctx_ptr_target->sesn_ptr : NULL;
 
-	command_header_ptr->cid=SESSION_ID((sesn_ptr_target?:sesn_ptr)); command_header_ptr->has_cid=1;
-	MakeUfsrvUidInProto(sesn_ptr_target?&SESSION_UFSRVUIDSTORE(sesn_ptr_target):&SESSION_UFSRVUIDSTORE(sesn_ptr), &(command_header_ptr->ufsrvuid), true); //ufsrvuid by reference
-	command_header_ptr->has_ufsrvuid=1;
+	command_header_ptr->cid = SESSION_ID((sesn_ptr_target?:sesn_ptr)); command_header_ptr->has_cid = 1;
+	MakeUfsrvUidInProto(sesn_ptr_target? &SESSION_UFSRVUIDSTORE(sesn_ptr_target) : &SESSION_UFSRVUIDSTORE(sesn_ptr), &(command_header_ptr->ufsrvuid), true); //ufsrvuid by reference
+	command_header_ptr->has_ufsrvuid = 1;
 
-	command_header_ptr->eid=eid; command_header_ptr->has_eid=1;
+	command_header_ptr->eid = eid; command_header_ptr->has_eid = 1;
 
-	WebSocketMessage wsmsg; wsmsg.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST;//dummy
-	UfsrvCommandMarshallingDescription ufsrv_descpription={command_header_ptr->eid, FENCE_ID(f_ptr), command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
+	UfsrvCommandMarshallingDescriptor ufsrv_description = {command_header_ptr->eid, FENCE_ID(f_ptr), command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
 
 #ifdef __UF_TESTING
 	syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cid_target:'%lu' uname_target:'%s', uname_originator:'%s', fcname:'%s'} Inviting member ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),
 				SESSION_ID((sesn_ptr_target?:sesn_ptr)), SESSION_USERNAME((sesn_ptr_target?:sesn_ptr)), command_envelope_ptr->ufsrvcommand->fencecommand->originator->username, FENCE_CNAME(f_ptr));
 #endif
 
-	UfsrvCommandInvokeCommand (sesn_ptr, sesn_ptr_target, &wsmsg, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
+  UfsrvCommandInvokeUserCommand(ctx_ptr, ctx_ptr_target,
+          IS_EMPTY(wsm_ptr_received)?(&(WebSocketMessage){.request=NULL, .type=WEB_SOCKET_MESSAGE__TYPE__REQUEST}):wsm_ptr_received,
+          NULL, &ufsrv_description, uFENCE_V1_IDX);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
@@ -1610,12 +1409,14 @@ _MarshalFenceInvitation(Session *sesn_ptr, Session *sesn_ptr_target, Fence *f_pt
  *
  */
 static inline UFSRVResult *
-_MarshalFenceStateSyncForInvite (Session *sesn_ptr, Session *sesn_ptr_newly_invited, Fence *f_ptr, FenceEvent *fence_event_ptr, unsigned call_flags)
+_MarshalFenceStateSyncForInvite (InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_newly_invited, Fence *f_ptr, FenceEvent *fence_event_ptr, unsigned call_flags)
 {
-	if (FENCE_INVITED_LIST_SIZE(f_ptr)<=0) {
-		syslog(LOG_WARNING, "%s {pid:'%lu', o:'%p', cname:'%s', fid:'%lu'} WARNING: COMMAND INVOKED WITH zero members ", __func__, pthread_self(), sesn_ptr, FENCE_CNAME(f_ptr), FENCE_ID(f_ptr));
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_EMPTY_INVITATION_LIST);
+	if (FENCE_INVITED_LIST_SIZE(f_ptr) <= 0) {
+		syslog(LOG_WARNING, "%s {pid:'%lu', o:'%p', cname:'%s', fid:'%lu'} WARNING: COMMAND INVOKED WITH zero members ", __func__, pthread_self(), ctx_ptr->sesn_ptr, FENCE_CNAME(f_ptr), FENCE_ID(f_ptr));
+		_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_EMPTY_INVITATION_LIST)
 	}
+
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, fence_event_ptr, NULL, FENCE_COMMAND__COMMAND_TYPES__INVITE, COMMAND_ARGS__ADDED);
@@ -1625,7 +1426,7 @@ _MarshalFenceStateSyncForInvite (Session *sesn_ptr, Session *sesn_ptr_newly_invi
 	UserRecord	*user_records_invited[1];
 	UserRecord 	user_record_invited;
 
-	MakeUserRecordFromSessionInProto(sesn_ptr_newly_invited, &user_record_invited, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
+	MakeUserRecordFromSessionInProto(ctx_ptr_newly_invited->sesn_ptr, &user_record_invited, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
 	user_records_invited[0]							=	&user_record_invited;
 	fence_record.invited_members				=	user_records_invited;
 	fence_record.n_invited_members			=	1;
@@ -1635,10 +1436,13 @@ _MarshalFenceStateSyncForInvite (Session *sesn_ptr, Session *sesn_ptr_newly_invi
 
 	for (eptr=f_ptr->fence_user_sessions_list.head; eptr; eptr=eptr->next) {
 	  Session *sesn_ptr_listed = SessionOffInstanceHolder(eptr->whatever);
-			if ((sesn_ptr_target = sesn_ptr_listed) == sesn_ptr)	sesn_ptr_target = NULL; //prevent double locking
-			if	(sesn_ptr_target == sesn_ptr_newly_invited)	continue;	//this user already got an invitation nothing to sync
+			if (memcmp(SESSION_UFSRVUID((sesn_ptr_target = sesn_ptr_listed)), SESSION_UFSRVUID(sesn_ptr), CONFIG_MAX_UFSRV_ID_SZ) == 0)	{
+        _MarshalFenceStateSync(ctx_ptr, NULL, f_ptr, &command_envelope);
+			} else {
+        if (memcmp(SESSION_UFSRVUID(sesn_ptr_target), SESSION_UFSRVUID(ctx_ptr_newly_invited->sesn_ptr), CONFIG_MAX_UFSRV_ID_SZ) == 0) continue;  //this user already got an invitation nothing to sync
 
-			_MarshalFenceStateSync(sesn_ptr, sesn_ptr_target, f_ptr, &command_envelope);
+        _MarshalFenceStateSync(ctx_ptr, &(InstanceContextForSession) {(InstanceHolderForSession *) eptr->whatever, sesn_ptr_target}, f_ptr, &command_envelope);
+      }
 	}
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
@@ -1646,8 +1450,10 @@ _MarshalFenceStateSyncForInvite (Session *sesn_ptr, Session *sesn_ptr_newly_invi
 }
 
 static inline UFSRVResult *
-_MarshalFenceInviteUnchanged (Session *sesn_ptr, unsigned long userid, Fence *f_ptr, DataMessage *data_msg_ptr_orig, unsigned call_flags)
+_MarshalFenceInviteUnchanged (InstanceContextForSession *ctx_ptr, unsigned long userid, Fence *f_ptr, DataMessage *data_msg_ptr_orig, unsigned call_flags)
 {
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, EMPTY_EVENT, data_msg_ptr_orig, FENCE_COMMAND__COMMAND_TYPES__INVITE, COMMAND_ARGS__UNCHANGED);
 
@@ -1661,7 +1467,7 @@ _MarshalFenceInviteUnchanged (Session *sesn_ptr, unsigned long userid, Fence *f_
 	fence_record.invited_members				=	user_records_invited;
 	fence_record.n_invited_members			=	1;
 
-	_MarshalFenceStateSync(sesn_ptr, NULL, f_ptr, &command_envelope);
+	_MarshalFenceStateSync(ctx_ptr, NULL, f_ptr, &command_envelope);
 
 	free (user_record_invited.ufsrvuid.data);
 
@@ -1680,23 +1486,25 @@ _MarshalFenceInviteUnchanged (Session *sesn_ptr, unsigned long userid, Fence *f_
  *
  */
 static inline UFSRVResult *
-_MarshalFenceSyncInviteForSelf (Session *sesn_ptr_inviter, Session *sesn_ptr_newly_invited, FenceStateDescriptor *fence_state_ptr, FenceEvent *fence_event_ptr, unsigned call_flags)
+_MarshalFenceSyncInviteForSelf (InstanceContextForSession *ctx_ptr_inviter, InstanceContextForSession *ctx_ptr_newly_invited, FenceStateDescriptor *fence_state_ptr, FenceEvent *fence_event_ptr, unsigned call_flags)
 {
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 
-	Fence							*f_ptr=FENCESTATE_FENCE(fence_state_ptr);
+	Fence		*f_ptr                  = FENCESTATE_FENCE(fence_state_ptr);
+	Session *sesn_ptr_inviter       = ctx_ptr_inviter->sesn_ptr;
+	Session *sesn_ptr_newly_invited = ctx_ptr_newly_invited->sesn_ptr;
 
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr_inviter, f_ptr, fence_event_ptr, NULL, FENCE_COMMAND__COMMAND_TYPES__JOIN, SESSION_USERID(sesn_ptr_inviter)==1?COMMAND_ARGS__INVITED_GEO:COMMAND_ARGS__INVITED);
 
 	//fence_record populated in _Preparexx, but as identifier only
-	MakeFenceRecordInProto(sesn_ptr_newly_invited, f_ptr, &fence_record);
+	MakeFenceRecordInProto(ctx_ptr_newly_invited, &(InstanceContextForFence){FENCESTATE_INSTANCE_HOLDER(fence_state_ptr), f_ptr}, &fence_record);
 
 	MakeUfsrvUidInProto(&(SESSION_UFSRVUIDSTORE(sesn_ptr_inviter)), &(fence_record.invited_by), true); //ufsrvid by reference
-	fence_record.has_invited_by=1;
-	fence_record.invited_when						=	fence_state_ptr->when_invited; fence_record.has_invited_when=1;
+	fence_record.has_invited_by = 1;
+	fence_record.invited_when						=	fence_state_ptr->when_invited; fence_record.has_invited_when = 1;
 	fence_record.has_eid	=	0; //todo: this is hack because we dont have access to historic eids at this stage
 
-	_MarshalFenceStateSync(sesn_ptr_newly_invited, NULL, f_ptr, &command_envelope);
+	_MarshalFenceStateSync(ctx_ptr_newly_invited, NULL, f_ptr, &command_envelope);
 
 	fence_record.invited_by.data = NULL; //ufsrvid by reference
 
@@ -1718,9 +1526,12 @@ _MarshalFenceSyncInviteForSelf (Session *sesn_ptr_inviter, Session *sesn_ptr_new
  *
  */
 UFSRVResult *
-MarshalFenceUnInvitedToUser (Session *sesn_ptr_originator, Session *sesn_ptr_uninvited, Fence *f_ptr, FenceEvent *fence_event_ptr, unsigned sesn_call_flags)
+MarshalFenceUnInvitedToUser (InstanceContextForSession *ctx_ptr_originator, InstanceContextForSession *ctx_ptr_uninvited, Fence *f_ptr, FenceEvent *fence_event_ptr, unsigned sesn_call_flags)
 {
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
+
+	Session *sesn_ptr_originator = IS_PRESENT(ctx_ptr_originator)?ctx_ptr_originator->sesn_ptr:NULL;
+	Session *sesn_ptr_uninvited = ctx_ptr_uninvited->sesn_ptr;
 
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr_originator, f_ptr, fence_event_ptr, NULL, FENCE_COMMAND__COMMAND_TYPES__LEAVE, COMMAND_ARGS__UNINVITED);
 //  UserRecord				user_record_originator;
@@ -1739,10 +1550,12 @@ MarshalFenceUnInvitedToUser (Session *sesn_ptr_originator, Session *sesn_ptr_uni
 	Session		*sesn_ptr_target;
 
 	//Signal intended user separately, as they may (should) have already been removed from invite list
-	if (sesn_ptr_originator==sesn_ptr_uninvited)	sesn_ptr_target=NULL; //also prevents double locking
-	else 																					sesn_ptr_target=sesn_ptr_uninvited;//system initiated
-
-	_MarshalFenceStateSync(sesn_ptr_originator, sesn_ptr_target, f_ptr, &command_envelope);
+	if (sesn_ptr_originator == sesn_ptr_uninvited)	{
+    _MarshalFenceStateSync(ctx_ptr_originator, NULL, f_ptr, &command_envelope);
+	} else {
+    //system initiated
+    _MarshalFenceStateSync(ctx_ptr_originator, ctx_ptr_uninvited, f_ptr, &command_envelope);
+  }
 
 	for (eptr=f_ptr->fence_user_sessions_list.head; eptr; eptr=eptr->next) {
 //		This doesnt apply given the above equality check uninvited==originator. Plus, user shouldn't be on the list
@@ -1750,7 +1563,7 @@ MarshalFenceUnInvitedToUser (Session *sesn_ptr_originator, Session *sesn_ptr_uni
 			sesn_ptr_target = SessionOffInstanceHolder(eptr->whatever);
 //			if	(sesn_ptr_target==sesn_ptr_uninvited)	continue;	//this user already got the msg; nothing to sync
 
-			_MarshalFenceStateSync(sesn_ptr_originator, sesn_ptr_target, f_ptr, &command_envelope);
+			_MarshalFenceStateSync(ctx_ptr_originator, &(InstanceContextForSession){(InstanceHolderForSession *)eptr->whatever, sesn_ptr_target}, f_ptr, &command_envelope);
 	}
 
 	_RETURN_RESULT_SESN(sesn_ptr_originator, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
@@ -1758,14 +1571,16 @@ MarshalFenceUnInvitedToUser (Session *sesn_ptr_originator, Session *sesn_ptr_uni
 }
 
 static inline UFSRVResult *
-_VerifyInviteCommand (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, DataMessage *data_msg_ptr, WebSocketMessage *wsm_ptr_received, unsigned long fence_call_flags)
+_VerifyInviteCommand (InstanceContextForSession *ctx_ptr, FenceStateDescriptor *fence_state_ptr, DataMessage *data_msg_ptr, WebSocketMessage *wsm_ptr_received, unsigned long fence_call_flags)
 {
 	FenceCommand					*fcmd_ptr	=	data_msg_ptr->ufsrvcommand->fencecommand;
 	FenceRecord						*fence_record_ptr	=	fence_record_ptr = fcmd_ptr->fences[0];
 
-	if (fence_record_ptr->n_invited_members<=0 || fence_record_ptr->n_invited_members>CONFIG_MAX_INVITE_SET_SIZE) {
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
+	if (fence_record_ptr->n_invited_members <= 0 || fence_record_ptr->n_invited_members > CONFIG_MAX_INVITE_SET_SIZE) {
 		if (fence_call_flags&FENCE_CALLFLAG_MARSHAL_COMMAND_ERROR) {
-			_HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=FENCESTATE_INSTANCE_HOLDER(fence_state_ptr)}),
+			_HandleFenceCommandError (ctx_ptr, &((FenceStateDescriptor){.instance_holder_fence=FENCESTATE_INSTANCE_HOLDER(fence_state_ptr)}),
 							wsm_ptr_received, data_msg_ptr, RESCODE_FENCE_INVITE_SIZE, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_INVITE_SIZE)
 		}
@@ -1823,11 +1638,11 @@ _CommandControllerFenceName (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 			if (SESSION_RESULT_CODE(sesn_ptr) == RESCODE_FENCE_OWNERSHIP) {
         fstate_ptr = FenceStateDescriptorOffInstanceHolder((InstanceHolderForFenceStateDescriptor *)SESSION_RESULT_USERDATA(sesn_ptr));
         f_ptr           = FENCESTATE_FENCE(fstate_ptr);
-			  _HandleFenceCommandError (sesn_ptr, fstate_ptr, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			  _HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, fstate_ptr, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			} else { //RESCODE_FENCE_FENCE_MEMBERSHIP
 			  InstanceHolderForFence *instance_f_ptr = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr);
         f_ptr		=	FenceOffInstanceHolder(instance_f_ptr);
-			  _HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=instance_f_ptr}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			  _HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=instance_f_ptr}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			}
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 			goto exit_catch_all;
@@ -1835,7 +1650,7 @@ _CommandControllerFenceName (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 
 		if (IS_EMPTY(SESSION_RESULT_USERDATA(sesn_ptr)) && SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 			//fence doesn't exist. NO lock
-			_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			goto exit_catch_all;
 		}
 
@@ -1852,17 +1667,15 @@ _CommandControllerFenceName (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 		IsUserAllowedToChangeFenceName (sesn_ptr, fstate_ptr, fname_new, _FENCE_CALL_FLAGS_STATESYNC, &fence_event);
 		if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
 			exit_success:
-			_MarshalFenceNameUpdate (sesn_ptr, FENCESTATE_FENCE(fstate_ptr), data_msg_ptr, 0, &fence_event);
+			_MarshalFenceNameUpdate (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, FENCESTATE_INSTANCE_HOLDER(fstate_ptr), wsm_ptr_orig, data_msg_ptr, 0, &fence_event);
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
 
 			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 		}
 		else
-			_HandleFenceCommandError (sesn_ptr, fstate_ptr, wsm_ptr_orig, data_msg_ptr, SESSION_RESULT_CODE(sesn_ptr), FENCE_COMMAND__COMMAND_TYPES__FNAME, NULL);
-	}
-	else
-	{
-		_HandleFenceCommandError (sesn_ptr, fstate_ptr, wsm_ptr_orig, data_msg_ptr, RESCODE_PROG_MISSING_PARAM, FENCE_COMMAND__COMMAND_TYPES__FNAME, NULL);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, fstate_ptr, wsm_ptr_orig, data_msg_ptr, SESSION_RESULT_CODE(sesn_ptr), FENCE_COMMAND__COMMAND_TYPES__FNAME, NULL);
+	} else {
+		_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, fstate_ptr, wsm_ptr_orig, data_msg_ptr, RESCODE_PROG_MISSING_PARAM, FENCE_COMMAND__COMMAND_TYPES__FNAME, NULL);
 	}
 
 	exit_unlock:
@@ -1870,7 +1683,6 @@ _CommandControllerFenceName (InstanceHolderForSession *instance_sesn_ptr, WebSoc
 
 	exit_error:
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
-
 
 #undef _FENCE_CALL_FLAGS_STATESYNC
 }
@@ -1881,8 +1693,11 @@ _CommandControllerFenceName (InstanceHolderForSession *instance_sesn_ptr, WebSoc
  * 	@locked sesn_ptr
  */
 inline static UFSRVResult *
-_MarshalFenceNameUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, FenceEvent *fence_event_ptr)
+_MarshalFenceNameUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *instance_f_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, FenceEvent *fence_event_ptr)
 {
+  Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, fence_event_ptr, data_msg_ptr_recieved, FENCE_COMMAND__COMMAND_TYPES__FNAME, COMMAND_ARGS__UPDATED);
 
@@ -1890,7 +1705,7 @@ _MarshalFenceNameUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_
 	fence_record.fname = FENCE_DNAME(f_ptr);//by reference
 
 	FenceRawSessionList raw_session_list = {0};
-	GetRawMemberUsersListForFence (sesn_ptr, InstanceHolderFromClientContext(CLIENT_CTX_DATA(f_ptr)), FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
+	GetRawMemberUsersListForFence (sesn_ptr, instance_f_ptr, FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
 	assert (raw_session_list.sessions_sz > 0);
 
 	size_t i = 0;
@@ -1898,11 +1713,11 @@ _MarshalFenceNameUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_
     Session *sesn_ptr_listed = SessionOffInstanceHolder(raw_session_list.sessions[i]);
 		if (SESSION_ID(sesn_ptr) == SESSION_ID(sesn_ptr_listed)) {
 			header.args	=	COMMAND_ARGS__ACCEPTED;//self
-			_MarshalCommandToUser(sesn_ptr, NULL, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+			_MarshalCommandToUser(ctx_ptr, NULL, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 			header.args	=	COMMAND_ARGS__UPDATED;//restore for others
 		} else {
 			header.cid	=	SESSION_ID(sesn_ptr_listed);
-		  _MarshalCommandToUser(sesn_ptr, sesn_ptr_listed, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+		  _MarshalCommandToUser(ctx_ptr, &(InstanceContextForSession){raw_session_list.sessions[i], sesn_ptr_listed}, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 		}
 	}
 
@@ -1964,7 +1779,7 @@ _CommandControllerFenceAvatar (InstanceHolderForSession *instance_sesn_ptr, WebS
         f_ptr		=	FenceOffInstanceHolder((InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr));
       }
 
-			_HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=instance_f_ptr}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=instance_f_ptr}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 			goto exit_catch_all;
@@ -1972,7 +1787,7 @@ _CommandControllerFenceAvatar (InstanceHolderForSession *instance_sesn_ptr, WebS
 
 		if (IS_EMPTY(SESSION_RESULT_USERDATA(sesn_ptr)) && SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 			//fence doesn't exist. NO lock
-			_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_HandleFenceCommandError (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			goto exit_catch_all;
 		}
 
@@ -1989,7 +1804,7 @@ _CommandControllerFenceAvatar (InstanceHolderForSession *instance_sesn_ptr, WebS
 	IsUserAllowedToChangeFenceAvatar (sesn_ptr, fstate_ptr, data_msg_ptr, fence_call_flags_avatar, &fence_event);
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
 		exit_success:
-		_MarshalFenceAvatarUpdate (sesn_ptr, FENCESTATE_FENCE(fstate_ptr), data_msg_ptr, 0, &fence_event);
+		_MarshalFenceAvatarUpdate (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, FENCESTATE_INSTANCE_HOLDER(fstate_ptr), wsm_ptr_orig, data_msg_ptr, 0, &fence_event);
 
 		if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
 
@@ -2007,10 +1822,13 @@ _CommandControllerFenceAvatar (InstanceHolderForSession *instance_sesn_ptr, WebS
 }
 
 inline static UFSRVResult *
-_MarshalFenceAvatarUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, FenceEvent *fence_event_ptr)
+_MarshalFenceAvatarUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *instance_f_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr)
 {
+  Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
-	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, fence_event_ptr, data_msg_ptr_recieved, FENCE_COMMAND__COMMAND_TYPES__AVATAR, COMMAND_ARGS__UPDATED);
+	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, fence_event_ptr, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__AVATAR, COMMAND_ARGS__UPDATED);
 
 	//actual delta
 	CollectionDescriptor 	collection_attachment_records	= {0};
@@ -2021,7 +1839,7 @@ _MarshalFenceAvatarUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_ms
 	collection_attachment_records.collection						=	(collection_t **)attachment_records;
 	collection_attachment_records.collection_sz					=	1;
 
-	TEMPMakeAttachmentRecordFromAttachmentPointerInProto (data_msg_ptr_recieved->group->avatar, &collection_attachment_records);
+	TEMPMakeAttachmentRecordFromAttachmentPointerInProto (data_msg_ptr_received->group->avatar, &collection_attachment_records);
 	fence_command.attachments														=	attachment_records;
 	fence_command.n_attachments													=	1;
 	//end delta
@@ -2029,21 +1847,19 @@ _MarshalFenceAvatarUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_ms
 	if (IS_PRESENT(fence_event_ptr))	{header.eid=fence_event_ptr->eid; header.has_eid=1;}
 
 	FenceRawSessionList raw_session_list = {0};
-	GetRawMemberUsersListForFence (sesn_ptr, InstanceHolderFromClientContext(CLIENT_CTX_DATA(f_ptr)), FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
+	GetRawMemberUsersListForFence (sesn_ptr, instance_f_ptr, FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
 	assert (raw_session_list.sessions_sz > 0);
 
 	size_t i = 0;
 	for (; i<raw_session_list.sessions_sz; i++) {
 	  Session *sesn_ptr_listed = SessionOffInstanceHolder(raw_session_list.sessions[i]);
-		if (SESSION_ID(sesn_ptr)==SESSION_ID(sesn_ptr_listed)) {
+		if (SESSION_ID(sesn_ptr) == SESSION_ID(sesn_ptr_listed)) {
 			header.args	=	COMMAND_ARGS__ACCEPTED;//self
-			_MarshalCommandToUser(sesn_ptr, NULL, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+			_MarshalCommandToUser(ctx_ptr, NULL, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 			header.args	=	COMMAND_ARGS__UPDATED;//restore for others
-		}
-		else
-		{
+		} else {
 			header.cid	=	SESSION_ID(sesn_ptr_listed);
-		_MarshalCommandToUser(sesn_ptr, sesn_ptr_listed, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+		_MarshalCommandToUser(ctx_ptr, &(InstanceContextForSession){raw_session_list.sessions[i], sesn_ptr_listed}, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 		}
 	}
 
@@ -2079,7 +1895,7 @@ _CommandControllerFenceMaxMembers(InstanceHolderForSession *instance_sesn_ptr, W
 	if (!fcmd_ptr->fences[0]->has_maxmembers)	goto exit_expiry_not_set;
 	maxmembers_by_user = fcmd_ptr->fences[0]->maxmembers;
 	if (maxmembers_by_user < 0 || maxmembers_by_user > INT_MAX) {
-		_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_INVALID_MAXMEMBERS, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+		_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_INVALID_MAXMEMBERS, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 		goto exit_catch_all;
 	}
 
@@ -2094,7 +1910,7 @@ _CommandControllerFenceMaxMembers(InstanceHolderForSession *instance_sesn_ptr, W
 		fstate_ptr          = FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr);
 
 		if (!IsUserWithPermission(sesn_ptr, FENCESTATE_FENCE(fstate_ptr), FENCE_PERMISSIONS_MEMBERSHIP_PTR(FENCESTATE_FENCE(fstate_ptr)))) {
-			_HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=FENCESTATE_INSTANCE_HOLDER(fstate_ptr)}), wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_PERMISSION, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceMaxMembers);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=FENCESTATE_INSTANCE_HOLDER(fstate_ptr)}), wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_PERMISSION, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceMaxMembers);
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
 			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_PERMISSION)
 		}
@@ -2104,14 +1920,14 @@ _CommandControllerFenceMaxMembers(InstanceHolderForSession *instance_sesn_ptr, W
 
 		if (SESSION_RESULT_TYPE_ERROR(sesn_ptr) && !SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 			//FENCE LOCKED... membership issue
-			_HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=(InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr)}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceMaxMembers);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=(InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr)}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceMaxMembers);
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 			goto exit_catch_all;
 		}
 
 		if (IS_EMPTY(SESSION_RESULT_USERDATA(sesn_ptr)) && SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 			//fence doesn't exist. NO lock
-			_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			goto exit_catch_all;
 		}
 
@@ -2128,7 +1944,7 @@ _CommandControllerFenceMaxMembers(InstanceHolderForSession *instance_sesn_ptr, W
 	IsUserAllowedToChangeFenceMaxMembers (sesn_ptr, fstate_ptr, maxmembers_by_user, fence_call_flags_msgexpiry, &fence_event);
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
 	exit_success:
-    _MarshalFenceMAxMembersUpdate (sesn_ptr, FENCESTATE_FENCE(fstate_ptr), data_msg_ptr, 0, &fence_event);
+    _MarshalFenceMAxMembersUpdate (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, FENCESTATE_INSTANCE_HOLDER(fstate_ptr), wsm_ptr_orig, data_msg_ptr, 0, &fence_event);
 
     if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
 
@@ -2149,8 +1965,11 @@ _CommandControllerFenceMaxMembers(InstanceHolderForSession *instance_sesn_ptr, W
 }
 
 inline static UFSRVResult *
-_MarshalFenceMAxMembersUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr)
+_MarshalFenceMAxMembersUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *instance_f_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr)
 {
+  Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, fence_event_ptr, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__MAXMEMBERS, COMMAND_ARGS__UPDATED);
 
@@ -2161,7 +1980,7 @@ _MarshalFenceMAxMembersUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *dat
 	if (IS_PRESENT(fence_event_ptr))	{header.eid=fence_event_ptr->eid; header.has_eid=1;}
 
 	FenceRawSessionList raw_session_list = {0};
-	GetRawMemberUsersListForFence (sesn_ptr, InstanceHolderFromClientContext(CLIENT_CTX_DATA(f_ptr)), FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
+	GetRawMemberUsersListForFence (sesn_ptr, instance_f_ptr, FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
 	assert (raw_session_list.sessions_sz > 0);
 
 	size_t i = 0;
@@ -2169,11 +1988,11 @@ _MarshalFenceMAxMembersUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *dat
     Session *sesn_ptr_listed = SessionOffInstanceHolder(raw_session_list.sessions[i]);
 		if (SESSION_ID(sesn_ptr) == SESSION_ID(sesn_ptr_listed)) {
 			header.args	=	COMMAND_ARGS__ACCEPTED;//self
-			_MarshalCommandToUser(sesn_ptr, NULL, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+			_MarshalCommandToUser(ctx_ptr, NULL, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 			header.args	=	COMMAND_ARGS__UPDATED;//restore for others
 		} else {
 			header.cid	=	SESSION_ID(sesn_ptr_listed);
-			_MarshalCommandToUser(sesn_ptr, sesn_ptr_listed, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+			_MarshalCommandToUser(ctx_ptr, &(InstanceContextForSession){raw_session_list.sessions[i], sesn_ptr_listed}, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 		}
 	}
 
@@ -2359,7 +2178,7 @@ _CommandControllerFenceDeliveryMode(InstanceHolderForSession *instance_sesn_ptr,
 		instance_fstate_ptr = (InstanceHolderForFenceStateDescriptor *)SESSION_RESULT_USERDATA(sesn_ptr);
 		FenceStateDescriptor *fstate_ptr = FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr);
     //currently only owner is allowed to change delivery mode. No permission associated with that
-    _HandleFenceCommandError (sesn_ptr, FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr), wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_PERMISSION, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceMaxMembers);
+    _HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr), wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_PERMISSION, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceMaxMembers);
     if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
 
     _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_PERMISSION)
@@ -2369,14 +2188,14 @@ _CommandControllerFenceDeliveryMode(InstanceHolderForSession *instance_sesn_ptr,
 
 		if (SESSION_RESULT_TYPE_ERROR(sesn_ptr) && !SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 			//FENCE LOCKED... membership
-			_HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=instance_f_ptr}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceDeliveryMode);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=instance_f_ptr}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceDeliveryMode);
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FenceOffInstanceHolder(instance_f_ptr), SESSION_RESULT_PTR(sesn_ptr));
 			goto exit_catch_all;
 		}
 
 		if (IS_EMPTY(SESSION_RESULT_USERDATA(sesn_ptr)) && SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 			//fence doesn't exist. NO lock
-			_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			goto exit_catch_all;
 		}
 
@@ -2393,7 +2212,7 @@ _CommandControllerFenceDeliveryMode(InstanceHolderForSession *instance_sesn_ptr,
 	IsUserAllowedToChangeFenceDeliveryMode (sesn_ptr, fstate_ptr, fcmd_ptr->fences[0]->delivery_mode, fence_call_flags_msgexpiry, &fence_event);
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
 		exit_success:
-		_MarshalFenceDeliveryModeUpdate (sesn_ptr, FENCESTATE_FENCE(fstate_ptr), data_msg_ptr, 0, &fence_event);
+		_MarshalFenceDeliveryModeUpdate(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, FENCESTATE_INSTANCE_HOLDER(fstate_ptr), wsm_ptr_orig, data_msg_ptr, 0, &fence_event);
 
 		if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
 
@@ -2405,11 +2224,11 @@ _CommandControllerFenceDeliveryMode(InstanceHolderForSession *instance_sesn_ptr,
 	goto exit_error;
 //
 	exit_delivery_mode_not_set:
-		_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_MISSING_PARAM, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+		_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_MISSING_PARAM, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 		goto exit_error;
 
 	exit_invalid_delivery_mode:
-	_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_INVALID_DELIVERY_MODE, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+	_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_INVALID_DELIVERY_MODE, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 	goto exit_error;
 
 	exit_error:
@@ -2419,8 +2238,11 @@ _CommandControllerFenceDeliveryMode(InstanceHolderForSession *instance_sesn_ptr,
 }
 
 inline static UFSRVResult *
-_MarshalFenceDeliveryModeUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr)
+_MarshalFenceDeliveryModeUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *instance_f_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr)
 {
+  Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, fence_event_ptr, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__DELIVERY_MODE, COMMAND_ARGS__UPDATED);
 
@@ -2431,19 +2253,19 @@ _MarshalFenceDeliveryModeUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *d
 	if (IS_PRESENT(fence_event_ptr))	{header.eid=fence_event_ptr->eid; header.has_eid=1;}
 
 	FenceRawSessionList raw_session_list = {0};
-	GetRawMemberUsersListForFence (sesn_ptr, InstanceHolderFromClientContext(CLIENT_CTX_DATA(f_ptr)), FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
+	GetRawMemberUsersListForFence (sesn_ptr, instance_f_ptr, FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
 	assert (raw_session_list.sessions_sz > 0);
 
 	size_t i = 0;
 	for (; i<raw_session_list.sessions_sz; i++) {
     Session *sesn_ptr_listed = SessionOffInstanceHolder(raw_session_list.sessions[i]);
-		if (SESSION_ID(sesn_ptr)==SESSION_ID(sesn_ptr_listed)) {
+		if (SESSION_ID(sesn_ptr) == SESSION_ID(sesn_ptr_listed)) {
 			header.args	=	COMMAND_ARGS__ACCEPTED;//self
-			_MarshalCommandToUser(sesn_ptr, NULL, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+			_MarshalCommandToUser(ctx_ptr, NULL, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 			header.args	=	COMMAND_ARGS__UPDATED;//restore for others
 		} else {
 			header.cid	=	SESSION_ID(sesn_ptr_listed);
-			_MarshalCommandToUser(sesn_ptr, sesn_ptr_listed, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+			_MarshalCommandToUser(ctx_ptr, &(InstanceContextForSession){raw_session_list.sessions[i], sesn_ptr_listed}, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 		}
 	}
 
@@ -2644,9 +2466,9 @@ _CommandControllerFenceMessageExpiry (InstanceHolderForSession *instance_sesn_pt
       }
 
       if (SESSION_RESULT_CODE(sesn_ptr) == RESCODE_FENCE_OWNERSHIP) {
-        _HandleFenceCommandError (sesn_ptr, fstate_ptr, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceExpiryTimer);
+        _HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, fstate_ptr, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceExpiryTimer);
       } else { //RESCODE_FENCE_FENCE_MEMBERSHIP
-        _HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=FENCESTATE_INSTANCE_HOLDER(fstate_ptr)}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceExpiryTimer);
+        _HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=FENCESTATE_INSTANCE_HOLDER(fstate_ptr)}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, _RestoreFenceExpiryTimer);
       }
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 			goto exit_catch_all;
@@ -2654,7 +2476,7 @@ _CommandControllerFenceMessageExpiry (InstanceHolderForSession *instance_sesn_pt
 
 		if (IS_EMPTY(SESSION_RESULT_USERDATA(sesn_ptr)) && SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 			//fence doesn't exist. NO lock
-			_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			goto exit_catch_all;
 		}
 
@@ -2671,7 +2493,7 @@ _CommandControllerFenceMessageExpiry (InstanceHolderForSession *instance_sesn_pt
 	IsUserAllowedToChangeFenceMessageExpiry (sesn_ptr, fstate_ptr, data_msg_ptr->ufsrvcommand->fencecommand->fences[0]->expire_timer, fence_call_flags_msgexpiry, &fence_event);
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
 		exit_success:
-		_MarshalFenceMessageExpiryUpdate (sesn_ptr, FENCESTATE_FENCE(fstate_ptr), data_msg_ptr, 0, &fence_event);
+		_MarshalFenceMessageExpiryUpdate (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, FENCESTATE_INSTANCE_HOLDER(fstate_ptr), wsm_ptr_orig, data_msg_ptr, 0, &fence_event);
 
 		if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
 
@@ -2699,8 +2521,11 @@ _RestoreFenceExpiryTimer (FenceStateDescriptor *fence_state_ptr, FenceRecord *fe
 }
 
 inline static UFSRVResult *
-_MarshalFenceMessageExpiryUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr)
+_MarshalFenceMessageExpiryUpdate (InstanceContextForSession *ctx_ptr, InstanceHolderForFence *instance_f_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr)
 {
+  Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, fence_event_ptr, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__EXPIRY, COMMAND_ARGS__UPDATED);
 
@@ -2711,7 +2536,7 @@ _MarshalFenceMessageExpiryUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *
 	if (IS_PRESENT(fence_event_ptr))	{header.eid=fence_event_ptr->eid; header.has_eid=1;}
 
 	FenceRawSessionList raw_session_list = {0};
-	GetRawMemberUsersListForFence (sesn_ptr, InstanceHolderFromClientContext(CLIENT_CTX_DATA(f_ptr)), FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
+	GetRawMemberUsersListForFence (sesn_ptr, instance_f_ptr, FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
 	assert (raw_session_list.sessions_sz > 0);
 
 	size_t i = 0;
@@ -2719,11 +2544,11 @@ _MarshalFenceMessageExpiryUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *
     Session *sesn_ptr_listed = SessionOffInstanceHolder(raw_session_list.sessions[i]);
 		if (SESSION_ID(sesn_ptr) == SESSION_ID(sesn_ptr_listed)) {
 			header.args	=	COMMAND_ARGS__ACCEPTED;//self
-			_MarshalCommandToUser(sesn_ptr, NULL, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+			_MarshalCommandToUser(ctx_ptr, NULL, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 			header.args	=	COMMAND_ARGS__UPDATED;//restore for others
 		} else {
 			header.cid	=	SESSION_ID(sesn_ptr_listed);
-		  _MarshalCommandToUser(sesn_ptr, sesn_ptr_listed, f_ptr, &command_envelope,  uFENCE_V1_IDX);
+		  _MarshalCommandToUser(ctx_ptr, &(InstanceContextForSession){raw_session_list.sessions[i], sesn_ptr_listed}, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 		}
 	}
 
@@ -2739,7 +2564,7 @@ _MarshalFenceMessageExpiryUpdate (Session *sesn_ptr, Fence *f_ptr, DataMessage *
 //// PERMISSION \\
 
 
-inline static UFSRVResult *_MarshalFencePermissionUpdate (Session *sesn_ptr, FencePermissionContextData *context_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr);
+inline static UFSRVResult *_MarshalFencePermissionUpdate (InstanceContextForSession *, FencePermissionContextData *context_ptr, WebSocketMessage *, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr);
 
 inline static UFSRVResult *
 _CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
@@ -2777,7 +2602,7 @@ _CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, 
         f_ptr		=	FenceOffInstanceHolder((InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr));
       }
 
-      _HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=(InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr)}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL/*_RestoreFenceExpiryTimer*/);
+      _HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=(InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr)}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL/*_RestoreFenceExpiryTimer*/);
 
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 			goto exit_catch_all;
@@ -2785,7 +2610,7 @@ _CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, 
 
 		if (IS_EMPTY(SESSION_RESULT_USERDATA(sesn_ptr)) && SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 			//fence doesn't exist. NO lock
-			_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			goto exit_catch_all;
 		}
 
@@ -2799,11 +2624,11 @@ _CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, 
 	FencePermission 				*permission_ptr							=	NULL;
 	FenceRecord__Permission	*fence_record_permission		=	NULL;
 
-	if ((ValidateFencePermissionCommandFromProto (sesn_ptr, data_msg_ptr->ufsrvcommand->fencecommand, FENCESTATE_FENCE(fstate_ptr), &permission_ptr, &fence_record_permission))!=0) {
+	if ((ValidateFencePermissionCommandFromProto(sesn_ptr, data_msg_ptr->ufsrvcommand->fencecommand, FENCESTATE_FENCE(fstate_ptr), &permission_ptr, &fence_record_permission)) != 0) {
 		goto	exit_unlock;
 	}
 
-	UFSRVResult * (*permission_op_callback)(Session *, Fence *, FencePermission *, unsigned long, FenceEvent *);
+	UFSRVResult * (*permission_op_callback)(InstanceHolderForSession *, Fence *, FencePermission *, unsigned long, FenceEvent *);
 
 	if (data_msg_ptr->ufsrvcommand->fencecommand->header->args == COMMAND_ARGS__ADDED)				permission_op_callback = AddUserToFencePermissions;
 	else if (data_msg_ptr->ufsrvcommand->fencecommand->header->args == COMMAND_ARGS__DELETED)	permission_op_callback = RemoveUserFromFencePermissions;
@@ -2816,7 +2641,7 @@ _CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, 
 	if (UfsrvUidIsEqual((const UfsrvUid *)fence_record_permission->users[0]->ufsrvuid.data, &SESSION_UFSRVUIDSTORE(sesn_ptr)) &&
 			(FENCE_OWNER_UID(FENCESTATE_FENCE(fstate_ptr)) == SESSION_USERID(sesn_ptr))) {
 		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', command_arg:'%d'}: ERROR: FENCE OWNER UID MATCHES PERMISSION's TARGET UID", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), data_msg_ptr->ufsrvcommand->fencecommand->header->args);
-		_HandleFenceCommandError (sesn_ptr, fstate_ptr, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_PERMISSION, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+		_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, fstate_ptr, wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_PERMISSION, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 		goto	exit_unlock;
 	}
 
@@ -2826,10 +2651,11 @@ _CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, 
 																							CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION);
 	bool lock_already_owned = false;
 	Session *sesn_ptr_target = NULL;
-	InstanceHolderForSession *instance_sesn_ptr_target;
+	InstanceHolderForSession *instance_sesn_ptr_target = NULL;
 
 	if (UfsrvUidIsEqual((const UfsrvUid *)fence_record_permission->users[0]->ufsrvuid.data, &SESSION_UFSRVUIDSTORE(sesn_ptr))) {
 		sesn_ptr_target = sesn_ptr; //user targeting setting on themselves
+    instance_sesn_ptr_target = instance_sesn_ptr;
 	} else {
 		GetSessionForThisUserByUserId(sesn_ptr, UfsrvUidGetSequenceId((const UfsrvUid *)fence_record_permission->users[0]->ufsrvuid.data), &lock_already_owned, sesn_call_flags_permission);
 		instance_sesn_ptr_target = (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr);
@@ -2842,12 +2668,13 @@ _CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, 
 			SessionTransferAccessContext(sesn_ptr, sesn_ptr_target, false);
 			SESNSTATUS_SET(sesn_ptr_target->stat, SESNSTATUS_EPHEMERAL);//this's necessary to emulate standard semantics for marshaling target sessions. Alternatively we could set 'false" above to 'true'
 
-			(*permission_op_callback)(sesn_ptr_target, FENCESTATE_FENCE(fstate_ptr), permission_ptr, FENCE_CALLFLAG_WRITEBACK_DATA_TO_BACKEND, &fence_event);
+			(*permission_op_callback)(instance_sesn_ptr_target, FENCESTATE_FENCE(fstate_ptr), permission_ptr, FENCE_CALLFLAG_WRITEBACK_DATA_TO_BACKEND, &fence_event);
 
 			if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr_target)) {
 				exit_success:
-				_MarshalFencePermissionUpdate (sesn_ptr,
-																			 &((FencePermissionContextData){.sesn_ptr=sesn_ptr_target, .fence.f_ptr=FENCESTATE_FENCE(fstate_ptr), .permission_ptr=permission_ptr}),
+				_MarshalFencePermissionUpdate (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr},
+																			 &((FencePermissionContextData){.sesn_ptr=sesn_ptr_target, .fence.fence_state_ptr=fstate_ptr, .permission_ptr=permission_ptr}),
+                                       IS_EMPTY(wsm_ptr_orig)?(&(WebSocketMessage){.request=NULL, .type=WEB_SOCKET_MESSAGE__TYPE__REQUEST}):wsm_ptr_orig,
 																			 data_msg_ptr, 0, &fence_event);
 
 				SESNSTATUS_UNSET(sesn_ptr_target->stat, SESNSTATUS_EPHEMERAL);
@@ -2857,18 +2684,19 @@ _CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, 
 
 				_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 			} else if (SESSION_RESULT_CODE_EQUAL(sesn_ptr_target, RESCODE_FENCE_PERMISSION_MEMBER)) {
-				_HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=FENCESTATE_INSTANCE_HOLDER(fstate_ptr)}), wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_PERMISSION_MEMBER, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+				_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, &((FenceStateDescriptor){.instance_holder_fence=FENCESTATE_INSTANCE_HOLDER(fstate_ptr)}), wsm_ptr_orig, data_msg_ptr, RESCODE_FENCE_PERMISSION_MEMBER, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			}
 
 			SessionResetTransferAccessContext (sesn_ptr_target);
 			if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_target, __func__);//lost thread context assignment n session
 	} else if (IS_PRESENT(sesn_ptr_target)) {//user targeting themselves (sesn_ptr==sesn_ptr_target)
-		(*permission_op_callback)(sesn_ptr_target, FENCESTATE_FENCE(fstate_ptr), permission_ptr, FENCE_CALLFLAG_WRITEBACK_DATA_TO_BACKEND, &fence_event);
+		(*permission_op_callback)(instance_sesn_ptr_target, FENCESTATE_FENCE(fstate_ptr), permission_ptr, FENCE_CALLFLAG_WRITEBACK_DATA_TO_BACKEND, &fence_event);
 
 		if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr_target)) {
 			exit_success_same_target:
-			_MarshalFencePermissionUpdate (sesn_ptr,
-																		 &((FencePermissionContextData){.sesn_ptr=sesn_ptr_target, .fence.f_ptr=FENCESTATE_FENCE(fstate_ptr), .permission_ptr=permission_ptr}),
+			_MarshalFencePermissionUpdate (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr},
+																		 &((FencePermissionContextData){.sesn_ptr=sesn_ptr_target, .fence.fence_state_ptr=fstate_ptr, .permission_ptr=permission_ptr}),
+																		 IS_EMPTY(wsm_ptr_orig)?(&(WebSocketMessage){.request=NULL, .type=WEB_SOCKET_MESSAGE__TYPE__REQUEST}):wsm_ptr_orig,
 																		 data_msg_ptr, 0, &fence_event);
 
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
@@ -2899,13 +2727,15 @@ _CommandControllerFencePermission (InstanceHolderForSession *instance_sesn_ptr, 
  * 	@unlocks: None
  */
 inline static UFSRVResult *
-_MarshalFencePermissionUpdate (Session *sesn_ptr,  FencePermissionContextData *context_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr)
+_MarshalFencePermissionUpdate (InstanceContextForSession *ctx_ptr,  FencePermissionContextData *context_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags, FenceEvent *fence_event_ptr)
 {
 	FenceCommand 	*fence_command_recieved	=	data_msg_ptr_received->ufsrvcommand->fencecommand;
 	Session 			*sesn_ptr_target				=	context_ptr->sesn_ptr;//user being updated
+	Fence         *f_ptr                  = FenceOffInstanceHolder(FENCESTATE_INSTANCE_HOLDER(context_ptr->fence.fence_state_ptr));
+	Session       *sesn_ptr               = ctx_ptr->sesn_ptr;
 
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
-	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, context_ptr->fence.f_ptr, fence_event_ptr, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__PERMISSION, fence_command_recieved->header->args/*COMMAND_ARGS__ACCEPTED*/);
+	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, fence_event_ptr, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__PERMISSION, fence_command_recieved->header->args);
 
 	//actual delta
 	UserRecord *user_records[1];
@@ -2927,27 +2757,26 @@ _MarshalFencePermissionUpdate (Session *sesn_ptr,  FencePermissionContextData *c
 	//originator gets accepted (disabled)
 	if (sesn_ptr_target != sesn_ptr) {
 		header.args	=	fence_command_recieved->header->args;
-		_MarshalCommandToUser(sesn_ptr, NULL, context_ptr->fence.f_ptr, &command_envelope,  uFENCE_V1_IDX);
-		_MarshalCommandToUser(sesn_ptr_target, NULL, context_ptr->fence.f_ptr, &command_envelope,  uFENCE_V1_IDX);
+		_MarshalCommandToUser(ctx_ptr, NULL, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
+		_MarshalCommandToUser(ctx_ptr, NULL, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 	} else {
 		//users targeting themselves get one confirmation
 		header.args	=	fence_command_recieved->header->args;
-		_MarshalCommandToUser(sesn_ptr_target, NULL, context_ptr->fence.f_ptr, &command_envelope,  uFENCE_V1_IDX);
+		_MarshalCommandToUser(ctx_ptr, NULL, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 	}
 
-	if (FENCE_USERS_COUNT(context_ptr->fence.f_ptr)	<= 2) goto return_short_circuited;
+	if (FENCE_USERS_COUNT(f_ptr)	<= 2) goto return_short_circuited;
 
 	FenceRawSessionList raw_session_list = {0};
-	GetRawMemberUsersListForFence (sesn_ptr, InstanceHolderFromClientContext(CLIENT_CTX_DATA(context_ptr->fence.f_ptr)), FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
+	GetRawMemberUsersListForFence (sesn_ptr, FENCESTATE_INSTANCE_HOLDER(context_ptr->fence.fence_state_ptr), FENCE_CALLFLAG_INCLUDE_REMOTE_SESSIONS, &raw_session_list);//no locking
 	assert (raw_session_list.sessions_sz > 0);
-
 
 	size_t i = 0;
 	for (; i<raw_session_list.sessions_sz; i++) {
     Session *sesn_ptr_listed = SessionOffInstanceHolder(raw_session_list.sessions[i]);
-		if ((SESSION_ID(sesn_ptr)!=SESSION_ID(sesn_ptr_listed)) && (SESSION_ID(sesn_ptr_target)!=SESSION_ID(sesn_ptr_listed))) {
+		if ((SESSION_ID(sesn_ptr) != SESSION_ID(sesn_ptr_listed)) && (SESSION_ID(sesn_ptr_target) != SESSION_ID(sesn_ptr_listed))) {
 			header.cid	=	SESSION_ID(sesn_ptr_listed);
-			_MarshalCommandToUser(sesn_ptr, sesn_ptr_listed, context_ptr->fence.f_ptr, &command_envelope,  uFENCE_V1_IDX);
+			_MarshalCommandToUser(ctx_ptr, &(InstanceContextForSession){raw_session_list.sessions[i], sesn_ptr_listed}, f_ptr, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX);
 		}
 	}
 
@@ -2972,7 +2801,7 @@ _MarshalFencePermissionUpdate (Session *sesn_ptr,  FencePermissionContextData *c
  * 	@locks RW Fence: by downstream
  */
 inline static UFSRVResult *
-_CommandControllerFenceStateSync (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
+_CommandControllerFenceStateSync (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr)
 {
 	UFSRVResult 					*res_ptr	=	NULL;
 
@@ -2980,14 +2809,8 @@ _CommandControllerFenceStateSync (InstanceHolderForSession *instance_sesn_ptr, W
 
 	switch (data_msg_ptr->ufsrvcommand->fencecommand->header->args)
 	{
-#if 0
-		//TODO: TO BE PHASED OUT: group attributes are processed individuly now
-		case COMMAND_ARGS__UPDATED://user updated a fence attribute
-			res_ptr=_CommandCallbackControllerFenceStateSyncUpdated(sesn_ptr, wsm_ptr_orig, data_msg_ptr);
-			break;
-#endif
-		case COMMAND_ARGS__SYNCED://user requests a snapshot of current fence view
-			res_ptr = _CommandControllerFenceStateSyncSynced(instance_sesn_ptr, wsm_ptr_orig, data_msg_ptr);
+		case COMMAND_ARGS__SYNCED:
+			res_ptr = _CommandControllerFenceStateSyncSynced(instance_sesn_ptr, wsm_ptr_received, data_msg_ptr);
 			break;
 
 		default:
@@ -3011,8 +2834,7 @@ _CommandControllerFenceStateSync (InstanceHolderForSession *instance_sesn_ptr, W
  * 	@unlocks Fence:
  */
 inline static UFSRVResult *
-_CommandControllerFenceStateSyncSynced (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
-
+_CommandControllerFenceStateSyncSynced (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr)
 {
 	bool 									fence_already_locked  = false;
 	FenceStateDescriptor 	*fstate_ptr           = NULL;
@@ -3022,11 +2844,7 @@ _CommandControllerFenceStateSyncSynced (InstanceHolderForSession *instance_sesn_
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
 	//locks by default, only checking for membership
-	IsUserAllowedToChangeFence (sesn_ptr,
-															data_msg_ptr->ufsrvcommand->fencecommand->fences[0]->fid,
-															data_msg_ptr->ufsrvcommand->fencecommand->fences[0]->cname,
-															&fence_already_locked,
-															_FENCE_CALL_FLAGS_STATESYNC);
+	IsUserAllowedToChangeFence(sesn_ptr, data_msg_ptr->ufsrvcommand->fencecommand->fences[0]->fid, data_msg_ptr->ufsrvcommand->fencecommand->fences[0]->cname, &fence_already_locked, _FENCE_CALL_FLAGS_STATESYNC);
 
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	{
 	  instance_fstate_ptr = (InstanceHolderForFenceStateDescriptor *)SESSION_RESULT_USERDATA(sesn_ptr);
@@ -3046,7 +2864,9 @@ _CommandControllerFenceStateSyncSynced (InstanceHolderForSession *instance_sesn_
         f_ptr		=	FenceOffInstanceHolder((InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr));
       }
 
-			_HandleFenceCommandError (sesn_ptr, &((FenceStateDescriptor){.instance_holder_fence=(InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr)}), wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr},
+			        &((FenceStateDescriptor){.instance_holder_fence=(InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr)}),
+			        wsm_ptr_received, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 
 			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 			goto exit_catch_all;
@@ -3054,17 +2874,17 @@ _CommandControllerFenceStateSyncSynced (InstanceHolderForSession *instance_sesn_
 
 		if (IS_EMPTY(SESSION_RESULT_USERDATA(sesn_ptr)) && SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_FENCE_DOESNT_EXIST)) {
 			//fence doesn't exist. NO lock
-			_HandleFenceCommandError (sesn_ptr, NULL, wsm_ptr_orig, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
+			_HandleFenceCommandError(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, NULL, wsm_ptr_received, data_msg_ptr, rescode, data_msg_ptr->ufsrvcommand->fencecommand->header->command, NULL);
 			goto exit_catch_all;
 		}
 
 		exit_catch_all:
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 	}
 
 	//FENCE NOW LOCKED
 
-	MarshalFenceStateSync (sesn_ptr, fstate_ptr, data_msg_ptr, 0);
+	MarshalFenceStateSync(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, fstate_ptr, wsm_ptr_received, data_msg_ptr, 0);
 
 	exit_success:
 	if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fstate_ptr), SESSION_RESULT_PTR(sesn_ptr));
@@ -3073,12 +2893,12 @@ _CommandControllerFenceStateSyncSynced (InstanceHolderForSession *instance_sesn_
 #undef _FENCE_CALL_FLAGS_STATESYNC
 }
 
-
 /**
  * 	@brief: Marshals a general Fence state sync message to the named Session, enabling client to refresh their views.
  *	This may or may not be based on prior user request. The presence of data_msg_ptr will determine that.
  *	No event is associated with syncs.
  *
+ *  @param wsm_ptr_received only set if command came through websocket
  *	@param data_msg_ptr_received: The original wire command as packed by the user. Can be null, in which case it means the sync was
  *	server initiated.
  *	@locks: NONE
@@ -3089,32 +2909,31 @@ _CommandControllerFenceStateSyncSynced (InstanceHolderForSession *instance_sesn_
  *
  */
 UFSRVResult *
-MarshalFenceStateSync (Session *sesn_ptr, FenceStateDescriptor *fstate_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags)
+MarshalFenceStateSync (InstanceContextForSession *ctx_ptr, FenceStateDescriptor *fstate_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags)
 {
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
 
 	Fence *f_ptr = FENCESTATE_FENCE(fstate_ptr);
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
 	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__STATE, COMMAND_ARGS__SYNCED);
-	MakeFenceRecordInProto(sesn_ptr, f_ptr, &fence_record); //we need more info on the fence than just identifier
+	MakeFenceRecordInProto(ctx_ptr, &(InstanceContextForFence){FENCESTATE_INSTANCE_HOLDER(fstate_ptr), f_ptr}, &fence_record); //we need more info on the fence than just identifier
 	MakeFenceUserPreferencesInProto(sesn_ptr, fstate_ptr, &fence_record);
 
-	WebSocketMessage wsmsg; wsmsg.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST;//dummy
-	UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription = {header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
 
 	#ifdef __UF_TESTING
-		syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cid_target:'%lu' uid:'%lu', fcname:'%s'} Sending fence Sync State ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),
-					SESSION_ID(sesn_ptr), SESSION_USERID(sesn_ptr), FENCE_CNAME(f_ptr));
+		syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cid_target:'%lu' uid:'%lu', fcname:'%s'} Sending fence Sync State ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), SESSION_ID(sesn_ptr), SESSION_USERID(sesn_ptr), FENCE_CNAME(f_ptr));
 	#endif
 
-	UfsrvCommandInvokeCommand (sesn_ptr, NULL, &wsmsg, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
+  if (IS_PRESENT(data_msg_ptr_received)) wsm_ptr_received->type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE; //only set to null if server pushed sync message
+  UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr_received, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
 
 	DestructFenceRecordProto (&fence_record, false);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
-
 
 /**
  * 	@brief: Marshals a general Fence state sync message to the named Session, enabling client to refresh their views.
@@ -3131,26 +2950,26 @@ MarshalFenceStateSync (Session *sesn_ptr, FenceStateDescriptor *fstate_ptr, Data
  *
  */
 static inline UFSRVResult *
-_MarshalServerRequestForFenceStateSync (Session *sesn_ptr, Fence *f_ptr, DataMessage *data_msg_ptr_received, unsigned long call_flags)
+_MarshalServerRequestForFenceStateSync (InstanceContextForSession *ctx_ptr, Fence *f_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags)
 {
 	_GENERATE_FENCE_COMMAND_ENVELOPE_INITIALISATION();
-	_PrepareMarshalMessageForFence (&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__STATE, COMMAND_ARGS__RESYNC);
+
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
+	_PrepareMarshalMessageForFence(&envelope_marshal, sesn_ptr, f_ptr, NULL, data_msg_ptr_received, FENCE_COMMAND__COMMAND_TYPES__STATE, COMMAND_ARGS__RESYNC);
 	MakeFenceRecordInProtoAsIdentifier(sesn_ptr, f_ptr, &fence_record);
 
-	WebSocketMessage wsmsg; wsmsg.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST;//dummy
-	UfsrvCommandMarshallingDescription ufsrv_descpription={header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription = {header.eid, FENCE_ID(f_ptr), header.when, &EnvelopeMetaData, &command_envelope};
 
 #ifdef __UF_TESTING
-		syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cid_target:'%lu' uid:'%lu', fcname:'%s'} Sending Server request for fence Sync State ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),
-					SESSION_ID(sesn_ptr), SESSION_USERID(sesn_ptr), FENCE_CNAME(f_ptr));
+		syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cid_target:'%lu' uid:'%lu', fcname:'%s'} Sending Server request for fence Sync State ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), SESSION_ID(sesn_ptr), SESSION_USERID(sesn_ptr), FENCE_CNAME(f_ptr));
 #endif
 
-	UfsrvCommandInvokeCommand (sesn_ptr, NULL, &wsmsg, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
+  UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr_received, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
-
 
 /**
  * 	@brief: works in tandem with _MarshalFenceStateSyncForJoin() & et al to specialise the message for a specific target user
@@ -3159,20 +2978,22 @@ _MarshalServerRequestForFenceStateSync (Session *sesn_ptr, Fence *f_ptr, DataMes
  * 	@locked RW f_ptr:
  */
 inline static UFSRVResult *
-_MarshalFenceStateSync(Session *sesn_ptr, Session *sesn_ptr_target, Fence *f_ptr, Envelope *command_envelope_ptr)
+_MarshalFenceStateSync(InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_target, Fence *f_ptr, Envelope *command_envelope_ptr)
 {
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+  Session *sesn_ptr_target = IS_PRESENT(ctx_ptr_target)?ctx_ptr_target->sesn_ptr:NULL;
+
 	CommandHeader *command_header_ptr	=	command_envelope_ptr->ufsrvcommand->header;
 	command_header_ptr->cid						=	SESSION_ID((sesn_ptr_target?sesn_ptr_target:sesn_ptr)); command_header_ptr->has_cid=1;
 
-	WebSocketMessage wsmsg; wsmsg.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST;//dummy
-	UfsrvCommandMarshallingDescription ufsrv_descpription={command_header_ptr->eid, FENCE_ID(f_ptr), command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
+	UfsrvCommandMarshallingDescriptor ufsrv_description = {command_header_ptr->eid, FENCE_ID(f_ptr), command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
 
 #ifdef __UF_TESTING
 	syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cid_target:'%lu' uname_target:'%s', fid:'%lu'} Syncing fence State ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),
 				SESSION_ID((sesn_ptr_target?sesn_ptr_target:sesn_ptr)), SESSION_USERNAME((sesn_ptr_target?sesn_ptr_target:sesn_ptr)), FENCE_ID(f_ptr));
 #endif
 
-	UfsrvCommandInvokeCommand (sesn_ptr, sesn_ptr_target, &wsmsg, NULL, &ufsrv_descpription, uFENCE_V1_IDX);
+  UfsrvCommandInvokeUserCommand(ctx_ptr, ctx_ptr_target, &(WebSocketMessage){.request=NULL, .type=WEB_SOCKET_MESSAGE__TYPE__REQUEST}, NULL, &ufsrv_description, uFENCE_V1_IDX);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
@@ -3184,24 +3005,24 @@ _MarshalFenceStateSync(Session *sesn_ptr, Session *sesn_ptr_target, Fence *f_ptr
  * 	@brief: Generalised command sending
  */
 inline static UFSRVResult *
-_MarshalCommandToUser	(Session *sesn_ptr, Session *sesn_ptr_target, Fence *f_ptr, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
+_MarshalCommandToUser	(InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_target, Fence *f_ptr, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
 {
 	CommandHeader *command_header_ptr	=	command_envelope_ptr->ufsrvcommand->header;
+	Session *sesn_ptr                 = ctx_ptr->sesn_ptr;
+	Session *sesn_ptr_target          = IS_PRESENT(ctx_ptr_target)?ctx_ptr_target->sesn_ptr:NULL;
 
-	WebSocketMessage wsmsg; wsmsg.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST;//dummy
-	UfsrvCommandMarshallingDescription ufsrv_descpription={command_header_ptr->eid, IS_PRESENT(f_ptr)?FENCE_ID(f_ptr):0, command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
+	UfsrvCommandMarshallingDescriptor ufsrv_descpription = {command_header_ptr->eid, IS_PRESENT(f_ptr) ? FENCE_ID(f_ptr) : 0, command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
 
 #ifdef __UF_TESTING
 	syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cid_target:'%lu', uname_target:'%s', fid:'%lu'} Marshaling command... ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),
 				SESSION_ID((sesn_ptr_target?sesn_ptr_target:sesn_ptr)), SESSION_USERNAME((sesn_ptr_target?sesn_ptr_target:sesn_ptr)), IS_PRESENT(f_ptr)?FENCE_ID(f_ptr):0);
 #endif
 
-	UfsrvCommandInvokeCommand (sesn_ptr, sesn_ptr_target, &wsmsg, NULL, &ufsrv_descpription, req_cmd_idx);
+  UfsrvCommandInvokeUserCommand(ctx_ptr, ctx_ptr_target, wsm_ptr_received, NULL, &ufsrv_descpription, req_cmd_idx);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
-
 
 /*
  * @param errcode: should reflect a UFSRVResult.rescode type
@@ -3290,7 +3111,6 @@ _BuildErrorHeaderForFenceCommand (FenceCommand *fence_command_ptr, FenceCommand 
 
 }
 
-
 /**
  * 	@brief: Marshal an error response message to user. This is invoked in the context of command processing.
  *
@@ -3302,12 +3122,14 @@ _BuildErrorHeaderForFenceCommand (FenceCommand *fence_command_ptr, FenceCommand 
  * 	@unlocks: none
  */
 static UFSRVResult *
-_HandleFenceCommandError (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, int rescode, int command_type, CallbackRestoreFenceValue restore_callback)
+_HandleFenceCommandError (InstanceContextForSession *ctx_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr, int rescode, int command_type, CallbackRestoreFenceValue restore_callback)
 {
 	Envelope 					command_envelope	= ENVELOPE__INIT;
 	CommandHeader 		header						= COMMAND_HEADER__INIT;
 	UfsrvCommandWire	ufsrv_command			= UFSRV_COMMAND_WIRE__INIT;
 	FenceCommand 			fence_command			= FENCE_COMMAND__INIT;
+
+	Session           *sesn_ptr         = ctx_ptr->sesn_ptr;
 
 	command_envelope.ufsrvcommand				=	&ufsrv_command;
 	ufsrv_command.header								=	&header;
@@ -3331,7 +3153,7 @@ _HandleFenceCommandError (Session *sesn_ptr, FenceStateDescriptor *fence_state_p
 
 	if (IS_PRESENT(restore_callback))	(*restore_callback)(fence_state_ptr, &fence_record);
 
-	command_envelope.source							=	"0";
+	command_envelope.sourceufsrvuid							=	"0";
 	command_envelope.timestamp					=	GetTimeNowInMillis(); command_envelope.has_timestamp=1;
 
 	header.when													=	command_envelope.timestamp; header.has_when		=	1;
@@ -3343,7 +3165,7 @@ _HandleFenceCommandError (Session *sesn_ptr, FenceStateDescriptor *fence_state_p
 	syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', uid:'%lu', cid:'%lu', arg_error:'%d', rescode:'%d'}: Marshaling Error response message...", __func__, pthread_self(), sesn_ptr, SESSION_USERID(sesn_ptr), SESSION_ID(sesn_ptr), header.args_error, rescode);
 #endif
 
-	return (_MarshalCommandToUser(sesn_ptr, NULL,  IS_PRESENT(fence_state_ptr)?FENCESTATE_FENCE(fence_state_ptr):NULL, &command_envelope,  uFENCE_V1_IDX));
+	return (_MarshalCommandToUser(ctx_ptr, NULL,  IS_PRESENT(fence_state_ptr)?FENCESTATE_FENCE(fence_state_ptr):NULL, wsm_ptr_received, &command_envelope,  uFENCE_V1_IDX));
 
 }
 

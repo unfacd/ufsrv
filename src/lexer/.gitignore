@@ -1,0 +1,10 @@
+/minilex
+/minilex.ufsrv
+/ws_parser2.c
+/ws_parser.c
+/ufsrvcmd_parser_orig.c
+/minilex.ws
+/ufsrvcmd_parser.c
+/lextable.h
+/ufsrvcmd_lexer_strings.h
+/ufsrvcmd_lexer_data.h

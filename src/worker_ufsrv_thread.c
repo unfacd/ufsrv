@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2020 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -19,37 +19,38 @@
 # include <config.h>
 #endif
 
-#include <main.h>
 #include <sys/prctl.h>//for naming thread
 #include <thread_context_type.h>
 #include <sockets.h>
-#include <list.h>
-#include <session.h>
 #include <utils.h>
-#include <misc.h>
 #include <nportredird.h>
-#include <protocol.h>
-#include <protocol_websocket.h>
-#include <protocol_websocket_routines.h>
-#include <protocol_websocket_io.h>
+#include <ufsrvwebsock/include/protocol_websocket_io.h>
 #include <http_request.h>
 #include <json/json.h>
-#include <instrumentation_backend.h>
-#include <persistance.h>
-#include <ufsrvmsgqueue.h>
-#include <ufsrvcmd_broadcast.h>
-#include <db_sql.h>
+#include <ufsrv_core/instrumentation/instrumentation_backend.h>
+#include <ufsrv_core/cache_backend/persistance.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <uflib/db/db_sql.h>
 #include <sessions_delegator_type.h>
-#include <adt_hopscotch_hashtable.h>
-#include <scheduled_jobs.h>
+#include <uflib/adt/adt_hopscotch_hashtable.h>
+#include <uflib/scheduled_jobs/scheduled_jobs.h>
+
+static MessageContextData *_WorkerThreadScheduledJobExtractArg(MessageQueueMsgPayload *msgqueue_payload_ptr);
 
 //lookup table for matching delegator type to associated callback function
 static WorkerJobSpecs worker_job_specs[]={
-		{DELEGTYPE_TIMER,	 		NULL, WorkerThreadScheduledJobExecutor, 						WorkerThreadScheduledJobExtractArg				},
+		{DELEGTYPE_TIMER,	 		NULL, WorkerThreadScheduledJobExecutor, 						_WorkerThreadScheduledJobExtractArg				},
 		{DELEGTYPE_MSGQUEUE, 	NULL, WorkerThreadMsgQueueParserExecutor, 					WorkerThreadMessageQueueParserExtractArg	}
 };
 
  extern __thread/*thread_local*/ ThreadContext      ufsrv_thread_context;
+
+__attribute__((const)) static MessageContextData *
+_WorkerThreadScheduledJobExtractArg(MessageQueueMsgPayload *msgqueue_payload_ptr)
+{
+  return ((MessageContextData *)msgqueue_payload_ptr->payload);
+}
 
 void *
 ThreadUFServerWorker (void *ptr)

@@ -26,7 +26,6 @@
 #endif
 
 #include <main.h>
-#include <nportredird.h>
 #include <protocol_http_type.h>
 #include <dictionary.h>
 #include <session.h>
@@ -185,7 +184,7 @@ void onion_request_free(onion_request *req){
  * @memberof onion_request_t
  * @ingroup request
  */
-void onion_request_clean(onion_request* req){
+void onion_request_clean(onion_request* req) {
 #ifdef __UF_FULLDEBUG
 	syslog(LOG_DEBUG, "Clean request %p", req);
 #endif
@@ -587,8 +586,9 @@ const onion_block *onion_request_get_data(onion_request *req){
  */
 
 
-onion_connection_status onion_request_process(Session *sesn_ptr, onion_request *req){
+onion_connection_status onion_request_process(InstanceHolderForSession *instance_sesn_ptr, onion_request *req){
 
+Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 	//AA-
 	//onion_response *res=onion_response_new(req);
 	//AA+ container object is statically allocated, we just initialise it
@@ -597,18 +597,17 @@ onion_connection_status onion_request_process(Session *sesn_ptr, onion_request *
 		onion_request_polish(req);
 	}
 
-	onion_handler *h=HTTP_PROTOCOL_ROOTAUTHHANDLER(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))));
-	onion_connection_status hs=onion_handler_handle(sesn_ptr, h, req, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)); //returns <0 on error, 0 (not found or processed), or 2
+	onion_handler *h = HTTP_PROTOCOL_ROOTAUTHHANDLER(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))));
+	onion_connection_status hs = onion_handler_handle(instance_sesn_ptr, h, req, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)); //returns <0 on error, 0 (not found or processed), or 2
 
-	if (hs==OCS_INTERNAL_ERROR || hs==OCS_NOT_IMPLEMENTED || hs==OCS_NOT_PROCESSED)
-	{
-		if (hs==OCS_INTERNAL_ERROR)		req->flags|=OR_INTERNAL_ERROR;
-		if (hs==OCS_NOT_IMPLEMENTED)	req->flags|=OR_NOT_IMPLEMENTED;
-		if (hs==OCS_NOT_PROCESSED)		req->flags|=OR_NOT_FOUND;
-		if (hs==OCS_FORBIDDEN)				req->flags|=OR_FORBIDDEN;
+	if (hs == OCS_INTERNAL_ERROR || hs == OCS_NOT_IMPLEMENTED || hs == OCS_NOT_PROCESSED) {
+		if (hs == OCS_INTERNAL_ERROR)		req->flags |= OR_INTERNAL_ERROR;
+		if (hs == OCS_NOT_IMPLEMENTED)	req->flags |= OR_NOT_IMPLEMENTED;
+		if (hs == OCS_NOT_PROCESSED)		req->flags |= OR_NOT_FOUND;
+		if (hs == OCS_FORBIDDEN)				req->flags |= OR_FORBIDDEN;
 
-		onion_handler *eh=HTTP_PROTOCOL_ERRORHANDLER(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))));
-		hs=onion_handler_handle(sesn_ptr, eh, req, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr));//this will always return OCS_PROCESSED (2)
+		onion_handler *eh = HTTP_PROTOCOL_ERRORHANDLER(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))));
+		hs = onion_handler_handle(instance_sesn_ptr, eh, req, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr));//this will always return OCS_PROCESSED (2)
 	}
 
 	//AA-
@@ -626,22 +625,19 @@ onion_connection_status onion_request_process(Session *sesn_ptr, onion_request *
 	//AA-
 	//we do that seperately in reset lifecycle
 
-	int rs=onion_response_free(sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr));
+	int rs = onion_response_free(instance_sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr));
 
 	//No error (but we could still need more data)
-	if (hs>=0 && rs==OCS_KEEP_ALIVE)
-	{
+	if (hs >= 0 && rs == OCS_KEEP_ALIVE) {
 		// if keep alive, reset struct to get the new petition.
 		onion_request_clean(req);
-	}
-	else
-	{
+	} else {
 #ifdef __FULL_DEBUG
 		syslog(LOG_DEBUG, "%s (pid:'%lu' o:'%p'): NOT PERFORMING onion_request_clean() hs:'%d' rs:'%d'", __func__, pthread_self(), sesn_ptr, hs, rs);
 #endif
 	}
 
-	return hs>0 ? rs : hs; //(if hs>0 ie. OCS_PROCESSED|NEED MOREDATA: rs is either close connection or KEPEEP alive)
+	return hs > 0 ? rs : hs; //(if hs>0 ie. OCS_PROCESSED|NEED MOREDATA: rs is either close connection or KEPEEP alive)
 
 
 	//AA+

@@ -1,6 +1,7 @@
 /*
 	Onion HTTP server library
 	Copyright (C) 2010-2016 David Moreno Montero and others
+  Copyright (C) 2015-2019 unfacd works
 
 	This library is free software; you can redistribute it and/or
 	modify it under the terms of, at your choice:
@@ -25,7 +26,7 @@
 #define __ONION_HANDLER_AUTH_PAM__
 
 #include <ufsrvresult_type.h>
-#include <instance_type.h>
+#include <recycler/instance_type.h>
 #include  <http_request_handler.h>
 #include <session.h>
 
@@ -40,11 +41,9 @@ typedef struct BasicAuthDescriptor {
 typedef struct onion_handler_auth_pam_data_t onion_handler_auth_pam_data;
 
 int CacheValidateBasicAuth (Session *sesn_ptr, const char *basicauth_b64encoded, const char *basicauth_decoded, unsigned long *);
-//UFSRVResult *CacheBackendGetDecodedBasicAuth (Session *sesn_ptr, const char *basicauth_b64encoded);
-//UFSRVResult *CacheBackendSetDecodedBasicAuth (Session *sesn_ptr, const char *basicauth_b64encoded, const char *basicauth_decoded, unsigned long);
 /// Creates an auth handler that do not allow to pass unless user is authenticated using a pam name.
 onion_handler *onion_handler_auth_pam(const char *realm, const char *pamname, onion_handler *inside_level);
-int onion_handler_auth_pam_handler(Session *sesn_ptr, onion_handler_auth_pam_data *d, onion_request *request, onion_response *res);
+int onion_handler_auth_pam_handler(InstanceHolderForSession *, onion_handler_auth_pam_data *d, onion_request *request, onion_response *res);
 void InitialiseBasicAuthLruCache (void);
 
 void InitBasicAuthDescriptorRecyclerTypePool ();

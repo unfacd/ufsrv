@@ -21,22 +21,25 @@
 
 #include <main.h>
 #include <misc.h>
+#include <thread_context_type.h>
 #include <utils.h>
 #include <utils_crypto.h>
-#include <users.h>
+#include <ufsrv_core/user/users.h>
 #include <session_service.h>
 #include <session.h>
 #include <ufsrvuid.h>
-#include <protocol_websocket.h>
-#include <redis.h>
-#include <user_backend.h>
-#include <db_sql.h>
+#include <ufsrvwebsock/include/protocol_websocket.h>
+#include <ufsrv_core/cache_backend/redis.h>
+#include <ufsrv_core/user/user_backend.h>
+#include <uflib/db/db_sql.h>
 #include <sessions_delegator_type.h>
-#include <recycler.h>
+#include <recycler/recycler.h>
 #include <attachments.h>
 #include <adt_locking_lru.h>
 
 extern SessionsDelegator *const sessions_delegator_ptr;
+extern __thread ThreadContext ufsrv_thread_context;
+extern ufsrv *const masterptr;
 
 static HashTable 		AttachmentsHashTable;
 static LockingLru 	AttachmentsLruCache;
@@ -64,7 +67,7 @@ static RecyclerPoolOps ops_attachment_descriptor ={
 };
 /////>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-static int _DbCreateNewAttachment (Session *sesn_ptr, AttachmentDescriptor *attachment_ptr, unsigned long userid, unsigned long fid, unsigned device_id);
+static UFSRVResult *_DbInsertNewAttachment (AttachmentDescriptor *attachment_ptr, unsigned long userid, unsigned long fid, unsigned device_id);
 inline static void _InitialiseAttachmentsHashTable (HashTable *attachments_hashtable_ptr, size_t, unsigned long call_flags);
 
 static InstanceHolderForAttachmentDescriptor  * _CacheLocalLruGetAttachment (Session *sesn_ptr, const char *blob_id);
@@ -108,38 +111,42 @@ _InitialiseAttachmentsHashTable (HashTable *hashtable_ptr, size_t max_size, unsi
 UFSRVResult *
 DbAttachmentStore (Session *sesn_ptr,  AttachmentDescriptor *attachment_ptr, unsigned long fid, unsigned device_id)
 {
-	if (_DbCreateNewAttachment(sesn_ptr, attachment_ptr, UfsrvUidGetSequenceId(&(SESSION_UFSRVUIDSTORE(sesn_ptr))), fid, device_id) == 0) {
+	_DbInsertNewAttachment(attachment_ptr, UfsrvUidGetSequenceId(&(SESSION_UFSRVUIDSTORE(sesn_ptr))), fid, device_id);
 
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
-	}
-
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
+  _RETURN_RESULT_SESN(sesn_ptr, THREAD_CONTEXT_UFSRV_RESULT_USERDATA, THREAD_CONTEXT_UFSRV_RESULT_TYPE_, THREAD_CONTEXT_UFSRV_RESULT_CODE_)
 }
 
-static int
-_DbCreateNewAttachment (Session *sesn_ptr, AttachmentDescriptor *attachment_ptr, unsigned long userid, unsigned long fid, unsigned device_id)
+static UFSRVResult *
+_DbInsertNewAttachment (AttachmentDescriptor *attachment_ptr, unsigned long userid, unsigned long fid, unsigned device_id)
 {
-//if number already has a code, overwrite it...
-#define SQL_INSERT_ATTACHMENT "INSERT INTO attachments (blob_id, `key`, digest, mimetype, key_size, digest_size, size, fid, userid, device_id, eid) VALUES ('%s', '%s', '%s', '%s', '%lu', '%lu', '%lu', '%lu', '%lu', '%d', '%lu') "
+#define SQL_INSERT_ATTACHMENT "INSERT INTO attachments (blob_id, `key`, digest, blurhash, caption, mimetype, key_size, digest_size, size, fid, userid, device_id, id_events) VALUES ('%s', '%s', '%s', '%s', '%s', '%s', '%lu', '%lu', '%lu', '%lu', '%lu', '%d', '%lu') "
 
-  char *sql_query_str = mdsprintf(SQL_INSERT_ATTACHMENT, attachment_ptr->id, attachment_ptr->key_encoded, attachment_ptr->digest_encoded, attachment_ptr->mime_type, attachment_ptr->key_sz, attachment_ptr->digest_sz, attachment_ptr->size, fid, userid, device_id, attachment_ptr->eid);
+  char *sql_query_str = mdsprintf(SQL_INSERT_ATTACHMENT, attachment_ptr->id, attachment_ptr->key_encoded, attachment_ptr->digest_encoded, IS_STR_LOADED(attachment_ptr->blurhash)?attachment_ptr->blurhash:NULL, IS_STR_LOADED(attachment_ptr->caption)?attachment_ptr->caption:NULL, attachment_ptr->mime_type, attachment_ptr->key_sz, attachment_ptr->digest_sz, attachment_ptr->size, fid, userid, device_id, attachment_ptr->eid);
 
 #ifdef __UF_TESTING
-	syslog(LOG_DEBUG, "%s {o:'%p', cid:'%lu'}: GENERATED SQL QUERY: '%s'", __func__, sesn_ptr, SESSION_ID(sesn_ptr), sql_query_str);
+	syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p'}: GENERATED SQL QUERY: '%s'", __func__, pthread_self(), THREAD_CONTEXT_PTR, sql_query_str);
 #endif
 
-	int sql_result = h_query_insert(sesn_ptr->db_backend, sql_query_str);
+	int sql_result = h_query_insert(THREAD_CONTEXT_DB_BACKEND, sql_query_str);
 
 	if (sql_result != H_OK) {
-		syslog(LOG_DEBUG, "%s {o:'%p', cid:'%lu'}: ERROR: COULD EXEUTE QUERY: '%s'", __func__, sesn_ptr, SESSION_ID(sesn_ptr), sql_query_str);
+		syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p'}: ERROR: COULD EXECUTE QUERY: '%s'", __func__, pthread_self(), THREAD_CONTEXT_PTR, sql_query_str);
     free (sql_query_str);
 
-		return H_ERROR;
+    THREAD_CONTEXT_RETURN_RESULT_ERROR(NULL, RESCODE_BACKEND_DATA)
 	}
 
   free (sql_query_str);
 
-	return sql_result;
+  struct _h_data *db_data = h_query_last_insert_id(THREAD_CONTEXT_DB_BACKEND);
+  if (db_data->type == HOEL_COL_TYPE_INT) {
+    int last_id = ((struct _h_type_int *) db_data->t_data)->value;
+    h_clean_data_full(db_data);
+
+    THREAD_CONTEXT_RETURN_RESULT_SUCCESS((void *) (uintptr_t) last_id, RESCODE_BACKEND_DATA)
+  }
+
+  THREAD_CONTEXT_RETURN_RESULT_ERROR(NULL, RESCODE_BACKEND_DATA)
 
 #undef SQL_INSERT_ATTACHMENT
 }
@@ -183,7 +190,7 @@ UFSRVResult *
 DbGetAttachmentDescriptor (Session *sesn_ptr, const char *blob_id, bool flag_fully_populate, AttachmentDescriptor *attachment_ptr_out)
 {
 	//IMPORTNT TINYTEXT is returned as blob, not text
-#define SQL_SELECT_ATTACHMENT_DOWNLOAD 	"SELECT mimetype, size, `key`, key_size, digest, digest_size FROM attachments WHERE blob_id = '%s';"
+#define SQL_SELECT_ATTACHMENT_DOWNLOAD 	"SELECT mimetype, size, `key`, key_size, digest, digest_size, id_events, blurhash, caption FROM attachments WHERE blob_id = '%s';"
 #define QUERY_RESULT_MIMETYPE(x)				((struct _h_type_blob *)result.data[x][0].t_data)->value
 #define QUERY_RESULT_MIMETYPE_LEN(x)		((struct _h_type_blob *)result.data[x][0].t_data)->length
 #define QUERY_RESULT_SIZE(x)						((struct _h_type_int *)	result.data[x][1].t_data)->value
@@ -193,7 +200,14 @@ DbGetAttachmentDescriptor (Session *sesn_ptr, const char *blob_id, bool flag_ful
 #define QUERY_RESULT_DIGEST(x)					((struct _h_type_blob *)result.data[x][4].t_data)->value
 #define QUERY_RESULT_DIGEST_LEN(x)			((struct _h_type_blob *)result.data[x][4].t_data)->length
 #define QUERY_RESULT_DIGESTSIZE(x)			((struct _h_type_int *)	result.data[x][5].t_data)->value
+#define QUERY_RESULT_EVENTS_ID(x)			  ((struct _h_type_int *)	result.data[x][6].t_data)->value
+#define QUERY_RESULT_BLURHASH(x)				((struct _h_type_blob *)result.data[x][7].t_data)->value
+#define QUERY_RESULT_BLURHASH_LEN(x)		((struct _h_type_blob *)result.data[x][7].t_data)->length
+#define QUERY_RESULT_CAPTION(x)				  ((struct _h_type_blob *)result.data[x][8].t_data)->value
+#define QUERY_RESULT_CAPTION_LEN(x)		  ((struct _h_type_blob *)result.data[x][8].t_data)->length
 #define QUERY_RESULT_DIGEST_NOTNULL(x)	(IS_PRESENT((struct _h_type_blob *)result.data[x][4].t_data) && IS_PRESENT((struct _h_type_blob *)result.data[x][5].t_data))
+#define QUERY_RESULT_BLURHASH_NOTNULL(x)	(IS_PRESENT((struct _h_type_blob *)result.data[x][7].t_data))
+#define QUERY_RESULT_CAPTION_NOTNULL(x)	  (IS_PRESENT((struct _h_type_blob *)result.data[x][8].t_data))
 
 
 	int 		rescode;
@@ -218,7 +232,7 @@ DbGetAttachmentDescriptor (Session *sesn_ptr, const char *blob_id, bool flag_ful
 	strncpy(attachment_ptr->mime_type, QUERY_RESULT_MIMETYPE(0), (QUERY_RESULT_MIMETYPE_LEN(0)>SBUF-1?SBUF-1:QUERY_RESULT_MIMETYPE_LEN(0)));
 	if (flag_fully_populate) {
 		strncpy(attachment_ptr->id, blob_id, MBUF - 1);
-		if (QUERY_RESULT_KEY_LEN(0)>0) {
+		if (QUERY_RESULT_KEY_LEN(0) > 0) {
 			//TODO: b64-encoded key would hold more than the original key size, so theoretically assuming key can have max of MBUF bytes,
 			//for encoded keys hitting the extreme end it will be truncated. But reality key sizes are smaller than the generous MBUF, so we should be fine
 			attachment_ptr->key_encoded = strndup(QUERY_RESULT_KEY(0), (QUERY_RESULT_KEY_LEN(0)>MBUF-1?MBUF-1:QUERY_RESULT_KEY_LEN(0)));
@@ -226,12 +240,20 @@ DbGetAttachmentDescriptor (Session *sesn_ptr, const char *blob_id, bool flag_ful
 		}
 
 		//todo: QUERY_RESULT_DIGEST_NOTNULL() is temporary should be removed once data is cleansed
-		if (QUERY_RESULT_DIGEST_NOTNULL(0) && QUERY_RESULT_DIGEST_LEN(0)>0) {
+		if (QUERY_RESULT_DIGEST_NOTNULL(0) && QUERY_RESULT_DIGEST_LEN(0) > 0) {
 			//TODO: b64-encoded digesr would hold more than the original key size, so theoretically assuming key can have max of MBUF bytes,
 			//for encoded keys hitting the extreme end it will be truncated. But reality key sizes are smaller than the generous MBUF, so we should be fine
-			attachment_ptr->digest_encoded = strndup(QUERY_RESULT_DIGEST(0), (QUERY_RESULT_DIGEST_LEN(0)>MBUF-1?MBUF-1:QUERY_RESULT_DIGEST_LEN(0)));
-			attachment_ptr->digest_sz			=	QUERY_RESULT_DIGESTSIZE(0);
+			attachment_ptr->digest_encoded  = strndup(QUERY_RESULT_DIGEST(0), (QUERY_RESULT_DIGEST_LEN(0)>MBUF-1?MBUF-1:QUERY_RESULT_DIGEST_LEN(0)));
+			attachment_ptr->digest_sz			  =	QUERY_RESULT_DIGESTSIZE(0);
 		}
+
+		if (QUERY_RESULT_BLURHASH_NOTNULL(0)) {
+      attachment_ptr->blurhash = strndup(QUERY_RESULT_BLURHASH(0), QUERY_RESULT_BLURHASH_LEN(0));
+		}
+
+    if (QUERY_RESULT_CAPTION_NOTNULL(0)) {
+      attachment_ptr->caption = strndup(QUERY_RESULT_CAPTION(0), QUERY_RESULT_CAPTION_LEN(0));
+    }
 
 		//todo: other fields
 	}
@@ -276,10 +298,12 @@ AttachmentDescriptorDestruct (AttachmentDescriptor *attachment_ptr, bool dealloc
 	}
 
 	if (IS_PRESENT(attachment_ptr->thumbnail))				free (attachment_ptr->thumbnail);
+  if (IS_PRESENT(attachment_ptr->blurhash))				free (attachment_ptr->blurhash);
+  if (IS_PRESENT(attachment_ptr->caption))				  free (attachment_ptr->caption);
 
 	memset (attachment_ptr, 0, sizeof(AttachmentDescriptor));
 
-	if (self_destruct)	{free (attachment_ptr); attachment_ptr=NULL;}
+	if (self_destruct)	{free (attachment_ptr); attachment_ptr = NULL;}
 
 }
 
@@ -402,7 +426,9 @@ void InitAttachmentDescriptorRecyclerTypePool ()
 {
 	#define _THIS_EXPANSION_THRESHOLD (1024*100)
 	//IMPORTANT: note 'sizeof(AttachmentDescriptor)+sizeof(uintptr_t)' as Attachment is Lru-managed which needs an extra offset
-	AttachmentDescriptorPoolHandle = RecyclerInitTypePool ("AttachmentDescriptor", sizeof(AttachmentDescriptor) + sizeof(uintptr_t), _THIS_EXPANSION_THRESHOLD, &ops_attachment_descriptor);
+	AttachmentDescriptorPoolHandle = RecyclerInitTypePool("AttachmentDescriptor",
+                                                        sizeof(AttachmentDescriptor) + sizeof(uintptr_t), _CONF_SESNMEMSPECS_ALLOC_GROUPS(masterptr),
+                                                        _THIS_EXPANSION_THRESHOLD, &ops_attachment_descriptor);
 
 	syslog(LOG_INFO, "%s: Initialised TypePool (WITH EXTRA uintptr_t offset for LRU): '%s'. TypeNumber:'%d', Block Size:'%lu'", __func__, AttachmentDescriptorPoolHandle->type_name, AttachmentDescriptorPoolHandle->type, AttachmentDescriptorPoolHandle->blocksz);
 }
@@ -439,7 +465,7 @@ TypePoolPutInitCallback_AttachmentDescriptor (InstanceHolder *data_ptr, ContextD
 {
   AttachmentDescriptor *descriptor_ptr = AttachmentDescriptorOffInstanceHolder((InstanceHolderForAttachmentDescriptor *)data_ptr);
 
-	AttachmentDescriptorDestruct (descriptor_ptr, true, false);
+	AttachmentDescriptorDestruct(descriptor_ptr, true, false);
 
 	return 0;//success
 }

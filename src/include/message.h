@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2020 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -23,8 +23,9 @@
 #include <message_type.h>
 #include <session_service.h>
 #include <transmission_message_type.h>
+#include <incoming_message_descriptor_type.h>
+#include <guardian_record_descriptor.h>
 #include <fence.h>
-#include <nportredird.h>
 
 enum StoredMessageOptions {
 	MSGOPT_GET_FIRST 			= (0x1<<1),
@@ -38,16 +39,11 @@ enum StoredMessageOptions {
 	MSGOPT_GET_REM_ALL		=	((0x1<<3)|(0x1<<5)),
 };
 
-typedef struct IncomingMessageDescriptor {
-	int											msg_type;
-	time_t									timestamp; //as recorded in the mesage header
-	unsigned long 					userid_from;
-	unsigned long						fid;
-	const char 							*rawmsg;
-	size_t									rawmsg_sz;
-	UfsrvInstanceDescriptor *instance_descriptor_ptr;
-	//CollectionDescriptor userids_to;
-} IncomingMessageDescriptor;
+//<uid> <uid>
+#define REDIS_CMD_GUARDIAN_ADD "SADD GUARDIAN_FOR_%lu %lu"
+#define REDIS_CMD_GUARDIAN_REM 			"SREM GUARDIAN_FOR_%lu %lu"
+#define REDIS_CMD_FENCE_GUARDIAN_MEMBERS	"SMEMBERS GUARDIAN_FOR_%lu"
+#define REDIS_CMD_FENCE_GUARDIAN_ISMEMBER	"SISMEMBER GUARDIAN_FOR_%lu %lu"
 
 UFSRVResult *HandleStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *payload_name, enum StoredMessageOptions msg_opts);
 UFSRVResult *StoreStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *,  unsigned long callflags, unsigned char *command_buf_in);
@@ -62,6 +58,21 @@ UFSRVResult *DeleteStagedMessageCacheRecordForUser (Session *sesn_ptr, Transmiss
 UFSRVResult *GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr, unsigned long userid);
 UFSRVResult *StoreStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *tmsg_ptr, unsigned long userid);
 UFSRVResult *GetStageMessageCacheBackendListSize (Session *sesn_ptr, unsigned long userid);
+
+int DbBackendInsertMessageRecord (const ParsedMessageDescriptor *in_msg_ptr);
+int DbBackendUpdateMessageStatus (unsigned long eid, unsigned  long uid_flagged_by, enum EventStatus status);
+
+char *GenerateGuardianNonce (Session *sesn_ptr, const char *value);
+unsigned long IsGuardianLinkNonceValid (const char *nonce, unsigned long value);
+UFSRVResult *DbBackendInsertGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr, bool force_data);
+UFSRVResult *DbBackendGetGuardianRecord (GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *DbBackendGetGuardianRecords (GuardianRecordDescriptor *descriptor_ptr_guardian, CollectionDescriptor *collection_ptr_out);
+UFSRVResult *DbBackendGetGuardianRecordForOriginator (GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *DbBackendDeleteGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *CacheBackendAddGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *CacheBackendRemGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *CacheBackendGetGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr);
+bool IsUserGuardianFor (const GuardianRecordDescriptor *);
 
 // MSGS_FOR:<%uid>
 #define REDIS_CMD_INTRAMESSAGE_LIST_GETALL 				"ZRANGE STAGED_INTRAMSGS_%s_%d 0 -1"

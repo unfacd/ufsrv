@@ -1,15 +1,37 @@
 /*
- * http_request_handler.h
- *
- *  Created on: 27 Jun 2016
- *      Author: ayman
- */
+	Onion HTTP server library
+	Copyright (C) 2010-2016 David Moreno Montero and others
+  Copyright (C) 2015-2019 unfacd works
+
+	This library is free software; you can redistribute it and/or
+	modify it under the terms of, at your choice:
+
+	a. the Apache License Version 2.0.
+
+	b. the GNU General Public License as published by the
+		Free Software Foundation; either version 2.0 of the License,
+		or (at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of both libraries, if not see
+	<http://www.gnu.org/licenses/> and
+	<http://www.apache.org/licenses/LICENSE-2.0>.
+	*/
 
 #ifndef SRC_INCLUDE_HTTP_REQUEST_HANDLER_H_
 #define SRC_INCLUDE_HTTP_REQUEST_HANDLER_H_
 
-#include <vector_type.h>
-#include <dictionary_type.h>
+#include <sys/socket.h>
+
+#include <http_rest/vector_type.h>
+#include <http_rest/dictionary_type.h>
+#include <http_rest/ptr_list_type.h>
+
+#include <recycler/instance_type.h>
 #include <session.h>
 
 #define ONION_REQUEST_BUFFER_SIZE 256
@@ -29,11 +51,7 @@ static int __attribute__ ((unused)) is_alnum(char c) {
 	return 0;
 }
 
-struct onion_ptr_list_t{
-	void *ptr;
-	struct onion_ptr_list_t *next;
-};
-typedef struct onion_ptr_list_t onion_ptr_list;
+
 
 struct onion_request_t{
 #if 1
@@ -102,7 +120,7 @@ typedef enum onion_connection_status_e onion_connection_status;
 
 /// Signature of request handlers.
 /// @ingroup handler
-typedef onion_connection_status (*onion_handler_handler)(Session *, void *privdata, onion_request *req, onion_response *res);
+typedef onion_connection_status (*onion_handler_handler)(InstanceHolderForSession *, void *privdata, onion_request *req, onion_response *res);
 typedef void (*onion_handler_private_data_free)(void *privdata);
 
 struct onion_handler_t{

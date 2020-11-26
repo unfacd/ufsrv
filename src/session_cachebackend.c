@@ -18,11 +18,11 @@
 #ifdef HAVE_CONFIG_H
 # include <config.h>
 #endif
+
 #include <main.h>
 #include <utils.h>
 #include <hiredis.h>
-#include <redis.h>
-#include <session.h>
+#include <ufsrv_core/cache_backend/redis.h>
 #include <session_cachebackend.h>
 
 extern __thread ThreadContext ufsrv_thread_context;
@@ -39,7 +39,7 @@ CacheBackendSetSessionAttribute (Session *sesn_ptr, unsigned long userid, const 
 
 	if (!(redis_ptr = (*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_SESSION_SET_ATTRIBUTE, userid, attribute_name, IS_STR_LOADED(attribute_value)?attribute_value:CONFIG_DEFAULT_PREFS_STRING_VALUE)))	goto return_redis_error;
 
-	if (redis_ptr->type==REDIS_REPLY_INTEGER && (redis_ptr->integer>=0)) {
+	if (redis_ptr->type == REDIS_REPLY_INTEGER && (redis_ptr->integer >= 0)) {
 		freeReplyObject(redis_ptr);
 		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, rescode)
 	}
@@ -83,7 +83,7 @@ CacheBackendGetSessionAttribute (unsigned long user_id, const char *attribute_na
   if (likely(user_id > 0)) {
     redisReply 					*redis_ptr	=	NULL;
 
-    redis_ptr = RedisSendCommand (THREAD_CONTEXT_PERSISTANCE_CACHEBACKEND(ufsrv_thread_context), REDIS_CMD_SESSION_GET_ATTRIBUTE, user_id, attribute_name);
+    redis_ptr = RedisSendCommand(THREAD_CONTEXT_PERSISTANCE_CACHEBACKEND(ufsrv_thread_context), REDIS_CMD_SESSION_GET_ATTRIBUTE, user_id, attribute_name);
 
     if (IS_EMPTY(redis_ptr)) {
       syslog(LOG_DEBUG, "%s pid:'%lu', th_ctx:'%p'}: ERROR COULD NOT GET REDIS RESPONSE for UID '%lu'", __func__, pthread_self(), &ufsrv_thread_context, user_id);

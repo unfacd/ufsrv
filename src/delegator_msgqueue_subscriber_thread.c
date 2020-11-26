@@ -19,33 +19,11 @@
 # include <config.h>
 #endif
 
-#include <main.h>
-#include <misc.h>
 #include <sys/prctl.h>//for naming thread
-#include <sockets.h>
-#include <net.h>
-#include <session.h>
-#include <misc.h>
-#include <sessions_delegator_type.h>
-#include <command_controllers.h>
-#include <ufsrvcmd_broadcast_type.h>
 #include <nportredird.h>
-#include <protocol_type.h>
-#include <protocol_websocket_io.h>
-#include <protocol_websocket_session.h>
-#include <instrumentation_backend.h>
-#include <users_proto.h>
-#include <ufsrvmsgqueue.h>
-#include <ufsrvcmd_broadcast.h>
-#include <hiredis.h>
-//#include <json/json.h>
-#include <location.h>
-#include <fence.h>
-#include <user_preferences.h>
-#include <SignalService.pb-c.h>
-#include <UfsrvMessageQueue.pb-c.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
 
-//global application context data
 extern ufsrv 							*const 	masterptr;
 extern SessionsDelegator 	*const 	sessions_delegator_ptr;
 static pthread_t 									th_msgqueue_sub;
@@ -53,7 +31,7 @@ static pthread_t 									th_msgqueue_sub;
 static void *ThreadMessageQueueSub (void *);
 static int _CreateMessageQueueTopics (MessageQueueBackend *, unsigned);
 
-static char *subpub_verb="message";
+static char *subpub_verb = "message";
 
 //subscriber thread for reading
 /**
@@ -81,7 +59,7 @@ ThreadMessageQueueSub (void *ptr)
 
 	mq_ptr=(MessageQueueBackend *)ptr;
 
-	if ((_CreateMessageQueueTopics (mq_ptr, masterptr->main_listener_protoid))!=0)	return(0);//exit thread
+	if ((_CreateMessageQueueTopics (mq_ptr, masterptr->main_listener_protoid)) != 0)	return(0);//exit thread
 
 	while (1) {
 		int x, read_len;
@@ -95,7 +73,7 @@ ThreadMessageQueueSub (void *ptr)
 
 		FD_SET(((redisContext *)mq_ptr->persistance_agent)->fd, &fd);
 
-		x=select(((redisContext *)mq_ptr->persistance_agent)->fd+1, &fd, NULL, NULL, NULL);
+		x = select(((redisContext *)mq_ptr->persistance_agent)->fd+1, &fd, NULL, NULL, NULL);
 
 		if (x > 0) {
 			read_len = read(((redisContext *)mq_ptr->persistance_agent)->fd, msg, X10BUF);
@@ -106,7 +84,7 @@ ThreadMessageQueueSub (void *ptr)
 				'*3/r/n $7/r/n message/r/n $13/r/n UFSRV:SESSION/r/n $2/r/n hi/r/n'
 								1					2						3
 #endif
-				if (msg[0]=='*') {
+				if (msg[0] == '*') {
 					char *verb, *topic;
 					char *aux,  *tmsg;
 					size_t len = 0;
@@ -335,14 +313,12 @@ _CreateMessageQueueTopics (MessageQueueBackend *mq_ptr, unsigned protocol_id)
 #endif
 }
 
-
 /*
  * @brief only one listener per usfrv instance
  */
 void CreateMessageQueueSubscriberListenerThread(void)
 {
-
-	MessageQueueBackend *mq_ptr=SetupMessageQueueSubscriber (0);//returned value is also globally defined in masterptr->msgqueue_sub
+	MessageQueueBackend *mq_ptr = SetupMessageQueueSubscriber (0);//returned value is also globally defined in masterptr->msgqueue_sub
 	{
 
 		syslog(LOG_INFO, ">> %s: Launching MessageQueue Subscriber Listener thread...", __func__);

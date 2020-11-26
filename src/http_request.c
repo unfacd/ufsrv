@@ -120,9 +120,7 @@ ResetHttpRequestContext (HttpRequestContext *http_ptr)
 int
 HttpRequestGetUrlInJson (HttpRequestContext *http_ptr, const char *url_str, const char *url_params)
 {
-
-	if (IS_PRESENT(url_params))
-	{
+	if (IS_PRESENT(url_params)) {
 		char encoded_url_str[XLBUF] = {0};
 		char *s = curl_easy_escape(http_ptr->curl, url_params, 0);
 
@@ -175,6 +173,7 @@ HttpRequestGetUrl (HttpRequestContext *http_ptr, const char *url_str)
 /**
  *	Note the dry_run parameter which defaults to false. Allows to check if the token is valid or not without actually contacting the client
  * 	curl --header "Authorization: key=xxx" --header "Content-Type:application/json" https://android.googleapis.com/gcm/send -d '{"dry_run":false, "registration_ids":["APA91bEW6clA02RI2S_4caipD1k-SotCMjCbdrwrHWeNcxAPBG7Pra3ermvKN-gn9bi_rY4l6iTEZ3gPqYZyaW5V_hpZKv9JOn1IoPo5aHTobzaAb1lJHpST0PT3Y0Dx-iTnV3eFKKWm"] "message":"h"}'
+ *
  */
 int
 HttpRequestGoogleGcm (HttpRequestContext *http_ptr, const char *url_str, const char *json_payload)
@@ -184,7 +183,7 @@ HttpRequestGoogleGcm (HttpRequestContext *http_ptr, const char *url_str, const c
 		ResetHttpRequestContext(http_ptr);
 		struct curl_slist *headers_dictionary = NULL;
 
-		char header_buf[XLBUF]={0};
+		char header_buf[XLBUF] = {0};
 		snprintf(header_buf, XLBUF-1, "Authorization: key=%s", APIKEY_GOOGLE_GCM);
 		headers_dictionary = curl_slist_append(headers_dictionary, header_buf);
 		headers_dictionary = curl_slist_append(headers_dictionary, "Content-Type: application/json");
@@ -195,7 +194,7 @@ HttpRequestGoogleGcm (HttpRequestContext *http_ptr, const char *url_str, const c
 		curl_easy_setopt(http_ptr->curl, CURLOPT_POSTFIELDS, json_payload);
 		curl_easy_setopt(http_ptr->curl, CURLOPT_URL, url_str);
 
-		if ((http_ptr->curl_code=curl_easy_perform(http_ptr->curl))!=CURLE_OK)
+		if ((http_ptr->curl_code = curl_easy_perform(http_ptr->curl)) != CURLE_OK)
 		{
 			syslog(LOG_ERR, "%s (pid:'%lu'): ERROR COULD NOT POST REQUEST '%s'. Error: '%s'", __func__, pthread_self(), url_str, http_ptr->curl_error_str);
 
@@ -208,13 +207,13 @@ HttpRequestGoogleGcm (HttpRequestContext *http_ptr, const char *url_str, const c
 	curl_easy_getinfo (http_ptr->curl, CURLINFO_RESPONSE_CODE, &http_code);
 
 
-	if ((_FetchJsonResponse(http_ptr))==0)
+	if ((_FetchJsonResponse(http_ptr)) == 0)
 	{
 		//response
 		//{"multicast_id":6126472261424557086,"success":1,"failure":0,"canonical_ids":1,"results":[{"registration_id":"APA91bEW6clA02RI2S_4caipD1k-SotCMjCbdrwrHWeNcxAPBG7Pra3ermvKN-gn9bi_rY4l6iTEZ3gPqYZyaW5V_hpZKv9JOn1IoPo5aHTobzaAb1lJHpST0PT3Y0Dx-iTnV3eFKKWm","message_id":"0:1478614820005773%3af43603f9fd7ecd"}]}
 
-		int success=json_object_get_int(json__get(http_ptr->jobj, "success"));
-		if (success==1)
+		int success = json_object_get_int(json__get(http_ptr->jobj, "success"));
+		if (success == 1)
 		{
 #ifdef __UF_TESTING
 			syslog(LOG_ERR, "%s (pid:'%lu'): Gcm: Success delivery confirmed...", __func__, pthread_self());
@@ -225,6 +224,7 @@ HttpRequestGoogleGcm (HttpRequestContext *http_ptr, const char *url_str, const c
 		else
 		{
 			syslog(LOG_ERR, "%s (pid:'%lu'): ERROR: COULD NOT DELIVER GCM MESSAGE: '%s'..", __func__, pthread_self(), json_object_to_json_string(http_ptr->jobj));
+			//{ "multicast_id": 7707098584016451211, "success": 0, "failure": 1, "canonical_ids": 0, "results": [ { "error": "NotRegistered" } ] }
 		}
 	}
 
@@ -354,37 +354,29 @@ int
 HttpRequestGetUrlJson (HttpRequestContext *http_ptr, const char *url_str)
 {
 	int http_response_code;
-	if ((http_response_code = HttpRequestGetUrl(http_ptr, url_str)) > 0)
-	{
-		if (strlen(http_ptr->rb.memory) == 0)
-		{
+
+	if ((http_response_code = HttpRequestGetUrl(http_ptr, url_str)) > 0) {
+		if (strlen(http_ptr->rb.memory) == 0) {
 			syslog(LOG_NOTICE, "%s (pid:'%lu'): ERROR: EMPTY JSON RESPONSE WAS RETURNED...", __func__, pthread_self());
 			return 0;
 		}
 		//we rely on the fact that SessionServiceGetUrl above has invoked the reset routine simple html buffer fetch
-		do
-		{
+		do {
 			http_ptr->jobj = json_tokener_parse_ex(http_ptr->jtok, http_ptr->rb.memory, strlen(http_ptr->rb.memory));
 		}
-		while ((http_ptr->jerr = json_tokener_get_error(http_ptr->jtok))==json_tokener_continue);
+		while ((http_ptr->jerr = json_tokener_get_error(http_ptr->jtok)) == json_tokener_continue);
 
-		if (http_ptr->jerr != json_tokener_success)
-		{
+		if (http_ptr->jerr != json_tokener_success) {
 			syslog(LOG_NOTICE, "%s (pid='%lu', json:'%s'): ERROR JSON TOKENISER: '%s' ", __func__, pthread_self(),	http_ptr->rb.memory,
 			 json_tokener_error_desc(http_ptr->jerr));
 
 			//no cleanup necessaru we rely on subsequent get url invoking reset
 			return 0;
-		}
-		else
-		{
+		} else {
 			//success result are in ubawp_ptr->jobj
 			return http_response_code;
 		}
-
-	}
-	else
-	{
+	} else {
 		syslog(LOG_ERR, "%s (pid='%lu'): error.", __func__, pthread_self());
 
 		return 0;

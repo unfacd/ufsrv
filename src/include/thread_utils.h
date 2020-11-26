@@ -8,7 +8,7 @@
 #ifndef SRC_INCLUDE_THREAD_UTILS_H_
 #define SRC_INCLUDE_THREAD_UTILS_H_
 
-#include <adt_hopscotch_hashtable.h>
+#include <uflib/adt/adt_hopscotch_hashtable.h>
 
 int PutIntoLockedObjectsStore (HopscotchHashtableConfigurable *ht_ptr, void *obj_ptr);
 int RemoveFromLockedObjectsStore (HopscotchHashtableConfigurable *ht_ptr, void *obj_ptr);

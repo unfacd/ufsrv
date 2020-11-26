@@ -23,7 +23,6 @@
 #include <net/if.h>
 #include <network_socket_address.h>
 
-
 /**
  * Initialize a Socket Address
  *
@@ -38,7 +37,6 @@ InitNetworkSocketAddress (NetworkSocketAddress *socket_address_ptr, int af)
 	socket_address_ptr->len = sizeof(socket_address_ptr->u);
 
 }
-
 
 #if 0
 /**
@@ -58,8 +56,6 @@ int sa_set(struct sa *sa, const struct pl *addr, uint16_t port)
 	return sa_set_str(sa, buf, port);
 }
 #endif
-
-
 
 /**
  * Set a Socket Address from a string
@@ -100,7 +96,6 @@ NetworkSocketAddressInstantiate	(NetworkSocketAddress *socket_address_ptr, const
 	return 0;
 }
 
-
 /**
  * Set a Socket Address from an IPv4 address
  *
@@ -121,7 +116,6 @@ void NetworkSocketAddressSetInet4FromHost(NetworkSocketAddress *sa, uint32_t add
 	sa->u.in.sin_port = htons(port);
 	sa->len = sizeof(struct sockaddr_in);
 }
-
 
 /**
  * Set a Socket Address from an IPv6 address
@@ -148,7 +142,6 @@ void NetworkSocketAddressSetInet6FromHost (NetworkSocketAddress *sa, const uint8
 	(void)port;
 #endif
 }
-
 
 /**
  * @brief: retrieve the local end of the address for a connected socket
@@ -181,7 +174,6 @@ NetworkSocketAddressSetPeerFromFd (int sock_fd, NetworkSocketAddress *socket_add
 
 	return 0;
 }
-
 
 /**
  * Set a Socket Address from a sockaddr
@@ -218,7 +210,6 @@ int NetworkSocketAddressSetInet6FromSockaddr(NetworkSocketAddress *sa, const str
 	return 0;
 }
 
-
 /**
  * Set the port number on a Socket Address
  *
@@ -247,7 +238,6 @@ void NetworkSocketAddressSetPort(NetworkSocketAddress *sa, uint16_t port)
 		break;
 	}
 }
-
 
 /**
  * Set a socket address from a string of type "address:port"
@@ -307,7 +297,6 @@ int sa_decode(NetworkSocketAddress *sa, const char *str, size_t len)
 	return 0;
 }
 
-
 /**
  * Get the Address Family of a Socket Address
  *
@@ -321,7 +310,6 @@ int NetworkSocketAddressGetAddressFamily (const NetworkSocketAddress *sa)
 	return sa ? sa->u.sa.sa_family : AF_UNSPEC;
 }
 
-
 /**
  * Get the IPv4-address of a Socket Address
  *
@@ -334,7 +322,6 @@ uint32_t NetworkSocketAddressGetInet4Address(const NetworkSocketAddress *sa)
 {
 	return sa ? ntohl(sa->u.in.sin_addr.s_addr) : 0;
 }
-
 
 /**
  * Get the IPv6-address of a Socket Address
@@ -351,7 +338,6 @@ void NetworkSocketAddressGetInet6Address(const NetworkSocketAddress *sa, uint8_t
 	memcpy(addr, &sa->u.in6.sin6_addr, 16);
 }
 
-
 /**
  * Convert a Socket Address to Presentation format
  *
@@ -367,7 +353,6 @@ int NetworSocketAddresssaToReadable (const NetworkSocketAddress *sa, char *buf, 
 	//return net_inet_ntop(sa, buf, size);
 	return (ConvertSocketAddressToReadableFormat (sa, buf, size));
 }
-
 
 /**
  * Get the port number from a Socket Address
@@ -394,7 +379,6 @@ uint16_t NetworkSocketAddressGetPort (const NetworkSocketAddress *sa)
 			return 0;
 	}
 }
-
 
 /**
  * Check if a Socket Address is set
@@ -436,7 +420,6 @@ bool SocketAddressIsAttributeSet (const NetworkSocketAddress *sa, int flag)
 
 	return true;
 }
-
 
 /**
  * Calculate the hash value of a Socket Address
@@ -480,7 +463,6 @@ uint32_t NetworkSocketAddressGetHashValue (const NetworkSocketAddress *sa, int f
 	return v;
 }
 
-
 /**
  * Copy a Socket Address
  *
@@ -495,7 +477,6 @@ void NetworkSocketAddressCopy	(NetworkSocketAddress *dst, const NetworkSocketAdd
 
 	memcpy(dst, src, sizeof(*dst));
 }
-
 
 /**
  * Compare two Socket Address objects
@@ -545,7 +526,6 @@ bool NetworkSocketAddressCompare (const NetworkSocketAddress *l, const NetworkSo
 
 	return true;
 }
-
 
 /** IPv4 Link-local test */
 #define IN_IS_ADDR_LINKLOCAL(a)					\

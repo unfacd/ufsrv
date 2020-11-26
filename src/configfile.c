@@ -333,4 +333,3 @@ int ProcessConfigfile (const char *conf)
 
 	 return -1.0;
  }
-

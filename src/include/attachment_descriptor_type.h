@@ -14,9 +14,12 @@ typedef struct AttachmentDescriptor {
 	char			key[MBUF];
 	char			digest[MBUF];
 	char			*key_encoded,
-	          *digest_encoded;
+	          *digest_encoded,
+            *blurhash,
+            *caption;
 	char			mime_type[SBUF];
 	unsigned char	*thumbnail;
+
 	size_t 			width,
 							height;
 	size_t			size;

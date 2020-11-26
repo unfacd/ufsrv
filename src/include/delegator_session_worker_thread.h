@@ -18,7 +18,7 @@
 #ifndef SRC_INCLUDE_DELEGATOR_SESSION_WORKER_THREAD_H_
 #define SRC_INCLUDE_DELEGATOR_SESSION_WORKER_THREAD_H_
 
-#include <instance_type.h>
+#include <recycler/instance_type.h>
 #include <sessions_delegator_type.h>
 #include <session.h>
 

@@ -16,8 +16,8 @@
 #include <misc.h>
 #include <redirection.h>
 #include <nportredird.h>
-#include <protocol_websocket_io.h>
-#include <instrumentation_backend.h>
+#include <ufsrvwebsock/include/protocol_websocket_io.h>
+#include <ufsrv_core/instrumentation/instrumentation_backend.h>
 #include <command_console_thread.h>
 
 
@@ -127,18 +127,18 @@ int AnswerCommandConsoleRequest (Socket *s_ptr)
 	}
 
 	{
-		Session *sesn_ptr = (Session *)FetchRecycledObject();
+		Session *sesn_ptr = calloc(1, sizeof(Session));
 
 		if (IS_PRESENT(sesn_ptr)) {
 			Socket *s_ptr_console_client;
 			xmalloc(s_ptr_console_client, (sizeof(Socket)));
 			memset (s_ptr_console_client, 0, sizeof(Socket));
 
-			s_ptr_console_client->sock=nsocket;
+			s_ptr_console_client->sock = nsocket;
 			strcpy (s_ptr_console_client->haddress, (char *)inet_ntoa(hisaddr.sin_addr));
 			strcpy (s_ptr_console_client->address, "localhost");
-			s_ptr_console_client->hport=ntohs(hisaddr.sin_port);
-			s_ptr_console_client->port=19700;
+			s_ptr_console_client->hport = ntohs(hisaddr.sin_port);
+			s_ptr_console_client->port = 19700;
 
 		   if (!(sesn_ptr = InstantiateSession(s_ptr, NULL, CALL_FLAG_HASH_SESSION_LOCALLY, -1))) {//thread-safe only called from this thread
 			   close (nsocket);

@@ -20,21 +20,21 @@
 #endif
 
 #include <main.h>
+#include <ufsrv_core/user/user_profile.h>
 #include <misc.h>
 #include <fence.h>
-#include <fence_utils.h>
-#include <fence_state.h>
-#include <users_proto.h>
+#include <ufsrv_core/fence/fence_utils.h>
+#include <ufsrv_core/fence/fence_state.h>
+#include <ufsrv_core/user/users_protobuf.h>
 #include <share_list.h>
 #include <ufsrvcmd_user_callbacks.h>
 #include <user_broadcast.h>
-#include <location.h>
+#include <ufsrv_core/location/location.h>
 #include <command_controllers.h>
 #include <ufsrvuid.h>
 
 extern ufsrv							*const masterptr;
 extern __thread ThreadContext ufsrv_thread_context;
-
 
 struct MarshalMessageEnvelopeForUser {
 	UfsrvCommandWire		*ufsrv_command_wire;
@@ -53,8 +53,9 @@ struct MarshalMessageEnvelopeForUser {
 typedef struct MarshalMessageEnvelopeForUser MarshalMessageEnvelopeForUser;
 
 typedef struct UserCommandExecutorContext {
-	Session   *sesn_ptr_originator;
+	InstanceContextForSession  *ctx_ptr_originator;
 	Envelope  *envelope;
+	WebSocketMessage *wsm_ptr_received;
 } UserCommandExecutorContext;
 
 #define _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION() \
@@ -132,22 +133,22 @@ typedef struct UserCommandExecutorContext {
 	}
 
 inline static void _PrepareMarshalMessageForUser(MarshalMessageEnvelopeForUser *envelope_ptr, Session *sesn_ptr, Fence *f_ptr, UfsrvEvent *event_ptr, DataMessage *data_msg_ptr_orig, enum _UserCommand__CommandTypes command_type, enum _CommandArgs command_arg);
-static UFSRVResult *_HandleUserCommandError (Session *, ClientContextData *, WebSocketMessage *, DataMessage *, int rescode, int command_type);
+static UFSRVResult *_HandleUserCommandError (InstanceContextForSession *, ClientContextData *, WebSocketMessage *, DataMessage *, int rescode, int command_type);
 static void	_BuildErrorHeaderForUserCommand (CommandHeader *header_ptr, CommandHeader *header_pyr_incoming, int errcode, int command_type);
-inline static UFSRVResult *_MarshalCommandToUser	(Session *sesn_ptr, Session *sesn_ptr_target, Envelope *command_envelope_ptr, unsigned req_cmd_idx);
+inline static UFSRVResult *_MarshalCommandToUser	(InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_target, WebSocketMessage *,Envelope *command_envelope_ptr, unsigned req_cmd_idx);
 inline static UFSRVResult *_CommandControllerPreferences (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
 inline static UFSRVResult *_CommandControllerAllPreferences (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerUserResetFences (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerUserResetFences (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
 inline static UFSRVResult *_CommandControllerUserPrefsSyncAll (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
 
-inline static UFSRVResult *_CommandControllerEndSession (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerEndSession (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
 
 inline static UFSRVResult *_CommandControllerFenceUserPreferences (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
 inline static UFSRVResult *_CommandControllerFenceUserAllPreferences (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerUserFencePrefsSyncAll (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerFenceUserPrefStickyGeogroup (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerFenceUserProfileSharing (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerFenceUserIgnoring (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerUserFencePrefsSyncAll (InstanceHolderForSession *, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerFenceUserPrefStickyGeogroup (InstanceHolderForSession *, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerFenceUserProfileSharing (InstanceContextForSession *, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerFenceUserIgnoring (InstanceContextForSession *, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
 
 inline static void
 _PrepareMarshalMessageForUser(MarshalMessageEnvelopeForUser *envelope_ptr, Session *sesn_ptr, Fence *f_ptr, UfsrvEvent *event_ptr, DataMessage *data_msg_ptr_orig,
@@ -172,7 +173,7 @@ _PrepareMarshalMessageForUser(MarshalMessageEnvelopeForUser *envelope_ptr, Sessi
     envelope_ptr->user_command->n_target_list									=	1;
   }
 
-	envelope_ptr->envelope->source						=	"0";
+	envelope_ptr->envelope->sourceufsrvuid		=	"0";
 	envelope_ptr->envelope->timestamp					=	GetTimeNowInMillis(); envelope_ptr->envelope->has_timestamp=1;
 
 	envelope_ptr->header->when								=	envelope_ptr->envelope->timestamp; 	envelope_ptr->header->has_when=1;
@@ -224,7 +225,7 @@ _PrepareMarshalMessageForUser(MarshalMessageEnvelopeForUser *envelope_ptr, Sessi
  * 	@unlocks NONE:
  */
 UFSRVResult *
-CommandCallbackControllerUserCommand (InstanceHolderForSession *instance_sesn_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, MessageQueueMsgPayload *mqp_ptr)
+CommandCallbackControllerUserCommand (InstanceHolderForSession *instance_sesn_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
 {
 	CommandHeader *command_header = data_msg_ptr->ufsrvcommand->usercommand->header;
 	Session *sesn_ptr_local_user = SessionOffInstanceHolder(instance_sesn_ptr_local_user);
@@ -251,11 +252,11 @@ CommandCallbackControllerUserCommand (InstanceHolderForSession *instance_sesn_pt
 		break;
 
 	case USER_COMMAND__COMMAND_TYPES__RESET:
-		_CommandControllerUserResetFences (instance_sesn_ptr_local_user, NULL, data_msg_ptr);
+		_CommandControllerUserResetFences (&(InstanceContextForSession){instance_sesn_ptr_local_user, sesn_ptr_local_user}, NULL, data_msg_ptr);
 			break;
 
 	case USER_COMMAND__COMMAND_TYPES__END_SESSION:
-		_CommandControllerEndSession (instance_sesn_ptr_local_user, NULL, data_msg_ptr);
+		_CommandControllerEndSession (&(InstanceContextForSession){instance_sesn_ptr_local_user, sesn_ptr_local_user}, NULL, data_msg_ptr);
 			break;
 
 	default:
@@ -266,31 +267,26 @@ CommandCallbackControllerUserCommand (InstanceHolderForSession *instance_sesn_pt
 
 }
 
-
 //// PREFS \\\\
 ///
-static UFSRVResult *_MarshalIntegerTypeUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *fence_event_ptr);
-static UFSRVResult *_MarshalStringTypeUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *fence_event_ptr);
+static UFSRVResult *_MarshalIntegerTypeUserPref (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *fence_event_ptr);
+static UFSRVResult *_MarshalStringTypeUserPref (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *fence_event_ptr);
 
-inline static UFSRVResult *_CommandControllerUserPrefGroupRoaming (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerUserPrefNickname (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_MarshalUserNicknameUpdate(Session *sesn_ptr, ClientContextData *ctx_ptr,
-                                                      DataMessage *data_msg_ptr_recieved, unsigned long call_flags,
-                                                      UfsrvEvent *event_ptr);
-static UFSRVResult *_MarshalUserNicknameUpdateToUser (UserCommandExecutorContext *ctx_ptr, Session *sesn_ptr_target);
+inline static UFSRVResult *_CommandControllerUserPrefGroupRoaming(InstanceContextForSession *, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerUserPrefNickname(InstanceContextForSession *, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_MarshalUserNicknameUpdate(InstanceContextForSession *, ClientContextData *ctx_ptr, WebSocketMessage *, DataMessage *data_msg_ptr_received, unsigned long call_flags, UfsrvEvent *event_ptr);
+static UFSRVResult *_MarshalUserNicknameUpdateToUser(UserCommandExecutorContext *ctx_ptr, ClientContextData  *);
 
-inline static UFSRVResult *_CommandControllerUserPrefAvatar (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_MarshalAvatarUpdate(Session *sesn_ptr, ClientContextData *ctx_ptr,
-                                                DataMessage *data_msg_ptr_recieved, unsigned long call_flags,
-                                                UfsrvEvent *event_ptr);
-static UFSRVResult *_MarshalAvatarUpdateToUser (UserCommandExecutorContext *ctx_ptr, Session *sesn_ptr_target);
+inline static UFSRVResult *_CommandControllerUserPrefAvatar (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_MarshalAvatarUpdate(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, UfsrvEvent *event_ptr);
+static UFSRVResult *_MarshalAvatarUpdateToUser(UserCommandExecutorContext *ctx_ptr, ClientContextData *);
 
-inline static UFSRVResult *_CommandControllerUserPrefProfile (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerUserPrefNetstate (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerUserPrefReadReceipt (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerUserPrefContacts (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerUserPrefBlocked (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
-inline static UFSRVResult *_CommandControllerUserPrefUnsolicitedContactAction (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerUserPrefProfile (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerUserPrefNetstate (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerUserPrefReadReceipt (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerUserPrefContacts (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerUserPrefBlocked (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
+inline static UFSRVResult *_CommandControllerUserPrefUnsolicitedContactAction (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received);
 
 inline static UFSRVResult *
 _CommandControllerFenceUserAllPreferences (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
@@ -301,7 +297,7 @@ _CommandControllerFenceUserAllPreferences (InstanceHolderForSession *instance_se
 	switch (command_arg)
 	{
 		case COMMAND_ARGS__SYNCED:
-			return (_CommandControllerUserFencePrefsSyncAll(sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+			return (_CommandControllerUserFencePrefsSyncAll(instance_sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
 
 		default:
 			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', args:'%d'}: ERROR: UNKNOWN COMMAND ARGS TYPE", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), command_arg);
@@ -313,10 +309,10 @@ _CommandControllerFenceUserAllPreferences (InstanceHolderForSession *instance_se
 }
 
 inline static UFSRVResult *
-_CommandControllerUserFencePrefsSyncAll (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserFencePrefsSyncAll (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(SessionOffInstanceHolder(instance_sesn_ptr), NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
@@ -330,30 +326,30 @@ _CommandControllerFenceUserPreferences (InstanceHolderForSession *instance_sesn_
 		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 	}
 
-	FenceUserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->fence_prefs[0];
+	FenceUserPreference *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->fence_prefs[0];
 	switch (user_command_prefs->pref_id)
 		{
 			case	FENCE_USER_PREFS__STICKY_GEOGROUP:
-				return (_CommandControllerFenceUserPrefStickyGeogroup(sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+				return (_CommandControllerFenceUserPrefStickyGeogroup(instance_sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
 
 			case 	FENCE_USER_PREFS__PROFILE_SHARING:
-				return (_CommandControllerFenceUserProfileSharing(sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+				return (_CommandControllerFenceUserProfileSharing(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, wsm_ptr_received, data_msg_ptr_received));
 
 			case 	FENCE_USER_PREFS__IGNORING:
-				return (_CommandControllerFenceUserIgnoring(sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+				return (_CommandControllerFenceUserIgnoring(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, wsm_ptr_received, data_msg_ptr_received));
 
 			default:
 				syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', prefid:'%d'}: ERROR: UNKNOWN FENCE USER PREFERENCE TYPE", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), user_command_prefs->pref_id);
 
 		}
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 //todo: port from ufsrvapi based call
 inline static UFSRVResult *
-_CommandControllerFenceUserPrefStickyGeogroup (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerFenceUserPrefStickyGeogroup (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
 	UserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
 //	if (!IS_STR_LOADED(user_command_prefs->values_str))
@@ -377,31 +373,33 @@ _CommandControllerFenceUserPrefStickyGeogroup (Session *sesn_ptr, WebSocketMessa
 //		_HandleUserCommandError (sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
 //
 //
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(SessionOffInstanceHolder(instance_sesn_ptr), NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 inline static UFSRVResult *
-_CommandControllerFenceUserProfileSharing (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerFenceUserProfileSharing (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-	FenceUserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->fence_prefs[0];
+	FenceUserPreference *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->fence_prefs[0];
 
-  UfsrvEvent event = {.event_type=EVENT_TYPE_SESSION};
-	IsUserAllowedToChangeFenceUserPrefProfileSharing(sesn_ptr, user_command_prefs, data_msg_ptr_received, &event, (CallbackCommandMarshaller)MarshalFenceUserPrefProfileSharing);
+	Session *sesn_ptr = SessionOffInstanceHolder(ctx_ptr->instance_sesn_ptr);
+
+  UfsrvEvent event = {.event_type=MSGCMD_SESSION};
+	IsUserAllowedToChangeFenceUserPrefProfileSharing(ctx_ptr, user_command_prefs, data_msg_ptr_received, &event, (CallbackCommandMarshaller)MarshalFenceUserPrefProfileSharing);
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
 		return SESSION_RESULT_PTR(sesn_ptr);
 	} else {
-    _HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+    _HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
   }
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 inline static UFSRVResult *
-_CommandControllerFenceUserIgnoring (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerFenceUserIgnoring (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-	FenceUserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->fence_prefs[0];
+	FenceUserPreference *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->fence_prefs[0];
 //
 //	UFSRVResult *res_ptr=IsUserAllowedToChangeFenceUserPrefProfileSharing (sesn_ptr, user_command_prefs, data_msg_ptr_received->ufsrvcommand->usercommand, SESSION_CALLFLAGS_EMPTY);
 //	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))
@@ -415,7 +413,7 @@ _CommandControllerFenceUserIgnoring (Session *sesn_ptr, WebSocketMessage *wsm_pt
 //		_HandleUserCommandError (sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
 
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
 
 }
 
@@ -429,12 +427,14 @@ _CommandControllerFenceUserIgnoring (Session *sesn_ptr, WebSocketMessage *wsm_pt
  * @return
  */
 UFSRVResult *
-MarshalFenceUserPrefProfileSharing(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *event_ptr)
+MarshalFenceUserPrefProfileSharing(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr)
 {
-	_GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION_FENCE_USERPREF();
-	_PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__FENCE_PREFERENCE, COMMAND_ARGS__ACCEPTED);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
-	UserCommand *user_command_ptr = ((ShareListContextData *)ctx_ptr)->data_msg_received->ufsrvcommand->usercommand;
+	_GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION_FENCE_USERPREF();
+	_PrepareMarshalMessageForUser(&envelope_marshal, sesn_ptr, ctx_data_ptr, event_ptr, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__FENCE_PREFERENCE, COMMAND_ARGS__ACCEPTED);
+
+	UserCommand *user_command_ptr = ((ShareListContextData *)ctx_data_ptr)->data_msg_received->ufsrvcommand->usercommand;
 
 	fence_userpref_record.pref_id					=	user_command_ptr->fence_prefs[0]->pref_id;
 	fence_userpref_record.values_int			=	user_command_ptr->fence_prefs[0]->values_int;
@@ -442,9 +442,9 @@ MarshalFenceUserPrefProfileSharing(Session *sesn_ptr, ClientContextData *ctx_ptr
 
 	user_command.fences							      =	user_command_ptr->fences;
 
-	_MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
+	_MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
 
-  return MarshalUserPrefProfileForFence  (sesn_ptr, ctx_ptr, data_msg_ptr_recieved, event_ptr);
+  return MarshalUserPrefProfileForFence(ctx_ptr, ctx_data_ptr, wsm_ptr_received, data_msg_ptr_received, event_ptr);
 
 }
 
@@ -469,40 +469,42 @@ _CommandControllerPreferences (InstanceHolderForSession *instance_sesn_ptr, WebS
 		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 	}
 
-	UserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+	InstanceContextForSession instance_ctx = {instance_sesn_ptr, sesn_ptr};
+
+	UserPreference *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
 	switch (user_command_prefs->pref_id)
   {
     case USER_PREFS__ROAMING_MODE:
     case USER_PREFS__RM_CONQUERER:
     case USER_PREFS__RM_JOURNALER:
     case USER_PREFS__RM_WANDERER:
-      return (_CommandControllerUserPrefGroupRoaming(sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+      return (_CommandControllerUserPrefGroupRoaming(&instance_ctx, wsm_ptr_received, data_msg_ptr_received));
 
     case	USER_PREFS__NICKNAME:
-      return (_CommandControllerUserPrefNickname (sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+      return (_CommandControllerUserPrefNickname (&instance_ctx, wsm_ptr_received, data_msg_ptr_received));
 
     case 	USER_PREFS__USERAVATAR:
-      return (_CommandControllerUserPrefAvatar (sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+      return (_CommandControllerUserPrefAvatar (&instance_ctx, wsm_ptr_received, data_msg_ptr_received));
 
     case USER_PREFS__PROFILE:
-      return (_CommandControllerUserPrefProfile (sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+      return (_CommandControllerUserPrefProfile (&instance_ctx, wsm_ptr_received, data_msg_ptr_received));
 
     case USER_PREFS__LOCATION:
 
     case USER_PREFS__NETSTATE:
-      return (_CommandControllerUserPrefNetstate (sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+      return (_CommandControllerUserPrefNetstate (&instance_ctx, wsm_ptr_received, data_msg_ptr_received));
 
     case USER_PREFS__READ_RECEIPT:
-      return (_CommandControllerUserPrefReadReceipt (sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+      return (_CommandControllerUserPrefReadReceipt (&instance_ctx, wsm_ptr_received, data_msg_ptr_received));
 
     case USER_PREFS__BLOCKING:
-      return (_CommandControllerUserPrefBlocked (sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+      return (_CommandControllerUserPrefBlocked (&instance_ctx, wsm_ptr_received, data_msg_ptr_received));
 
     case USER_PREFS__CONTACTS:
-      return (_CommandControllerUserPrefContacts (sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+      return (_CommandControllerUserPrefContacts (&instance_ctx, wsm_ptr_received, data_msg_ptr_received));
 
     case USER_PREFS__UNSOLICITED_CONTACT:
-      return (_CommandControllerUserPrefUnsolicitedContactAction (sesn_ptr, wsm_ptr_received, data_msg_ptr_received));
+      return (_CommandControllerUserPrefUnsolicitedContactAction (&instance_ctx, wsm_ptr_received, data_msg_ptr_received));
 
     case USER_PREFS__ACTIVITY_STATE:
     case USER_PREFS__FRIENDS:
@@ -510,11 +512,10 @@ _CommandControllerPreferences (InstanceHolderForSession *instance_sesn_ptr, WebS
       //TODO: Add more types below...
 
     default:
-      syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', prefid:'%d'}: ERROR: UNKNOWN PEREFERENCE TYPE", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), user_command_prefs->pref_id);
-
+      syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', pref_id:'%d'}: ERROR: UNKNOWN PREFERENCE TYPE", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), user_command_prefs->pref_id);
   }
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
@@ -547,110 +548,117 @@ _CommandControllerUserPrefsSyncAll (Session *sesn_ptr, WebSocketMessage *wsm_ptr
 }
 
 inline static UFSRVResult *
-_CommandControllerUserPrefGroupRoaming (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserPrefGroupRoaming (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-  UserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+  UserPreference *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
 
-  UfsrvEvent event = {.event_type=EVENT_TYPE_SESSION};
-  IsUserAllowedToChangeUserPrefGroupRoaming (sesn_ptr, user_command_prefs, data_msg_ptr_received, &event, SESSION_CALLFLAGS_EMPTY);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
+  UfsrvEvent event = {.event_type=MSGCMD_SESSION};
+  IsUserAllowedToChangeUserPrefGroupRoaming (ctx_ptr, user_command_prefs, wsm_ptr_received, data_msg_ptr_received, &event, SESSION_CALLFLAGS_EMPTY);
   if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
-    _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+    _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
   } else {
-    _HandleUserCommandError (sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+    _HandleUserCommandError (ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
   }
 
-  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 UFSRVResult *
-MarshalUserPrefGroupRoaming (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, UfsrvEvent *fence_event_ptr)
+MarshalUserPrefGroupRoaming (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags, UfsrvEvent *fence_event_ptr)
 {
   _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
-  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, fence_event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+  _PrepareMarshalMessageForUser (&envelope_marshal, ctx_ptr->sesn_ptr, ctx_data_ptr, fence_event_ptr, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
 
-  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_ptr)->data_msg_received->ufsrvcommand->usercommand;
+  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_data_ptr)->data_msg_received->ufsrvcommand->usercommand;
 
   //TODO: not sure is this necessary, especially sharelist, which can be huge
   userpref_record.pref_id					=	user_command_ptr->prefs[0]->pref_id;
   userpref_record.values_int		  =	user_command_ptr->prefs[0]->values_int;
   userpref_record.has_values_int	=	1;
 
-  _MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
+  _MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
 
-  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+  _RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 //NICKNAME
 
 inline static UFSRVResult *
-_CommandControllerUserPrefNickname (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserPrefNickname (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-	UserPreference *user_command_prefs=PROTO_USERCOMMAND(data_msg_ptr_received)->prefs[0];
+	UserPreference *user_command_prefs = PROTO_USERCOMMAND(data_msg_ptr_received)->prefs[0];
+
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	if (!IS_STR_LOADED(user_command_prefs->values_str)) {
-		if (PROTO_USERCOMMAND_HEADER_ARGS(data_msg_ptr_received)!=COMMAND_ARGS__DELETED) {
-			_HandleUserCommandError (sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, RESCODE_USERCMD_MISSING_PARAM, PROTO_USERCOMMAND_HEADER_COMMAND(data_msg_ptr_received));
-			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM);
+		if (PROTO_USERCOMMAND_HEADER_ARGS(data_msg_ptr_received) != COMMAND_ARGS__DELETED) {
+			_HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, RESCODE_USERCMD_MISSING_PARAM, PROTO_USERCOMMAND_HEADER_COMMAND(data_msg_ptr_received));
+			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM)
 		}
 	}
 
-  UfsrvEvent event = {.event_type=EVENT_TYPE_SESSION};
-	IsUserAllowedToChangeNickname (sesn_ptr, user_command_prefs->values_str, CALL_FLAG_BROADCAST_SESSION_EVENT, &event);
+  UfsrvEvent event = {.event_type=MSGCMD_SESSION};
+	IsUserAllowedToChangeNickname (ctx_ptr, user_command_prefs->values_str, CALL_FLAG_BROADCAST_SESSION_EVENT, &event);
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
-		_MarshalUserNicknameUpdate (sesn_ptr, NULL, data_msg_ptr_received, 0, &event);
+		_MarshalUserNicknameUpdate(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, 0, &event);
 	} else {
-		_HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+		_HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
 	}
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 inline static UFSRVResult *
-_MarshalUserNicknameUpdate(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, UfsrvEvent *event_ptr)
+_MarshalUserNicknameUpdate(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags, UfsrvEvent *event_ptr)
 {
 	_GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
-	_PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+	_PrepareMarshalMessageForUser (&envelope_marshal, ctx_ptr->sesn_ptr, ctx_data_ptr, event_ptr, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
 
 	userpref_record.pref_id			=	USER_PREFS__NICKNAME;
-	userpref_record.values_str	=	SESSION_USERNICKNAME(sesn_ptr);
-	_MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
+	userpref_record.values_str	=	SESSION_USERNICKNAME(ctx_ptr->sesn_ptr);
+	_MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
 
 	//update envelope for other users
-	user_command.header->args       =	PROTO_USERCOMMAND_HEADER_ARGS(data_msg_ptr_recieved);
-	user_command.originator         = MakeUserRecordForSelfInProto (sesn_ptr, PROTO_USER_RECORD_MINIMAL);
-	UserCommandExecutorContext  ctx = {sesn_ptr, &command_envelope };
-	InvokeShareListIteratorExecutor(sesn_ptr, SESSION_USERPREF_SHLIST_PROFILE_PTR(sesn_ptr), (CallbackExecutor)_MarshalUserNicknameUpdateToUser, CLIENT_CTX_DATA(&ctx), true);
+	user_command.header->args       =	PROTO_USERCOMMAND_HEADER_ARGS(data_msg_ptr_received);
+	user_command.originator         = MakeUserRecordForSelfInProto (ctx_ptr->sesn_ptr, PROTO_USER_RECORD_MINIMAL);
+	UserCommandExecutorContext  ctx = {ctx_ptr, &command_envelope };
+	InvokeShareListIteratorExecutor(ctx_ptr->sesn_ptr, SESSION_USERPREF_SHLIST_PROFILE_PTR(ctx_ptr->sesn_ptr), (CallbackExecutor)_MarshalUserNicknameUpdateToUser, CLIENT_CTX_DATA(&ctx), true);
 
 	DestructUserInfoInProto (user_command.originator, true/* flag_self_destruct*/);
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 /**
  * 	@brief: designed to be called back from the hashtable iterator for each user who is member of originators' fence's list
+ * 	@param ctx_data_ptr item held by the hashtable. Passed by the hastable iterator
+ * 	@param ctx_ptr Context data packaged by the original caller (which invoked the iterator)
  */
 static UFSRVResult *
-_MarshalUserNicknameUpdateToUser (UserCommandExecutorContext *ctx_ptr, Session *sesn_ptr_target)
+_MarshalUserNicknameUpdateToUser (UserCommandExecutorContext *ctx_ptr, ClientContextData *ctx_data_ptr)
 {
+  Session *sesn_ptr_target = SessionOffInstanceHolder((InstanceHolderForSession *)ctx_data_ptr);
 	//don't send to self as this user gets ACCEPTRED
-	if (sesn_ptr_target == ctx_ptr->sesn_ptr_originator)	goto return_success;
+	if (memcmp(SESSION_UFSRVUID(sesn_ptr_target), SESSION_UFSRVUID(ctx_ptr->ctx_ptr_originator->sesn_ptr), CONFIG_MAX_UFSRV_ID_SZ) == 0)	goto return_success;
 
 	ctx_ptr->envelope->ufsrvcommand->usercommand->header->cid = SESSION_ID(sesn_ptr_target);
-	_MarshalCommandToUser(ctx_ptr->sesn_ptr_originator, sesn_ptr_target, ctx_ptr->envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
+	_MarshalCommandToUser(ctx_ptr->ctx_ptr_originator, &((InstanceContextForSession){(InstanceHolderForSession *)ctx_data_ptr, sesn_ptr_target}),ctx_ptr-> wsm_ptr_received, ctx_ptr->envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
 
 	return_success:
-	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr_originator, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(ctx_ptr->ctx_ptr_originator->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 }
 //
 
 //AVATAR
 
 inline static UFSRVResult *
-_CommandControllerUserPrefAvatar (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
-
+_CommandControllerUserPrefAvatar (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
   UserCommand       *userCommand            = PROTO_USERCOMMAND(data_msg_ptr_received);
 	UserPreference    *user_command_prefs     = userCommand->prefs[0];
@@ -658,48 +666,30 @@ _CommandControllerUserPrefAvatar (Session *sesn_ptr, WebSocketMessage *wsm_ptr_r
 
   if (PROTO_USERCOMMAND_HEADER_ARGS(data_msg_ptr_received)!=COMMAND_ARGS__DELETED) {
     if (!IS_STR_LOADED(user_command_prefs->values_str)) {
-      _HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, RESCODE_USERCMD_MISSING_PARAM, PROTO_USERCOMMAND_HEADER_COMMAND(data_msg_ptr_received));
-      _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM);
+      _HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, RESCODE_USERCMD_MISSING_PARAM, PROTO_USERCOMMAND_HEADER_COMMAND(data_msg_ptr_received));
+      _RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM)
     }
 
     if (IS_EMPTY(PROTO_USERCOMMAND_ATTACHMENTS(data_msg_ptr_received))) {
-      _HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, RESCODE_USERCMD_MISSING_PARAM, PROTO_USERCOMMAND_HEADER_COMMAND(data_msg_ptr_received));
-      _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM);
+      _HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, RESCODE_USERCMD_MISSING_PARAM, PROTO_USERCOMMAND_HEADER_COMMAND(data_msg_ptr_received));
+      _RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM)
     }
 
     attachment_record_ptr = userCommand->attachments[0];
-
-    //todo: this is temporary, until keys storage is built up for existing users
-    {
-      if (userCommand->profile_key.len  !=  CONFIG_USER_PROFILEKEY_MAX_SIZE || IS_EMPTY(userCommand->profile_key.data)) {
-        _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM);
-      }
-
-      //todo: this is not foolproof as the first byte could be legit '\0': use memcmp instead
-      if (SESSION_USER_PROFILE_KEY(sesn_ptr)[0]=='\0' || memcmp(SESSION_USER_PROFILE_KEY(sesn_ptr), userCommand->profile_key.data, CONFIG_USER_PROFILEKEY_MAX_SIZE)!=0)	{
-        redisReply *redis_ptr;
-        memcpy (SESSION_USER_PROFILE_KEY(sesn_ptr), userCommand->profile_key.data, CONFIG_USER_PROFILEKEY_MAX_SIZE);
-        if ((redis_ptr=(*sesn_ptr->persistance_backend->send_command)(sesn_ptr,
-                                                                      REDIS_CMD_USER_SESSION_PROFILE_KEY_SET,
-                                                                      SESSION_USERID(sesn_ptr),
-                                                                      SESSION_USER_PROFILE_KEY(sesn_ptr),
-                                                                      CONFIG_USER_PROFILEKEY_MAX_SIZE)))	freeReplyObject(redis_ptr);
-      }
-    }
   }
 
   const char *avatar_id = user_command_prefs->values_str;
   UfsrvEvent event      = {0};
-	IsUserAllowedToChangeAvatar (sesn_ptr, avatar_id, attachment_record_ptr, CALLFLAGS_EMPTY, &event);
-	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
+	IsUserAllowedToChangeAvatar(ctx_ptr, avatar_id, attachment_record_ptr, CALLFLAGS_EMPTY, &event);
+	if (SESSION_RESULT_TYPE_SUCCESS(ctx_ptr->sesn_ptr)) {
 		exit_success:
-		_MarshalAvatarUpdate (sesn_ptr, NULL, data_msg_ptr_received, CALLFLAGS_EMPTY, &event);
+		_MarshalAvatarUpdate(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, CALLFLAGS_EMPTY, &event);
 
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+		_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 	} else
-		_HandleUserCommandError (sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+		_HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(ctx_ptr->sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
@@ -717,10 +707,12 @@ _CommandControllerUserPrefAvatar (Session *sesn_ptr, WebSocketMessage *wsm_ptr_r
  * @return
  */
 inline static UFSRVResult *
-_MarshalAvatarUpdate(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, UfsrvEvent *event_ptr)
+_MarshalAvatarUpdate(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, UfsrvEvent *event_ptr)
 {
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
 	_GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
-	_PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+	_PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_data_ptr, event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
 
 	userpref_record.pref_id			=	USER_PREFS__USERAVATAR;
   userpref_record.values_str = SESSION_USERAVATAR(sesn_ptr);
@@ -728,58 +720,64 @@ _MarshalAvatarUpdate(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage 
     user_command.attachments = data_msg_ptr_recieved->ufsrvcommand->usercommand->attachments; //todo: do we need this for the original sender?
     user_command.n_attachments = data_msg_ptr_recieved->ufsrvcommand->usercommand->n_attachments;
   }
-	_MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
+	_MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
 
 	//update envelope for other users
 	user_command.header->args =		PROTO_USERCOMMAND_HEADER_ARGS(data_msg_ptr_recieved);
 	user_command.originator   = MakeUserRecordForSelfInProto (sesn_ptr, PROTO_USER_RECORD_MINIMAL);
-  UserCommandExecutorContext  ctx = {sesn_ptr, &command_envelope };
+  UserCommandExecutorContext  ctx = {ctx_ptr, &command_envelope, wsm_ptr_received };
   InvokeShareListIteratorExecutor(sesn_ptr, SESSION_USERPREF_SHLIST_PROFILE_PTR(sesn_ptr), (CallbackExecutor)_MarshalAvatarUpdateToUser, CLIENT_CTX_DATA(&ctx), true);
 
-  DestructUserInfoInProto (user_command.originator, true/* flag_self_destruct*/);
+  DestructUserInfoInProto (user_command.originator, true);
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 /**
  * 	@brief: designed to be called back from the hashtable iterator for each user who is member of originators' fence's list
+ * 	@param ctx_ptr Context data provided by the originating caller (which invoked the iterator)
+ * 	@param ctx_data_ptr Data item provided through a serial iteration on the hashmap
  */
 static UFSRVResult *
-_MarshalAvatarUpdateToUser (UserCommandExecutorContext *ctx_ptr, Session *sesn_ptr_target)
+_MarshalAvatarUpdateToUser (UserCommandExecutorContext *ctx_ptr, ClientContextData *ctx_data_ptr)
 {
-	if (sesn_ptr_target==ctx_ptr->sesn_ptr_originator)	goto return_success;
+  Session *sesn_ptr_target = SessionOffInstanceHolder((InstanceHolderForSession *)ctx_data_ptr);
+  //don't send to self as this user gets ACCEPTRED
+  if (memcmp(SESSION_UFSRVUID(sesn_ptr_target), SESSION_UFSRVUID(ctx_ptr->ctx_ptr_originator->sesn_ptr), CONFIG_MAX_UFSRV_ID_SZ) == 0)	goto return_success;
 
 	ctx_ptr->envelope->ufsrvcommand->usercommand->header->cid = SESSION_ID(sesn_ptr_target);
-	_MarshalCommandToUser(ctx_ptr->sesn_ptr_originator, sesn_ptr_target, ctx_ptr->envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
+	_MarshalCommandToUser(ctx_ptr->ctx_ptr_originator, &(InstanceContextForSession){(InstanceHolderForSession *)ctx_data_ptr, sesn_ptr_target}, ctx_ptr->wsm_ptr_received, ctx_ptr->envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
 
 	return_success:
-	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr_originator, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(ctx_ptr->ctx_ptr_originator->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 }
 
 //
 
 //PROFILE
 inline static UFSRVResult *
-_CommandControllerUserPrefProfile (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserPrefProfile (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-	UserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
-	if (IS_EMPTY(user_command_prefs->vaues_blob.data) || user_command_prefs->vaues_blob.len<=0) {
-		if (data_msg_ptr_received->ufsrvcommand->usercommand->header->args!=COMMAND_ARGS__DELETED) {
-			_HandleUserCommandError (sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, RESCODE_USERCMD_MISSING_PARAM, data_msg_ptr_received->ufsrvcommand->usercommand->header->command);
-			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
+	UserPreference *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+	if (IS_EMPTY(user_command_prefs->vaues_blob.data) || user_command_prefs->vaues_blob.len <= 0) {
+		if (data_msg_ptr_received->ufsrvcommand->usercommand->header->args != COMMAND_ARGS__DELETED) {
+			_HandleUserCommandError (ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, RESCODE_USERCMD_MISSING_PARAM, data_msg_ptr_received->ufsrvcommand->usercommand->header->command);
+			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM)
 		}
 	}
 
   UfsrvEvent event = {0};
-  IsUserAllowedToShareProfile(sesn_ptr, data_msg_ptr_received, &event, 0);
+  IsUserAllowedToShareProfile(ctx_ptr, wsm_ptr_received, data_msg_ptr_received, &event, 0);
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 	} else {
-    _HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+    _HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
   }
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 }
 
 /**
@@ -791,12 +789,14 @@ _CommandControllerUserPrefProfile (Session *sesn_ptr, WebSocketMessage *wsm_ptr_
  * @return
  */
 UFSRVResult *
-MarshalUserPrefProfile(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *event_ptr)
+MarshalUserPrefProfile(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, UfsrvEvent *event_ptr)
 {
-	_GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
-	_PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
-	UserCommand *user_command_ptr = ((ShareListContextData *)ctx_ptr)->data_msg_received->ufsrvcommand->usercommand;
+	_GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
+	_PrepareMarshalMessageForUser(&envelope_marshal, sesn_ptr, ctx_data_ptr, event_ptr, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+
+	UserCommand *user_command_ptr = ((ShareListContextData *)ctx_data_ptr)->data_msg_received->ufsrvcommand->usercommand;
 
 	//TODO: not sure is this necessary, especially sharelist, which can be huge
 	userpref_record.pref_id					  =	user_command_ptr->prefs[0]->pref_id;
@@ -805,21 +805,41 @@ MarshalUserPrefProfile(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessag
 	user_command.target_list					=	user_command_ptr->target_list;
 	user_command.n_target_list			  =	user_command_ptr->n_target_list;
 
-	_MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
+	_MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
 
 	//update envelope for other users
-	user_command.prefs										=	userpref_records;user_command.header->args	            =	user_command_ptr->header->args==COMMAND_ARGS__SET?COMMAND_ARGS__ADDED:COMMAND_ARGS__DELETED;
+	user_command.prefs										=	userpref_records;
+	user_command.header->args	            =	user_command_ptr->header->args; user_command.header->has_args = 1;
 	user_command.prefs[0]								  =	&userpref_record;
 	user_command.n_prefs									=	1;
-	user_command.header->args	            =	user_command_ptr->header->args==COMMAND_ARGS__SET?COMMAND_ARGS__ADDED:COMMAND_ARGS__DELETED;
 
-	user_command.originator		            = MakeUserRecordForSelfInProto (sesn_ptr, PROTO_USER_RECORD_MINIMAL);
-	user_command.originator->profile_key  = user_command_ptr->prefs[0]->vaues_blob;
-	_MarshalCommandToUser(((ShareListContextData *)ctx_ptr)->sesn_ptr, SessionOffInstanceHolder(((ShareListContextData *)ctx_ptr)->instance_sesn_ptr_target), &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
+	user_command.originator		            = MakeUserRecordForSelfInProto(sesn_ptr, PROTO_USER_RECORD_MINIMAL);
+	if (user_command.header->args == COMMAND_ARGS__ADDED) {
+    if (!IsProfileKeyLoaded(sesn_ptr)) {
+      ProfileKeyStore key_store = {0};
+      DbBackendGetProfileKey(sesn_ptr, &(SESSION_UFSRVUIDSTORE(sesn_ptr)), KEY_RAW, &key_store);
+      if (key_store.raw_sz > 0) {
+        memcpy(SESSION_USER_PROFILE_KEY(sesn_ptr), key_store.raw, key_store.raw_sz);
+        memset(key_store.raw, 0, CONFIG_USER_PROFILEKEY_MAX_SIZE);
+        free(key_store.raw);
+      } else {
+        syslog(LOG_ERR, "%s {pid:'%lu', o:'%p'}: ERROR: COULD NOT LOAD PROFILE KEY FOR USER", __func__, pthread_self(), ctx_ptr->sesn_ptr);
+        _HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+        DestructUserInfoInProto(user_command.originator, FLAG_SELF_DESTRUCT_TRUE);
 
-	user_command.originator->profile_key.len 	= 0;
-	user_command.originator->profile_key.data = NULL; //we don't own this allocation
-	DestructUserInfoInProto (user_command.originator, FLAG_SELF_DESTRUCT_TRUE);
+        _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
+      }
+    }
+    user_command.profile_key.data = SESSION_USER_PROFILE_KEY(sesn_ptr);
+    user_command.profile_key.len  = CONFIG_USER_PROFILEKEY_MAX_SIZE;
+    user_command.has_profile_key  = 1;
+	} else {
+	  //already empty
+	}
+  InstanceContextForSession instance_ctx = {((ShareListContextData *)ctx_data_ptr)->instance_sesn_ptr_target, SessionOffInstanceHolder(((ShareListContextData *)ctx_data_ptr)->instance_sesn_ptr_target)};
+	_MarshalCommandToUser(ctx_ptr, &instance_ctx, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
+
+	DestructUserInfoInProto(user_command.originator, FLAG_SELF_DESTRUCT_TRUE);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
@@ -847,19 +867,21 @@ MarshalUserPrefProfile(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessag
  * @return
  */
 UFSRVResult *
-MarshalUserPrefProfileForFence  (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *event_ptr)
+MarshalUserPrefProfileForFence  (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_recieved, UfsrvEvent *event_ptr)
 {
-  if (IS_EMPTY(((ShareListContextData *)ctx_ptr)->fstate_ptr)) {
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
+  if (IS_EMPTY(((ShareListContextData *)ctx_data_ptr)->fstate_ptr)) {
     _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_MISSING_PARAM)
   }
 
-  FenceStateDescriptor *fstate_ptr =  ((ShareListContextData *)ctx_ptr)->fstate_ptr;
+  FenceStateDescriptor *fstate_ptr =  ((ShareListContextData *)ctx_data_ptr)->fstate_ptr;
 
   _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
-  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_data_ptr, event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
 
   //this will hold a fence profile share command
-  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_ptr)->data_msg_received->ufsrvcommand->usercommand;
+  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_data_ptr)->data_msg_received->ufsrvcommand->usercommand;
 
   userpref_record.pref_id					  =	USER_PREFS__PROFILE;
   //note: we don't set profile key in the pref; instead we just assign it to user record
@@ -910,7 +932,7 @@ MarshalUserPrefProfileForFence  (Session *sesn_ptr, ClientContextData *ctx_ptr, 
                                                  .shlist_ptr=SESSION_USERPREF_SHLIST_PROFILE_PTR(sesn_ptr), .pref_descriptor_ptr=&pref,
                                                  .data_msg_received=&data_msg_mock, false, false};
 
-          RegisterSessionEvent(sesn_ptr, EVENT_TYPE_SESSION, 0, NULL, event_ptr); //todo: set session event instance type
+          RegisterUfsrvEvent(sesn_ptr, MSGCMD_SESSION, 0, NULL, event_ptr); //todo: set session event instance type
 
           if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
             header.eid = event_ptr->eid;
@@ -921,13 +943,15 @@ MarshalUserPrefProfileForFence  (Session *sesn_ptr, ClientContextData *ctx_ptr, 
             user_command.target_list    = user_records_target;
             user_command.n_target_list  = 1;
             MakeUserRecordFromSessionInProto (sesn_ptr_listed, user_record_ptr_target, true, true);
-            _MarshalCommandToUser(sesn_ptr, NULL, &command_envelope, uFENCE_V1_IDX);
+            _MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope, uFENCE_V1_IDX);
 
             header.cid                  = SESSION_ID(sesn_ptr_listed);
             user_command.header->args	  =	command_arg_other;
             user_command.target_list    = NULL;
             user_command.n_target_list  = 0;
-            _MarshalCommandToUser(sesn_ptr, sesn_ptr_listed, &command_envelope, uFENCE_V1_IDX);
+
+            InstanceContextForSession instance_ctx = {raw_session_list.sessions[i], sesn_ptr_listed};
+            _MarshalCommandToUser(ctx_ptr, &instance_ctx, wsm_ptr_received, &command_envelope, uFENCE_V1_IDX);
 
             InterBroadcastUserShareListMessage(sesn_ptr, CLIENT_CTX_DATA((&share_list_ctx)), event_ptr, user_command.header->args);
           }
@@ -951,32 +975,34 @@ MarshalUserPrefProfileForFence  (Session *sesn_ptr, ClientContextData *ctx_ptr, 
  *  the other user to this user. User's sharelist is modified accordingly.
  */
 inline static UFSRVResult *
-_CommandControllerUserPrefNetstate (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserPrefNetstate (InstanceContextForSession *ctx_ptr,  WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-  UserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+  UserPreference  *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+  Session         *sesn_ptr           = ctx_ptr->sesn_ptr;
 
   UfsrvEvent event = {0};
-  IsUserAllowedToShareNetstate(sesn_ptr, data_msg_ptr_received, &event, 0);
+  IsUserAllowedToShareNetstate(ctx_ptr, wsm_ptr_received, data_msg_ptr_received, &event, 0);
   if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
     exit_success:
-    _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+    _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
   }
   else {
-		_HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr),
-														USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+		_HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
 	}
 
-  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 UFSRVResult *
-MarshalUserPrefNetstate(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, UfsrvEvent *fence_event_ptr)
+MarshalUserPrefNetstate(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, unsigned long call_flags, UfsrvEvent *fence_event_ptr)
 {
-  _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
-  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, fence_event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
-  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_ptr)->data_msg_received->ufsrvcommand->usercommand;
+  _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
+  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_data_ptr, fence_event_ptr, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+
+  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_data_ptr)->data_msg_received->ufsrvcommand->usercommand;
 
   //TODO: not sure is this necessary, especially sharelist, which can be huge
   userpref_record.pref_id					=	user_command_ptr->prefs[0]->pref_id;
@@ -985,7 +1011,7 @@ MarshalUserPrefNetstate(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessa
   user_command.target_list					=	user_command_ptr->target_list;
   user_command.n_target_list				=	user_command_ptr->n_target_list;
 
-  _MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
+  _MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
 
 
   //update envelope for other users
@@ -995,7 +1021,8 @@ MarshalUserPrefNetstate(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessa
 	user_command.header->cid = 0; user_command.header->has_cid = 0;
 	user_command.header->args	=		user_command_ptr->header->args;//retain original command arg
   user_command.originator		= MakeUserRecordForSelfInProto (sesn_ptr, PROTO_USER_RECORD_MINIMAL);
-  _MarshalCommandToUser(((ShareListContextData *)ctx_ptr)->sesn_ptr, SessionOffInstanceHolder(((ShareListContextData *)ctx_ptr)->instance_sesn_ptr_target), &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
+  InstanceContextForSession instance_ctx = {((ShareListContextData *)ctx_data_ptr)->instance_sesn_ptr_target, SessionOffInstanceHolder(((ShareListContextData *)ctx_data_ptr)->instance_sesn_ptr_target)};
+  _MarshalCommandToUser(ctx_ptr, &instance_ctx, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
 
   DestructUserInfoInProto (user_command.originator, true/* flag_self_destruct*/);
 
@@ -1010,21 +1037,22 @@ MarshalUserPrefNetstate(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessa
  *  the other user to this user. User's sharelist is modified accordingly.
  */
 inline static UFSRVResult *
-_CommandControllerUserPrefReadReceipt (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserPrefReadReceipt (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-  UserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
-
+  UserPreference *user_command_prefs  = data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+  Session *sesn_ptr                   = ctx_ptr->sesn_ptr;
   UfsrvEvent event = {0};
-  IsUserAllowedToShareReadReceipt(sesn_ptr, data_msg_ptr_received, &event, CALLFLAGS_EMPTY);
+
+  IsUserAllowedToShareReadReceipt(ctx_ptr, data_msg_ptr_received, &event, CALLFLAGS_EMPTY);
   if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
     exit_success:
-    _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+    _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
   }
   else {
-    _HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+    _HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
   }
 
-  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
@@ -1036,78 +1064,79 @@ _CommandControllerUserPrefReadReceipt (Session *sesn_ptr, WebSocketMessage *wsm_
  *  the other user to this user. User's sharelist is modified accordingly.
  */
 inline static UFSRVResult *
-_CommandControllerUserPrefContacts (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserPrefContacts (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
   UserPreference *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+  Session         *sesn_ptr          = ctx_ptr->sesn_ptr;
 
   UfsrvEvent event = {0};
-  IsUserAllowedToShareContacts(sesn_ptr, data_msg_ptr_received, &event, MarshalUserPref, CALLFLAGS_EMPTY);
+  IsUserAllowedToShareContacts(ctx_ptr, data_msg_ptr_received, wsm_ptr_received, &event, MarshalUserPref, CALLFLAGS_EMPTY);
   if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
     _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
-  }
-  else {
-    _HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+  } else {
+    _HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
   }
 
-  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
-
 //
 
 //
-
 inline static UFSRVResult *
-_CommandControllerUserPrefUnsolicitedContactAction (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserPrefUnsolicitedContactAction (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
   UserPreference *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
   UfsrvEvent event = {0};
-  IsUserAllowedToChangeUnsolicitedContactAction(sesn_ptr, user_command_prefs, data_msg_ptr_received, &event, _MarshalIntegerTypeUserPref, CALLFLAGS_EMPTY);
+  IsUserAllowedToChangeUnsolicitedContactAction(ctx_ptr, user_command_prefs, data_msg_ptr_received, wsm_ptr_received, &event, _MarshalIntegerTypeUserPref, CALLFLAGS_EMPTY);
   if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
     _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
   }
   else {
-    _HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+    _HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
   }
 
-  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 //
 
 static UFSRVResult *
-_MarshalIntegerTypeUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *fence_event_ptr)
+_MarshalIntegerTypeUserPref (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *fence_event_ptr)
 {
-  _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
-  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, fence_event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
-  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_ptr)->data_msg_received->ufsrvcommand->usercommand;
+  _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
+  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_data_ptr, fence_event_ptr, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+
+  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_data_ptr)->data_msg_received->ufsrvcommand->usercommand;
 
   userpref_record.pref_id					=	user_command_ptr->prefs[0]->pref_id;
   userpref_record.values_int		  =	user_command_ptr->prefs[0]->values_int;
   userpref_record.has_values_int	=	1;
 
-  _MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
+  _MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
 
-  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 __unused static UFSRVResult *
-_MarshalStringTypeUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *fence_event_ptr)
+_MarshalStringTypeUserPref (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *fence_event_ptr)
 {
   _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
-  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, fence_event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+  _PrepareMarshalMessageForUser (&envelope_marshal, ctx_ptr->sesn_ptr, ctx_data_ptr, fence_event_ptr, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
 
-  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_ptr)->data_msg_received->ufsrvcommand->usercommand;
+  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_data_ptr)->data_msg_received->ufsrvcommand->usercommand;
 
   userpref_record.pref_id					=	user_command_ptr->prefs[0]->pref_id;
   userpref_record.values_str		  =	user_command_ptr->prefs[0]->values_str;
 
-  _MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
+  _MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
 
-  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+  _RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
 
 }
 //
@@ -1118,33 +1147,36 @@ _MarshalStringTypeUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataM
  *  the other user to this user. User's sharelist is modified accordingly.
  */
 inline static UFSRVResult *
-_CommandControllerUserPrefBlocked (Session *sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserPrefBlocked (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-  UserPreference *user_command_prefs=data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+  __unused UserPreference  *user_command_prefs = data_msg_ptr_received->ufsrvcommand->usercommand->prefs[0];
+  Session         *sesn_ptr           = ctx_ptr->sesn_ptr;
 
   UfsrvEvent event = {0};
-  IsUserAllowedToShareBlocked(sesn_ptr, data_msg_ptr_received, &event, MarshalUserPref, CALLFLAGS_EMPTY);
+  IsUserAllowedToShareBlocked(ctx_ptr, data_msg_ptr_received, wsm_ptr_received, &event, MarshalUserPref, CALLFLAGS_EMPTY);
   if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
     exit_success:
-    _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+    _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
   }
   else {
-    _HandleUserCommandError(sesn_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
+    _HandleUserCommandError(ctx_ptr, NULL, wsm_ptr_received, data_msg_ptr_received, SESSION_RESULT_CODE(sesn_ptr), USER_COMMAND__COMMAND_TYPES__PREFERENCE);
   }
 
-  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+  _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
 //
 
 UFSRVResult *
-MarshalUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved,  UfsrvEvent *event_ptr)
+MarshalUserPref (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received,  WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr)
 {
-  _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
-  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, event_ptr, data_msg_ptr_recieved, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
-  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_ptr)->data_msg_received->ufsrvcommand->usercommand;
+  _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION();
+  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_data_ptr, event_ptr, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__PREFERENCE, COMMAND_ARGS__ACCEPTED);
+
+  UserCommand *user_command_ptr = ((ShareListContextData *)ctx_data_ptr)->data_msg_received->ufsrvcommand->usercommand;
 
   //TODO: not sure is this necessary, especially sharelist, which can be huge
   userpref_record.pref_id					=	user_command_ptr->prefs[0]->pref_id;
@@ -1153,7 +1185,7 @@ MarshalUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *dat
   user_command.target_list					=	user_command_ptr->target_list;
   user_command.n_target_list				=	user_command_ptr->n_target_list;
 
-  _MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
+  _MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_received, &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporary command idx uGETKEYS_V1_IDX
 
   //update envelope for other users
   user_command.target_list					=	NULL;
@@ -1161,8 +1193,9 @@ MarshalUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *dat
 
   user_command.header->cid = 0; user_command.header->has_cid = 0;
   user_command.header->args	=		user_command_ptr->header->args;//retain original command arg
-  user_command.originator		= MakeUserRecordForSelfInProto (sesn_ptr, PROTO_USER_RECORD_MINIMAL);
-  _MarshalCommandToUser(((ShareListContextData *)ctx_ptr)->sesn_ptr, SessionOffInstanceHolder(((ShareListContextData *)ctx_ptr)->instance_sesn_ptr_target), &command_envelope,  uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
+  user_command.originator		= MakeUserRecordForSelfInProto(sesn_ptr, PROTO_USER_RECORD_MINIMAL);
+  InstanceContextForSession instance_ctx = {((ShareListContextData *)ctx_data_ptr)->instance_sesn_ptr_target, SessionOffInstanceHolder(((ShareListContextData *)ctx_data_ptr)->instance_sesn_ptr_target)};
+  _MarshalCommandToUser(ctx_ptr, &instance_ctx, wsm_ptr_received, &command_envelope, uGETKEYS_V1_IDX);//TODO: temporray command idx uGETKEYS_V1_IDX
 
   DestructUserInfoInProto (user_command.originator, FLAG_SELF_DESTRUCT_TRUE);
 
@@ -1171,12 +1204,12 @@ MarshalUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *dat
 }
 
 inline static UFSRVResult *
-_CommandControllerUserResetFences (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerUserResetFences (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-  Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
+  Session *sesn_ptr = SessionOffInstanceHolder(ctx_ptr->instance_sesn_ptr);
 
-	ResetFencesForUser (instance_sesn_ptr, MEMBER_FENCES);
-	ResetFencesForUser (instance_sesn_ptr, INVITED_FENCES);
+	ResetFencesForUser (ctx_ptr->instance_sesn_ptr, MEMBER_FENCES);
+	ResetFencesForUser (ctx_ptr->instance_sesn_ptr, INVITED_FENCES);
 	//ResetFencesForUser (sesn_ptr, BLOCKED_FENCES);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
@@ -1188,23 +1221,23 @@ _CommandControllerUserResetFences (InstanceHolderForSession *instance_sesn_ptr, 
 
 //// START END_SESSION \\\\
 
-inline static UFSRVResult *_MarshalEndSession (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, CommandContextData *context_ptr);
+inline static UFSRVResult *_MarshalEndSession (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, CommandContextData *context_ptr);
 
 inline static UFSRVResult *
-_CommandControllerEndSession (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerEndSession (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
-  Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
   UserCommand *user_cmd_ptr = data_msg_ptr_received->ufsrvcommand->usercommand;
   size_t list_sz = user_cmd_ptr->n_target_list;
 
 	if (unlikely(list_sz <= 0)) {
 		syslog(LOG_ERR, "%s {pid:'%lu', o:'%p'}: ERROR: MISSING TARGET USER FOR END SESSION", __func__, pthread_self(), sesn_ptr);
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER);
+		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 	}
 
 	for (size_t i=0; i<list_sz; i++) {
-    _MarshalEndSession (sesn_ptr, wsm_ptr_received, data_msg_ptr_received, (CommandContextData *)(user_cmd_ptr->target_list[i]));
+    _MarshalEndSession (ctx_ptr, wsm_ptr_received, data_msg_ptr_received, (CommandContextData *)(user_cmd_ptr->target_list[i]));
 	}
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
@@ -1212,24 +1245,26 @@ _CommandControllerEndSession (InstanceHolderForSession *instance_sesn_ptr, WebSo
 }
 
 inline static UFSRVResult *
-_MarshalEndSession (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, CommandContextData *ctx_ptr)
+_MarshalEndSession (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr_received, CommandContextData *ctx_data_ptr)
 {
   UserRecord	user_record_originator = {0};
-  UserRecord *user_record_ptr=(UserRecord *)ctx_ptr; //target user
+  UserRecord *user_record_ptr = (UserRecord *)ctx_data_ptr; //target user
   FenceRecord **fence_records_ptr = data_msg_ptr_received->ufsrvcommand->usercommand->fences;
 
+  Session *sesn_ptr = ctx_ptr->sesn_ptr;
+
   _GENERATE_USER_COMMAND_ENVELOPE_INITIALISATION_END_SESSION();
-  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_ptr, NULL, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__END_SESSION, COMMAND_ARGS__SET);
+  _PrepareMarshalMessageForUser (&envelope_marshal, sesn_ptr, ctx_data_ptr, NULL, data_msg_ptr_received, USER_COMMAND__COMMAND_TYPES__END_SESSION, COMMAND_ARGS__SET);
   envelope_marshal.user_command->originator =	MakeUserRecordFromSessionInProto (sesn_ptr, &user_record_originator, PROTO_USER_RECORD_MINIMAL, PROTO_USER_RECORD_BYREF);
 
   envelope_marshal.user_record		=	MakeUserRecordFromSessionInProto (sesn_ptr, envelope_marshal.user_record, PROTO_USER_RECORD_MINIMAL, 1);
 
-  if (data_msg_ptr_received->ufsrvcommand->usercommand->n_fences>0 && IS_PRESENT(fence_records_ptr) && IS_PRESENT(fence_records_ptr[0])) {
+  if (data_msg_ptr_received->ufsrvcommand->usercommand->n_fences > 0 && IS_PRESENT(fence_records_ptr) && IS_PRESENT(fence_records_ptr[0])) {
     envelope_marshal.user_command->fences = fence_records_ptr;
     envelope_marshal.user_command->n_fences = data_msg_ptr_received->ufsrvcommand->usercommand->n_fences;
   }
 
-  unsigned long sesn_call_flags=(CALL_FLAG_HASH_SESSION_LOCALLY|CALL_FLAG_HASH_UID_LOCALLY|CALL_FLAG_HASH_USERNAME_LOCALLY|
+  unsigned long sesn_call_flags = (CALL_FLAG_HASH_SESSION_LOCALLY|CALL_FLAG_HASH_UID_LOCALLY|CALL_FLAG_HASH_USERNAME_LOCALLY|
                                  CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION);
   GetSessionForThisUserByUserId(sesn_ptr, UfsrvUidGetSequenceId((const UfsrvUid *)user_record_ptr->ufsrvuid.data), NULL, sesn_call_flags);
   if (SESSION_RESULT_TYPE(sesn_ptr) != RESULT_TYPE_SUCCESS) {
@@ -1238,8 +1273,12 @@ _MarshalEndSession (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessa
 
   InstanceHolderForSession *instance_sesn_ptr_target = (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr);
 
-  UfsrvCommandMarshallingDescription ufsrv_descpription = {header.eid, 0, header.when, &EnvelopeMetaData, &command_envelope};
-  UfsrvCommandInvokeCommand (sesn_ptr, SessionOffInstanceHolder(instance_sesn_ptr_target), &((WebSocketMessage){.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST}), NULL, &ufsrv_descpription, uGETKEYS_V1_IDX);
+  UfsrvCommandMarshallingDescriptor ufsrv_descpription = {header.eid, 0, header.when, &EnvelopeMetaData, &command_envelope};
+  UfsrvCommandInvokeUserCommand(ctx_ptr,
+                                &(InstanceContextForSession) {instance_sesn_ptr_target,
+                                                              SessionOffInstanceHolder(instance_sesn_ptr_target)},
+                                &((WebSocketMessage) {.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST}), NULL,
+                                &ufsrv_descpription, uGETKEYS_V1_IDX);
 
   _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
@@ -1250,21 +1289,17 @@ _MarshalEndSession (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessa
  * 	@brief: Generalised command sending
  */
 inline static UFSRVResult *
-_MarshalCommandToUser	(Session *sesn_ptr, Session *sesn_ptr_target, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
+_MarshalCommandToUser	(InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_target, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
 {
 	CommandHeader *command_header_ptr	=	command_envelope_ptr->ufsrvcommand->usercommand->header;
 
-	WebSocketMessage wsmsg; wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE;//dummy
-	UfsrvCommandMarshallingDescription ufsrv_descpription={command_header_ptr->eid, 0, command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
+	UfsrvCommandMarshallingDescriptor ufsrv_description = {command_header_ptr->eid, 0, command_header_ptr->when, &EnvelopeMetaData, command_envelope_ptr};
 
-#ifdef __UF_FULLDEBUG
-	syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cid_target:'%lu', uname_target:'%s'} Marshaling User Command... ", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),
-				SESSION_ID((sesn_ptr_target?sesn_ptr_target:sesn_ptr)), SESSION_USERNAME((sesn_ptr_target?sesn_ptr_target:sesn_ptr)));
-#endif
+  UfsrvCommandInvokeUserCommand(ctx_ptr, ctx_ptr_target,
+          IS_EMPTY(wsm_ptr_received)?(&(WebSocketMessage){.request=NULL, .type=WEB_SOCKET_MESSAGE__TYPE__REQUEST}):wsm_ptr_received,
+          NULL, &ufsrv_description, req_cmd_idx);
 
-	UfsrvCommandInvokeCommand (sesn_ptr, sesn_ptr_target, &wsmsg, NULL, &ufsrv_descpription, req_cmd_idx);
-
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
+	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
@@ -1310,7 +1345,7 @@ _BuildErrorHeaderForUserCommand (CommandHeader *header_ptr, CommandHeader *heade
  * 	@unlocks: none
  */
 __unused static UFSRVResult *
-_HandleUserCommandError (Session *sesn_ptr, ClientContextData *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, int rescode, int command_type)
+_HandleUserCommandError (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, int rescode, int command_type)
 {
 	Envelope 					command_envelope	= ENVELOPE__INIT;
 	CommandHeader 		header						= COMMAND_HEADER__INIT;
@@ -1324,21 +1359,18 @@ _HandleUserCommandError (Session *sesn_ptr, ClientContextData *ctx_ptr, WebSocke
 	ufsrv_command.usercommand						=	&user_command;
 	ufsrv_command.ufsrvtype							=	UFSRV_COMMAND_WIRE__UFSRV_TYPE__UFSRV_USER;
 
-
-	command_envelope.source							=	"0";
+	command_envelope.sourceufsrvuid 		=	"0";
 	command_envelope.timestamp					=	GetTimeNowInMillis(); command_envelope.has_timestamp=1;
 
 	header.when													=	command_envelope.timestamp; header.has_when		=	1;
-	header.cid													=	SESSION_ID(sesn_ptr);				header.has_cid		=	1;
-	//header.creqid												=	data_msg_ptr->ufsrvcommand->fencecommand->header->creqid; header.has_creqid	=	1;
+	header.cid													=	SESSION_ID(ctx_ptr->sesn_ptr);				header.has_cid		=	1;
 
 	_BuildErrorHeaderForUserCommand (&header, data_msg_ptr->ufsrvcommand->usercommand->header, rescode, command_type);
 
 #ifdef __UF_TESTING
-	syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', uid:'%lu', cid:'%lu', arg_error:'%d', rescode:'%d'}: Marshaling Error response message...", __func__, pthread_self(), sesn_ptr, SESSION_USERID(sesn_ptr), SESSION_ID(sesn_ptr), header.args_error, rescode);
+	syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', uid:'%lu', cid:'%lu', arg_error:'%d', rescode:'%d'}: Marshaling Error response message...", __func__, pthread_self(), ctx_ptr->sesn_ptr, SESSION_USERID(ctx_ptr->sesn_ptr), SESSION_ID(ctx_ptr->sesn_ptr), header.args_error, rescode);
 #endif
 
-	return (_MarshalCommandToUser(sesn_ptr, NULL, &command_envelope,  uGETKEYS_V1_IDX));//TODO: temp use of uGETKEYS_V1
+	return (_MarshalCommandToUser(ctx_ptr, NULL, wsm_ptr_orig, &command_envelope,  uGETKEYS_V1_IDX));//TODO: temp use of uGETKEYS_V1
 
 }
-

@@ -26,17 +26,27 @@ DROP TABLE IF EXISTS `accounts`;
 CREATE TABLE `accounts` (
   `id` INT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
   `ufsrvuid` binary(16) DEFAULT NULL,
+  `uuid` binary(16) DEFAULT NULL,
   `number` varchar(255) NOT NULL,
   `data` json DEFAULT NULL,
   `data_user` json DEFAULT NULL,
   `accounts_authenticated_device_cookie` varchar(255) GENERATED ALWAYS AS (json_unquote(json_extract(`data`,'$.authenticated_device.cookie'))) VIRTUAL,
   `accounts_nickname` varchar(50) GENERATED ALWAYS AS (json_unquote(json_extract(`data_user`,'$.nickname'))) VIRTUAL,
   `accounts_authenticated_device_gcm_id` varchar(255) GENERATED ALWAYS AS (json_unquote(json_extract(`data`,'$.authenticated_device.gcm_id'))) VIRTUAL,
+  `uuid_serialised` varchar(36) GENERATED ALWAYS AS
+      (insert(
+              insert(
+                      insert(
+                              insert(lower(hex(uuid)),9,0,'-'),
+                              14,0,'-'),
+                      19,0,'-'),
+              24,0,'-')
+      ) VIRTUAL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `id_UNIQUE` (`id`),
   UNIQUE KEY `number_UNIQUE` (`number`),
   UNIQUE KEY `ufsrvuid` (`ufsrvuid`),
-  KEY `authenticated_device_cookie_index` (`accounts_authenticated_device_coINT(20) UNSIGNEDokie`),
+  KEY `authenticated_device_cookie_index` (`accounts_authenticated_device_cookie`),
   KEY `accounts_authenticated_device_cookie` (`accounts_authenticated_device_cookie`),
   KEY `accounts_nickname` (`accounts_nickname`),
   KEY `accounts_authenticated_device_gcm_id` (`accounts_authenticated_device_gcm_id`),
@@ -58,18 +68,19 @@ CREATE TABLE `attachments` (
   `device_id` tinyint(4) NOT NULL DEFAULT '1',
   `key` text,
   `digest` text,
+  `blurhash` text,
+  `caption` text,
   `blob_id` varchar(255) NOT NULL,
   `fid` bigint(20) NOT NULL DEFAULT '0',
   `mimetype` tinytext,
   `key_size` INT(20) UNSIGNED DEFAULT '0',
   `digest_size` bigint(20) DEFAULT '0',
   `size` INT(20) UNSIGNED DEFAULT NULL,
-  `eid` bigint(20) DEFAULT NULL,
+  `id_events` bigint(20) DEFAULT NULL,
   `thumbnail` blob,
   `timestamp` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `blob_id_UNIQUE` (`blob_id`),
-  UNIQUE KEY `id_UNIQUE` (`id`),
   KEY `attachments_fid_index` (`fid`),
   KEY `attachments_userid_index` (`userid`)
 ) ENGINE=InnoDB AUTO_INCREMENT=57 DEFAULT CHARSET=utf8;
@@ -121,24 +132,76 @@ DROP TABLE IF EXISTS `messages`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `messages` (
   `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id_events` INT(11) UNSIGNED NOT NULL,
   `fid` bigint(20) DEFAULT '0',
-  `eid` bigint(20) DEFAULT '0',
   `type` tinyint(4) NOT NULL,
-  `recipients` json NOT NULL,
+  `status` tinyint(4),
   `rawmsg` text NOT NULL,
   `timestamp` bigint(20) NOT NULL,
-  `source` varchar(255) NOT NULL,
-  `source_device` int(11) NOT NULL DEFAULT '1',
-  `destination` varchar(255) NOT NULL,
-  `destination_device` int(11) NOT NULL DEFAULT '1',
-  `message` text,
-  `content` text,
+  `originator` bigint(20) NOT NULL,
+  `originator_device` int(11) NOT NULL DEFAULT '1',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `id_UNIQUE` (`id`),
+  FOREIGN KEY fk_id_events(id_events)
+      REFERENCES events(id)
+      ON DELETE CASCADE,
   KEY `fid_index` (`fid`),
-  KEY `destination_index` (`destination`,`destination_device`),
-  KEY `destination_and_type_index` (`destination`,`destination_device`,`type`),
-  CHECK (JSON_VALID(recipients))
+  KEY `eid_index` (`id_events`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `messages`
+--
+
+DROP TABLE IF EXISTS `guardians`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `guardians` (
+    `id` INT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+    `guardian` INT(20) UNSIGNED NOT NULL,
+    `originator` INT(20) UNSIGNED NOT NULL,
+    `status` tinyint(4),
+    `timestamp` BIGINT(20) UNSIGNED NOT NULL,
+    `gid` BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+    `data` json DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `originator_guardian_status_unique_index`(`originator`, `guardian`, `status`),
+    CHECK (data IS NULL OR JSON_VALID(data))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `events`
+--
+
+DROP TABLE IF EXISTS `events`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `events` (
+    `id` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+    `eid` BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+    `ctxid` BIGINT(20) UNSIGNED,
+    `cmd_type` tinyint(4) NOT NULL DEFAULT '0',
+    `event_type` tinyint(4) NOT NULL DEFAULT '0',
+    `rawmsg` text,
+    `timestamp` bigint(20) NOT NULL,
+    `originator` bigint(20) NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `eid_ctxid_originator_unique_index`(`eid`, `ctxid`, `originator`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+DROP TABLE IF EXISTS `flagged_events`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `flagged_events` (
+                          `id` INT(11) UNSIGNED NOT NULL,
+                          `timestamp` bigint(20) NOT NULL,
+                          `originator` bigint(20) NOT NULL,
+                          FOREIGN KEY fk_id(id)
+                              REFERENCES events(id)
+                              ON DELETE CASCADE,
+                          UNIQUE KEY `id_originator_unique_index`(`id`, `originator`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

@@ -28,7 +28,7 @@
 #include <main.h>
 #include <nportredird.h>
 #include <assert.h>
-#include <protocol_type.h>
+#include <ufsrv_core/protocol/protocol_type.h>
 #include <protocol_http_type.h>
 #include <dictionary.h>
 #include <request.h>

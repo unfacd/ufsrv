@@ -20,27 +20,21 @@
 #endif
 
 #include <main.h>
-#include <fence_state.h>
-#include <user_preferences.h>
-#include <users_proto.h>
-#include <location.h>
-#include <persistance.h>
-#include <misc.h>
-#include <net.h>
+#include <ufsrv_core/fence/fence_state.h>
+#include <ufsrv_core/fence/fence_protobuf.h>
+#include <ufsrv_core/user/users_protobuf.h>
 #include <nportredird.h>
 #include <attachment_descriptor_type.h>
 #include <fence_proto.h>
-#include <fence_permission.h>
-#include <protocol_websocket_session.h>
-#include <protocol_http.h>
+#include <ufsrv_core/fence/fence_permission.h>
+#include <ufsrvwebsock/include/protocol_websocket_session.h>
 #include <sessions_delegator_type.h>
-#include <ufsrvcmd_broadcast.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
 #include <fence_broadcast.h>
 #include <command_controllers.h>
-#include <UfsrvMessageQueue.pb-c.h>
-#include <sessions_delegator_type.h>
+#include <ufsrv_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
 #include <hiredis.h>
-#include <fence_permission_type.h>
+#include <ufsrv_core/fence/fence_permission_type.h>
 #include <ufsrvuid.h>
 
 extern ufsrv 							*const masterptr;
@@ -81,7 +75,6 @@ static UFSRVResult *_HandleInterBroadcastFenceInvite (ClientContextData *context
 static UFSRVResult *_HandleInterBroadcastFenceDestruct (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
 static UFSRVResult *_HandleInterBroadcastFenceReload (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
 ////// INTER \\\\\\
-
 
 #define _GENERATE_ENVELOPE_INITIALISATION() \
 	MessageQueueMessage 	msgqueue_msg				=	MESSAGE_QUEUE_MESSAGE__INIT;	\
@@ -155,21 +148,6 @@ InterBroadcastFenceMake (Session *sesn_ptr, ClientContextData *context_ptr, Fenc
 UFSRVResult *
 InterBroadcastFenceJoin (Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
 {
-//	MessageQueueMessage msgqueue_msg	=	MESSAGE_QUEUE_MESSAGE__INIT;
-//	FenceCommand 	fence_command				=	FENCE_COMMAND__INIT;
-//	CommandHeader header							=	COMMAND_HEADER__INIT;
-//	UserRecord		invited_by					=	USER_RECORD__INIT;
-//	FenceRecord		fence_record				=	FENCE_RECORD__INIT;
-//	FenceRecord 	*fence_records[1];
-//
-//	BroadcastMessageEnvelopeForFence	envelope = {
-//			.msgqueue_msg				=	&msgqueue_msg,
-//			.fence_command			=	&fence_command,
-//			.header							=	&header,
-//			.fence_record				=	&fence_record,
-//			.fence_records			=	fence_records
-//	};
-
   _GENERATE_ENVELOPE_INITIALISATION();
 
   UserRecord		invited_by					=	USER_RECORD__INIT;
@@ -409,6 +387,7 @@ InterBroadcastFencePermission (Session *sesn_ptr, ClientContextData *context_ptr
 	fence_permission.users							=	user_records;
 	fence_permission.n_users						=	1;
 	fence_permission.type								=	permission_ptr->type;//aligned with protobuf enum FENCE_RECORD__PERMISSION__TYPE__PRESENTATION;
+	fence_command.type                  = permission_ptr->type; fence_command.has_type = 1;
 	AssignFencePermissionForProto (permission_ptr, &fence_record, &fence_permission);
 
 	return (UfsrvInterBroadcastMessage(sesn_ptr, &msgqueue_msg, UFSRV_FENCE));
@@ -483,7 +462,7 @@ InterBroadcastFenceReload (Session *sesn_ptr, ClientContextData *context_ptr, Fe
  * 	@worker: ufsrv
  */
 int
-HandleInterBroadcastForFence (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessage 		*mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleInterBroadcastForFence (MessageQueueMessage 		*mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	bool lock_already_owned									= false;
 	int 										rescode					=	0;
@@ -815,7 +794,7 @@ _HandleInterBroadcastFencePermission (ClientContextData *context_ptr, MessageQue
 		_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_PERMISSION)
 	}
 
-	UFSRVResult * (*permission_op_callback)(Session *, Fence *, FencePermission *, unsigned long, FenceEvent *);
+	UFSRVResult * (*permission_op_callback)(InstanceHolderForSession *, Fence *, FencePermission *, unsigned long, FenceEvent *);
 	if (mqm_ptr->fence->header->args == COMMAND_ARGS__ADDED)	permission_op_callback = AddUserToFencePermissions;
 	else if (mqm_ptr->fence->header->args == COMMAND_ARGS__DELETED)	permission_op_callback = RemoveUserFromFencePermissions;
 	else {
@@ -836,7 +815,7 @@ _HandleInterBroadcastFencePermission (ClientContextData *context_ptr, MessageQue
 
 		f_ptr_ctx->fence_events.last_event_id = mqm_ptr->fence->header->eid;
 
-		(*permission_op_callback)(sesn_ptr_target, f_ptr_ctx, permission_ptr, FENCE_CALLFLAG_EMPTY, NULL);
+		(*permission_op_callback)(instance_sesn_ptr_target, f_ptr_ctx, permission_ptr, FENCE_CALLFLAG_EMPTY, NULL);
 		if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_target, __func__);
 
 		_RETURN_RESULT_RES (res_ptr, NULL, sesn_ptr_target->sservice.result.result_type, sesn_ptr_target->sservice.result.result_code)
@@ -929,7 +908,7 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, FenceSessionPai
 
 	//at this stage fence could be existent or not
 	if (IS_PRESENT((instance_f_ptr))) {
-		fence_lock_already_owned = (_RESULT_CODE_EQUAL(res_ptr_returned, RESCODE_PROG_LOCKED_THIS_THREAD));
+		fence_lock_already_owned = (_RESULT_CODE_EQUAL(res_ptr_returned, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
     f_ptr = FenceOffInstanceHolder(instance_f_ptr);
 
@@ -951,7 +930,7 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, FenceSessionPai
           goto return_locked_session_error;
 				}
 
-				bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+				bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
         SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
 				SessionLoadEphemeralMode(sesn_ptr_localuser);
@@ -970,7 +949,8 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, FenceSessionPai
                           CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION)
 
       //given NULL session, load backend context from ufsrvworker's
-      if (IS_PRESENT((instance_sesn_ptr_localuser = SessionInstantiateFromBackend (NULL, mqm_ptr->fence->header->cid, SESSION_CALL_FLAGS)))) {
+      unsigned  long uid = UfsrvUidGetSequenceId((const UfsrvUid *) mqm_ptr->fence->header->ufsrvuid.data);
+      if (IS_PRESENT((instance_sesn_ptr_localuser = SessionInstantiateFromBackend (NULL, uid, SESSION_CALL_FLAGS)))) {
         sesn_ptr_localuser = SessionOffInstanceHolder(instance_sesn_ptr_localuser);
         SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
         SessionLoadEphemeralMode(sesn_ptr_localuser);
@@ -996,7 +976,7 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, FenceSessionPai
 			InstanceHolderForSession *instance_sesn_ptr_carrier = InstantiateCarrierSession (NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
       sesn_ptr_carrier = SessionOffInstanceHolder(instance_sesn_ptr_carrier);
 
-			GetCacheRecordForFence(sesn_ptr_carrier, UNSPECIFIED_FENCE_LISTTYPE, fence_record_ptr->fid, &fence_lock_already_owned, GEOFENCE_CALLFLAGS);
+			GetCacheRecordForFence(sesn_ptr_carrier, UNSPECIFIED_FENCE_LISTTYPE, fence_record_ptr->fid, UNSPECIFIED_UID, &fence_lock_already_owned, GEOFENCE_CALLFLAGS);
       instance_f_ptr = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr_carrier);
 
 			SessionReturnToRecycler (instance_sesn_ptr_carrier, (ContextData *)NULL, CALL_FLAG_CARRIER_INSTANCE);
@@ -1018,14 +998,12 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, FenceSessionPai
 
       SessionLockRWCtx(THREAD_CONTEXT_PTR, sesn_ptr_localuser, _LOCK_TRY_FLAG_FALSE, __func__);
       if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_ERR)) goto return_unlock_fence;
-      bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT),
-                                                    RESCODE_PROG_LOCKED_THIS_THREAD));
+      bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
-      InstanceHolderForSession *instance_sesn_ptr_carrier = InstantiateCarrierSession(NULL, WORKERTYPE_UFSRVWORKER,
-                                                                                      SESSION_CALLFLAGS_EMPTY);
+      InstanceHolderForSession *instance_sesn_ptr_carrier = InstantiateCarrierSession(NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
       Session *sesn_ptr_carrier = SessionOffInstanceHolder(instance_sesn_ptr_carrier);
 
-      GetCacheRecordForFence(sesn_ptr_carrier, 0, fence_record_ptr->fid, &fence_lock_already_owned, GEOFENCE_CALLFLAGS);
+      GetCacheRecordForFence(sesn_ptr_carrier, 0, fence_record_ptr->fid, UNSPECIFIED_UID, &fence_lock_already_owned, GEOFENCE_CALLFLAGS);
       instance_f_ptr = (InstanceHolderForFence *) SESSION_RESULT_USERDATA(sesn_ptr_carrier);
 
       SessionReturnToRecycler(instance_sesn_ptr_carrier, (ContextData *) NULL, CALL_FLAG_CARRIER_INSTANCE);
@@ -1043,7 +1021,7 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, FenceSessionPai
 //
 //				SessionLockRWCtx(THREAD_CONTEXT_PTR, sesn_ptr_localuser, _LOCK_TRY_FLAG_FALSE, __func__);
 //				if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_ERR)) goto return_unlock_fence;
-//				bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+//				bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
         //>> SESSION/FENCE LOCKED >>>
         SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
@@ -1131,20 +1109,19 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, FenceSessionPai
 
 ///// END INTER	\\\\
 
-
 /////// INTRA	\\\\\
 
-inline static int _VetrifyFenceCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked);
-
 int
-HandleIntraBroadcastForFence (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleIntraBroadcastForFence (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int 								rc				=	0;
 
 	long long timer_start = GetTimeNowInMicros(),
 						timer_end;
 
-	if ((rc = _VetrifyFenceCommandForIntra(mqm_ptr, false)) < 0)	goto return_final;
+  if (unlikely(mqm_ptr->has_ufsrvuid == 0)) goto return_error_undefined_ufsrvuid;
+
+	if ((rc = VerifyFenceCommandFromUser(_WIRE_PROTOCOL_DATA(mqm_ptr->wire_data->ufsrvcommand->fencecommand))) < 0)	goto return_final;
 
   unsigned long userid = UfsrvUidGetSequenceId((const UfsrvUid *)(mqm_ptr->ufsrvuid.data));
 
@@ -1169,17 +1146,16 @@ HandleIntraBroadcastForFence (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessa
 
 	Session *sesn_ptr_local_user = SessionOffInstanceHolder(instance_sesn_ptr_local_user);
 
-  SESSION_WHEN_SERVICE_STARTED(sesn_ptr_local_user) = time(NULL);
-
 #ifdef __UF_TESTING
 	FenceCommand 				*fcmd_ptr	= mqm_ptr->wire_data->ufsrvcommand->fencecommand;
 	syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fid:'%lu', fname:'%s', fcname:'%s', userid:'%lu'}: FULLY CONSTRUCTED FENCE COMMAND.", __func__, pthread_self(),sesn_ptr_local_user, SESSION_ID(sesn_ptr_local_user), fcmd_ptr->fences[0]->fid, IS_STR_LOADED(fcmd_ptr->fences[0]->fname)?fcmd_ptr->fences[0]->fname:"*", IS_STR_LOADED(fcmd_ptr->fences[0]->cname)?fcmd_ptr->fences[0]->cname:"*", userid);
 #endif
 
 	{
+    SESSION_WHEN_SERVICE_STARTED(sesn_ptr_local_user) = time(NULL);
 		SessionLoadEphemeralMode(sesn_ptr_local_user);
 		//>>>>>>>>><<<<<<<<<<
-		CommandCallbackControllerFenceCommand (instance_sesn_ptr_local_user, NULL, mqm_ptr->wire_data, mqp_ptr);
+		CommandCallbackControllerFenceCommand (instance_sesn_ptr_local_user, &(WebSocketMessage){.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST, .request=NULL}, mqm_ptr->wire_data);
 		//>>>>>>>>><<<<<<<<<<
 
     SESSION_WHEN_SERVICED(sesn_ptr_local_user) = time(NULL);
@@ -1189,6 +1165,11 @@ HandleIntraBroadcastForFence (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessa
 
 	return_success:
 	goto return_deallocate_carrier;
+
+  return_error_undefined_ufsrvuid:
+  syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: COULD NOT FIND UFSRVUID", __func__, pthread_self());
+  rc = -7;
+  goto return_deallocate_carrier;
 
 	return_error_unknown_uname:
 	syslog(LOG_DEBUG, "%s {pid:'%lu', userid:'%lu'}: ERROR: COULD NOT RETRIEVE SESSION FOR USER", __func__, pthread_self(), userid);
@@ -1208,15 +1189,16 @@ HandleIntraBroadcastForFence (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessa
 /**
  * 	@brief: Verify the fitness of the FenceCommand message in the context of on INTRA broadcast
  */
-inline static int
-_VetrifyFenceCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked)
+int
+VerifyFenceCommandFromUser	(WireProtocolData *data_ptr)
 {
-	int rc=1;
+	int rc = 1;
+	FenceCommand *cmd_ptr = (FenceCommand *)data_ptr;
 
-	if (unlikely(IS_EMPTY((mqm_ptr->wire_data->ufsrvcommand->fencecommand))))				goto return_error_fencecommand_missing;
-	if (unlikely(IS_EMPTY(mqm_ptr->wire_data->ufsrvcommand->fencecommand->header)))	goto return_error_commandheader_missing;
-	if (unlikely(mqm_ptr->wire_data->ufsrvcommand->fencecommand->n_fences<1))				goto return_error_missing_fence_definition;
-	if (unlikely(mqm_ptr->has_ufsrvuid==0))																					goto return_error_missing_ufrsvuid;
+	if (unlikely(IS_EMPTY((cmd_ptr))))				goto return_error_fencecommand_missing;
+	if (unlikely(IS_EMPTY(cmd_ptr->header)))	goto return_error_commandheader_missing;
+	if (unlikely(cmd_ptr->n_fences < 1))				goto return_error_missing_fence_definition;
+//	if (unlikely(mqm_ptr->has_ufsrvuid == 0))																					goto return_error_missing_ufrsvuid;
 
 	return_success:
 	goto return_final;
@@ -1251,9 +1233,7 @@ _VetrifyFenceCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpac
 	rc=-6;
 	goto	return_free;
 
-	return_free://exit_proto:
-	if (flag_free_unpacked)	message_queue_message__free_unpacked(mqm_ptr, NULL);
-
+	return_free:
 	return_final:
 	return rc;
 

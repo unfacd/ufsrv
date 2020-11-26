@@ -15,35 +15,27 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
-/*
- * fence_broadcast.c
- *
- *  Created on: 4 Feb 2017
- *      Author: ayman
- */
-
 #ifdef HAVE_CONFIG_H
 # include <config.h>
 #endif
 
 #include <main.h>
-#include <fence_state.h>
-#include <user_preferences.h>
-#include <user_backend.h>
-#include <users_proto.h>
-#include <location.h>
+#include <ufsrv_core/fence/fence_state.h>
+#include <ufsrv_core/user/user_preferences.h>
+#include <ufsrv_core/user/user_backend.h>
+#include <ufsrv_core/user/users_protobuf.h>
+#include <ufsrv_core/location/location.h>
 #include <share_list.h>
-#include <persistance.h>
+#include <ufsrv_core/cache_backend/persistance.h>
 #include <misc.h>
 #include <net.h>
 #include <nportredird.h>
-#include <protocol_websocket_session.h>
+#include <ufsrvwebsock/include/protocol_websocket_session.h>
 #include <protocol_http.h>
 #include <session_broadcast.h>
 #include <sessions_delegator_type.h>
-#include <ufsrvcmd_broadcast.h>
-#include <UfsrvMessageQueue.pb-c.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <ufsrv_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
 #include <ufsrvuid.h>
 
 #include <hiredis.h>
@@ -76,7 +68,7 @@ static UFSRVResult *_HandleInterBroadcastSessionQuit (MessageQueueMessage *mqm_p
 static UFSRVResult *_HandleInterBroadcastSessionPreference (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
 static UFSRVResult *_HandleInterBroadcastSessionGeofenced (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
 static UFSRVResult *_HandleInterBroadcastSessionRebooted (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
-static inline UFSRVResult *_HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, MessageQueueMessage *mqm_ptr, MessageQueueMsgPayload *mqp_ptr, UFSRVResult *res_ptr);
+static inline UFSRVResult *_HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
 
 //TODO: needs updating
 
@@ -226,7 +218,7 @@ InterBroadcastSessionStatusRebooted (Session *sesn_ptr, ClientContextData *conte
  * 	@brief: TODO: TO BE PORTED TO PROTOBUF.
  */
 int
-HandleInterBroadcastForSession (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleInterBroadcastForSession (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int 										rescode __unused;
 
@@ -294,7 +286,7 @@ _HandleInterBroadcastSessionConnected (MessageQueueMessage *mqm_ptr, UFSRVResult
 		if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_ERR)) {
 			_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_CANTLOCK)
 		}
-		bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+		bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 		SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
 		//note no need to load session with EphemeralMode as we are not changing any backend state
@@ -330,7 +322,7 @@ _HandleInterBroadcastSessionSuspended (MessageQueueMessage *mqm_ptr, UFSRVResult
 			_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_CANTLOCK)
 		}
 
-		bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+		bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 		SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
 		//note no need to load session with EphemeralMode as we are not changing any backend state
@@ -367,7 +359,7 @@ _HandleInterBroadcastSessionQuit (MessageQueueMessage *mqm_ptr, UFSRVResult *res
 			_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_CANTLOCK)
 		}
 
-		bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+		bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 		SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
 		//note no need to load session with EphemeralMode as we are not changing any backend state
@@ -410,7 +402,7 @@ _HandleInterBroadcastSessionPreference (MessageQueueMessage *mqm_ptr, UFSRVResul
 		if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_ERR)) {
 			_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_CANTLOCK)
 		}
-		bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+		bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 		SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
 
@@ -460,7 +452,7 @@ _HandleInterBroadcastSessionGeofenced (MessageQueueMessage *mqm_ptr, UFSRVResult
     if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_ERR)) {
       _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_CANTLOCK);
     }
-    bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+    bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
     SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
     SessionLoadEphemeralMode(sesn_ptr_localuser);
@@ -515,7 +507,7 @@ _HandleInterBroadcastSessionRebooted (MessageQueueMessage *mqm_ptr, UFSRVResult 
     if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_ERR)) {
       _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_CANTLOCK)
     }
-    bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+    bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
     SessionLoadEphemeralMode(sesn_ptr_localuser);
 
@@ -583,7 +575,7 @@ _HandleInterBroadcastSessionRebooted (MessageQueueMessage *mqm_ptr, UFSRVResult 
 ///// INTRA  \\\\
 
 
-inline static int _VetrifySessionCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked);
+inline static int _VetrifySessionCommandForIntra	(WireProtocolData *);
 inline static void _PrepareIntraBroadcastMessageForSession (BroadcastMessageEnvelopeForSession *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg);
 static UFSRVResult *_HandleIntraCommandForSessionRebooted (InstanceHolderForSession *instance_sesn_ptr, SessionMessage *sesn_msg_ptr);
 
@@ -645,7 +637,7 @@ IntraBroadcastSessionStatusRebooted (Session *sesn_ptr, ClientContextData *conte
  * 	@unlocks sesn_ptr:
  */
 int
-HandleIntraBroadcastForSession (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleIntraBroadcastForSession (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int									rc					= 0;
 	MessageCommand 			*msgcmd_ptr	= NULL;
@@ -653,7 +645,7 @@ HandleIntraBroadcastForSession (MessageQueueMsgPayload *mqp_ptr, MessageQueueMes
 	long long timer_start						=	GetTimeNowInMicros();
 	long long timer_end;
 
-	if ((rc = _VetrifySessionCommandForIntra(mqm_ptr, false)) < 0)	goto return_final;
+	if ((rc = _VetrifySessionCommandForIntra(mqm_ptr->session)) < 0)	goto return_final;
 
 	InstanceHolderForSession				*instance_sesn_ptr_carrier			=	InstantiateCarrierSession (NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
 	if (IS_EMPTY(instance_sesn_ptr_carrier))	{
@@ -677,7 +669,7 @@ HandleIntraBroadcastForSession (MessageQueueMsgPayload *mqp_ptr, MessageQueueMes
 
 	SESSION_WHEN_SERVICE_STARTED(sesn_ptr_local_user) = time(NULL);
 
-	UFSRVResult *res_ptr_temp = _HandleIntraBroadcastForSession (instance_sesn_ptr_local_user, mqm_ptr, mqp_ptr, res_ptr);
+	UFSRVResult *res_ptr_temp = _HandleIntraBroadcastForSession (instance_sesn_ptr_local_user, mqm_ptr, res_ptr);
 
 	//IMPORTANT: DONT REFERENCE sesn_ptr_local_user if function returned RESULT_CODE_SESN_INVALIDATED
 
@@ -719,7 +711,7 @@ HandleIntraBroadcastForSession (MessageQueueMsgPayload *mqp_ptr, MessageQueueMes
  *	@worker: UfsrvWorker
  */
 static inline UFSRVResult *
-_HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, MessageQueueMessage *mqm_ptr, MessageQueueMsgPayload *mqp_ptr, UFSRVResult *res_ptr)
+_HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
 {
 	UFSRVResult *res_ptr_local = _ufsrv_result_generic_error;
 	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
@@ -826,11 +818,12 @@ _HandleIntraCommandForSessionRebooted (InstanceHolderForSession *instance_sesn_p
  * 	@brief: Verify the fitness of the FenceCommand message in the context of on INTRA broadcast
  */
 inline static int
-_VetrifySessionCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked)
+_VetrifySessionCommandForIntra	(WireProtocolData *data_ptr)
 {
 	int rc = 0;
+  SessionMessage *cmd_ptr = (SessionMessage *)data_ptr;
 
-	if (unlikely(IS_EMPTY(mqm_ptr->session))) {
+	if (unlikely(IS_EMPTY(cmd_ptr))) {
     syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: ERROR: COULD NOT FIND SESSIONMESSAGE IN UNPACKED MESAGEQUEUE", __func__, pthread_self());
 
     rc = -3;
