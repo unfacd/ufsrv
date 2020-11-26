@@ -25,8 +25,9 @@
 #define __INCLUDE_RESPONSE_H
 
 #include <http_request_handler.h>
-#include <dictionary.h>
-#include <session.h>
+#include <http_rest/dictionary.h>
+#include <recycler/instance_type.h>
+#include <session_type.h>
 
 /**
  * @short This is a list of standard response codes.
@@ -105,7 +106,7 @@ onion_response *onion_response_new(onion_request *req);
 onion_response *onion_response_initialise(Session *sesn_ptr);
 
 /// Frees the memory consumed by this object. Returns keep_alive status.
-int onion_response_free(Session *, onion_response *res);
+int onion_response_free(InstanceHolderForSession *, onion_response *res);
 
 //AA+ memory management
 void onion_response_destruct(Session *sesn_ptr);
@@ -124,19 +125,22 @@ void onion_response_add_cookie(onion_response *req, const char *cookiename, cons
 
 /// @{ @name Write functions 
 /// Writes all the header to the given fd
-int onion_response_write_headers(Session *, onion_response *res);
+int onion_response_write_headers(InstanceHolderForSession *, onion_response *res);
 /// Writes some data to the response
-ssize_t onion_response_write(Session *, onion_response *res, const char *data, size_t length);
+ssize_t onion_response_write(InstanceHolderForSession *, onion_response *res, const char *data, size_t length);
 /// Writes some data to the response. \0 ended string
-ssize_t onion_response_write0(Session *, onion_response *res, const char *data);
+ssize_t onion_response_write0(InstanceHolderForSession *, onion_response *res, const char *data);
 /// Writes some data to the response. \0 ended string, and encodes it if necesary into html entities to make it safe
-ssize_t onion_response_write_html_safe(Session *, onion_response *res, const char *data);
+ssize_t onion_response_write_html_safe(InstanceHolderForSession *, onion_response *res, const char *data);
 /// Writes some data to the response. Using sprintf format strings.
-ssize_t onion_response_printf(Session *, onion_response *res, const char *fmt, ...)  __attribute__ ((format (printf, 3, 4)));//2,3
+ssize_t onion_response_printf(InstanceHolderForSession *, onion_response *res, const char *fmt, ...)  __attribute__ ((format (printf, 3, 4)));//2,3
 /// Writes some data to the response. Using sprintf format strings. va_list version
-ssize_t onion_response_vprintf(Session *, onion_response *res, const char *fmt, va_list args) __attribute__ ((format (printf, 3, 0)));//2,0
+ssize_t onion_response_vprintf(InstanceHolderForSession *, onion_response *res, const char *fmt, va_list args) __attribute__ ((format (printf, 3, 0)));//2,0
 /// Flushes remaining data on the buffer to the listen point.
-int onion_response_flush(Session *, onion_response *res);
+int onion_response_flush(InstanceHolderForSession *, onion_response *res);
+
+onion_connection_status onion_shortcut_response_extra_headers(InstanceHolderForSession *instance_sesn_ptr, const char *response, int code, onion_request *req, onion_response *res, ...);
+onion_connection_status onion_shortcut_redirect(InstanceHolderForSession *instance_sesn_ptr, const char *newurl);
 /// @}
 
 #endif

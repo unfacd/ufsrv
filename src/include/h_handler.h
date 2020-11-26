@@ -24,11 +24,12 @@
 #ifndef __INCLUDE_HANDLER_H
 #define __INCLUDE_HANDLER_H
 
-#include <session.h>
+#include <session_type.h>
 #include <http_request_handler.h>
+#include <recycler/instance_type.h>
 
 /// checks that handler to handle the request
-onion_connection_status onion_handler_handle(Session *, onion_handler *handler, onion_request *request, onion_response *response);
+onion_connection_status onion_handler_handle(InstanceHolderForSession *, onion_handler *handler, onion_request *request, onion_response *response);
 
 /// Creates an onion handler with that private datas.
 onion_handler *onion_handler_new(onion_handler_handler handler, void *privdata, onion_handler_private_data_free priv_data_free);
@@ -42,7 +43,7 @@ void onion_handler_add(onion_handler *base, onion_handler *new_handler);
 /// Returns the private data part of the handler. Useful at handlers, to customize the private data externally.
 void *onion_handler_get_private_data(onion_handler *handler);
 
-int onion_default_error(Session *, void *handler, onion_request *req, onion_response *res);
+int onion_default_error(InstanceHolderForSession *, void *handler, onion_request *req, onion_response *res);
 onion_url *onion_root_url(void);
 
 #endif

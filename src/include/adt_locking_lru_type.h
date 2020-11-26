@@ -10,7 +10,7 @@
 
 
 #include <hashtable.h>
-#include <adt_doubly_linkedlist.h>
+#include <uflib/adt/adt_doubly_linkedlist.h>
 
 #ifdef CONFIG_USE_ANDERSON_SPINLOCK
 #include <cdt_anderson_spinlock.h>

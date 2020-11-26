@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2020 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,14 +20,18 @@
 ** MODULEID("$Id: sredird.h,v 1.1 1999/09/01 00:42:00 ayman Exp $")
 **
 */
+
 #ifndef NPORTREDIRD_H
 # define NPORTREDIRD_H
 
 #include <sys/time.h>
+#include <standard_net_includes.h>
 #include <main_types.h>
-#include <instance_type.h>
-#include <list.h> 
-#include <ufsrvmsgqueue_type.h>
+#include <recycler/instance_type.h>
+#include <ufsrvresult_type.h>
+#include <uflib/adt/adt_linkedlist.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue_type.h>
+#include <ufsrv_instance_descriptor_type.h>
 #include <utils_curve.h>
 
 #include <http_request_handler.h>
@@ -36,15 +40,16 @@
 #include <session.h>
 
 #include <pthread.h>
-#include <db_sql.h>
+#include <uflib/db/db_sql.h>
 
 #include <server_geogroups_enum.h>
-#include <ufsrvmsgqueue_type.h>
+
 #include <lauxlib.h>
 #include <lua.h>
 #include <lualib.h>
+#include <zkgroup.h>
 
- enum {
+enum {
   LOG_MODE_SYSLOG, LOG_MODE_OWN
  }; /*struct msredird.log_mode*/
 
@@ -77,13 +82,16 @@ typedef enum ServerRunMode {
 #define MASTER_CONF_SERVER_PUBLICKEY_SERIALISED masterptr->ufsrv_crypto.public_key_server_serialised
 #define MASTER_CONF_SERVER_KEYID masterptr->ufsrv_crypto.server_keyid
 
+#define MASTER_CONF_SERVER_PRIVATE_PARAMS masterptr->ufsrv_crypto.private_server_params
+#define MASTER_CONF_SERVER_PUBLIC_PARAMS masterptr->ufsrv_crypto.public_server_params
+
 //server_class_<geogroup>
 #define REDIS_CMD_CONFIG_UFSRV_REQID_INC			"HINCRBY _CONFIG_UFSRV_%s_%d reqid 1"
 #define REDIS_CMD_CONFIG_UFSRV_REQID_GET			"HMGET _CONFIG_UFSRV_%s_%d reqid"
 #define REDIS_CMD_CONFIG_UFSRV_GROUPSZ_GET		"HMGET _CONFIG_UFSRV_%s_%d group_sz"
  //<server class> <%server geo group> <server id>
 #define REDIS_CMD_CONFIG_UFSRV_MEMBER_ADD			"SADD _CONFIG_UFSRV_MEMBERS_%s_%d %d"
-#define REDIS_CMD_CONFIG_UFSRV_MEMBER_GETALL	"SMEMBERS _CONFIG_UFSRV_MEMBERS_%s_%d"
+#define REDIS_CMD_CONFIG_UFSRV_MEMBER_GETALL	"SMEMBERS _CONFIG_UFSRV_MEMBERS_%s_%d" //<%class>_<%geogroup> : 'ufsrv_3'
 #define REDIS_CMD_CONFIG_UFSRV_MEMBER_REM			"SREM _CONFIG_UFSRV_MEMBERS_%s:%d %d"
 #define REDIS_CMD_CONFIG_UFSRV_MEMBERS_SZ			"SCARD _CONFIG_UFSRV_MEMBERS_%s:%d"
 
@@ -91,7 +99,7 @@ typedef enum ServerRunMode {
  //<server class> <%server geo group> <server id> <last active time>
 #define REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTR_LAST_SET			"HMSET _CONFIG_UFSRV_MEMBER_%s_%d_%d last %lu"
 #define REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTR_LAST_GET			"HMGET _CONFIG_UFSRV_MEMBER_%s_%d_%d last"
-#define REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTRS_GETALL			"HGETALL _CONFIG_UFSRV_MEMBERS_%s_%d_%d"
+#define REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTRS_GETALL			"HGETALL _CONFIG_UFSRV_MEMBER_%s_%d_%d"
 #define REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTRS_IDENTIFIERS_SET		"HMSET _CONFIG_UFSRV_MEMBER_%s_%d_%d pid %i ip %s started %lu serverid %i last %lu"
 
  typedef struct ufsrv {
@@ -157,6 +165,10 @@ typedef enum ServerRunMode {
 				ec_private_key 	private_key_server;
 				ec_public_key		public_key_server;
 				ec_public_key		public_key_server_serialised;
+				//credentials issuance
+				uint8_t  private_server_params[SERVER_SECRET_PARAMS_LEN];
+        uint8_t  public_server_params[SERVER_PUBLIC_PARAMS_LEN];
+
 			}	ufsrv_crypto;
 
 			int pipefds[2]; //pipe between main thread and WorkDelegatorThread read fd[0], write fd[1]
@@ -168,6 +180,7 @@ typedef enum ServerRunMode {
 			UserMessageCacheBackend *usrmsg_cachebackend;
 			FenceCacheBackend				*fence_cachebackend;
 			InstrumentationBackend 	*instrumentation_backend;
+			UFSRVResult             result;
 			//not in use yet
 			//struct _h_connection 		*db_backend; //db connection for the main thread; non worker or delegator
 
@@ -194,14 +207,14 @@ typedef enum ServerRunMode {
 
  } ufsrv;
 
- typedef struct UfsrvInstanceDescriptor {
-	 int 				serverid;
-	 int 				serverid_by_user;
-	 int				ufsrv_geogroup;
-	 const char 			*server_class;
-	 const char 			*server_descriptive_name;
-	 unsigned long reqid;	//bit of a bolt on, should probably go somewhere else, but it relates to the context of a request served by instance
- } UfsrvInstanceDescriptor;
+// typedef struct UfsrvInstanceDescriptor {
+//	 int 				serverid;
+//	 int 				serverid_by_user;
+//	 int				ufsrv_geogroup;
+//	 const char 			*server_class;
+//	 const char 			*server_descriptive_name;
+//	 unsigned long reqid;	//bit of a bolt on, should probably go somewhere else, but it relates to the context of a request served by instance
+// } UfsrvInstanceDescriptor;
 
 #define _CONF_UFSRV_GEOGROUP(x)	(x)->ufsrv_geogroup
 #define _CONF_READ_BLOCKSZ(x)	x->buffer_size
@@ -238,5 +251,7 @@ CollectionDescriptor *UfsrvConfigGetGeoGroup (Session *sesn_ptr, const char *ser
 size_t UfsrvConfigGetGeogroupSize (Session *sesn_ptr);
 time_t UfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup, int serverid_by_user);
 
+int UfsrvGetServerId();
+
 #endif
-
+

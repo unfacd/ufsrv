@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2020 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -14,6 +14,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 /*
 **
 **
@@ -23,43 +24,21 @@ MODULEID("$Id: main.h,v 1.1 1999/07/26 01:46:59 ayman Exp $")
 #ifndef MAIN_H
 # define MAIN_H
 
+#include <standard_c_includes.h>
+
 #if __VALGRIND_DRD
-#include <valgrind/valgrind.h>
-# 	include <valgrind/drd.h>
-# 	include <valgrind_drd_inlines.h>
+# include <valgrind/valgrind.h>
+# include <valgrind/drd.h>
+# include <valgrind_drd_inlines.h>
 #	include <valgrind/memcheck.h>
 #endif
 
-#include <limits.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/socket.h>
-#include <fcntl.h>
-#include <ctype.h>
-#include <time.h>
-#include <errno.h>
-#include <string.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdatomic.h>
-#include <stdio.h>
-#include <stdbool.h>
-#include <syslog.h>
-#include <pthread.h>
-
 #include <systemd/sd-daemon.h>
 
-#include <openssl/err.h>
-#include <openssl/ssl.h>
+#include <standard_net_includes.h>
 
-#include <strings.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <resolv.h>      /* base64 encode/decode */
-#include <openssl/md5.h> /* md5 hash */
-#include <openssl/sha.h>
+#include <standard_ssl_includes.h>
+
 #include <curl/curl.h>
 
 #include <log_message_literals.h>
@@ -109,9 +88,6 @@ MODULEID("$Id: main.h,v 1.1 1999/07/26 01:46:59 ayman Exp $")
 
 #define MAXREDIRID  (MAXHOSTLEN+10)
 
-//#define MINIBUF     50
-
-
 #define NOTCONNECTED 1
 #define CONNECTED    2
 #define TRYING       4
@@ -128,4 +104,3 @@ MODULEID("$Id: main.h,v 1.1 1999/07/26 01:46:59 ayman Exp $")
  void Help (void);
 
 #endif
-

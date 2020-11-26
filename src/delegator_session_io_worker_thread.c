@@ -23,17 +23,17 @@
 #include <sys/epoll.h>
 #include <sys/prctl.h>//for naming thread
 #include <sockets.h>
-#include <scheduled_jobs.h>
-#include <adt_minheap.h>
+#include <uflib/scheduled_jobs/scheduled_jobs.h>
+#include <uflib/adt/adt_minheap.h>
 #include <misc.h>
 #include <redirection.h>
 #include <nportredird.h>
-#include <protocol.h>
-#include <protocol_websocket.h>
-#include <protocol_websocket_routines.h>
-#include <instrumentation_backend.h>
+#include <ufsrv_core/protocol/protocol.h>
+#include <ufsrvwebsock/include/protocol_websocket.h>
+#include <ufsrvwebsock/include/protocol_websocket_routines.h>
+#include <ufsrv_core/instrumentation/instrumentation_backend.h>
 #include <delegator_session_worker_thread.h>
-#include <ufsrvmsgqueue.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue.h>
 
 static void *ThreadWorkerDelegator (void *);
 static void SpawnIOSessionWorkers (SessionsDelegator *);
@@ -352,14 +352,14 @@ SpawnIOSessionWorkers (SessionsDelegator *sd_ptr)
 			if ((instance_sesn_ptr_ipc = InitDelegatorWorkerInterConnectionPipe())) {
 #if __VALGRIND_DRD
 				VALGRIND_MEMPOOL_ALLOC(sd_ptr->sessions_work_queues, allocation_tracker, sizeof(LocklessSpscQueue));
-				VALGRIND_MEMPOOL_ALLOC(sd_ptr->sessions_work_queues, allocation_tracker+sizeof(LocklessSpscQueue), (sizeof(LocklessSpscQueue)+(sizeof(QueueClientData *)*CONFIG_LOCKLESS_SESSION_WORKER_QUEUE_SIZE)));
+				VALGRIND_MEMPOOL_ALLOC(sd_ptr->sessions_work_queues, allocation_tracker + sizeof(LocklessSpscQueue), (sizeof(LocklessSpscQueue) + (sizeof(QueueClientData *) * CONFIG_LOCKLESS_SESSION_WORKER_QUEUE_SIZE)));
 
-				VALGRIND_MEMPOOL_ALLOC(thread_contexts, thread_contexts+(i*sizeof(WorkerThreadCreationContext)), sizeof(WorkerThreadCreationContext));
+				VALGRIND_MEMPOOL_ALLOC(thread_contexts, thread_contexts + (i * sizeof(WorkerThreadCreationContext)), sizeof(WorkerThreadCreationContext));
 
 				VALGRIND_MEMPOOL_ALLOC(sd_ptr->session_worker_ths, &(sd_ptr->session_worker_ths[i]), sizeof(pthread_t));
 #endif
 				LocklessSpscQueue *lockless_queue = allocation_tracker;
-				QueueClientData 	**queue_storage = allocation_tracker+sizeof(LocklessSpscQueue);
+				QueueClientData 	**queue_storage = allocation_tracker + sizeof(LocklessSpscQueue);
 				LamportQueueInit(lockless_queue, queue_storage, CONFIG_LOCKLESS_SESSION_WORKER_QUEUE_SIZE);
 
 				(sd_ptr->worker_delegator_ipc[i]) = instance_sesn_ptr_ipc;
@@ -1000,10 +1000,10 @@ ThreadWorkerDelegator (void *ptr)
   QueueClientData 	*client_data_ptr;
   LocklessSpscQueue *session_workers_queues_idx[sd_ptr->setsize];
 
-  _AssignSessionWorkersQueues (sd_ptr->sessions_work_queues, session_workers_queues_idx, sd_ptr->setsize);
+  _AssignSessionWorkersQueues(sd_ptr->sessions_work_queues, session_workers_queues_idx, sd_ptr->setsize);
 
-  AddPipeConnectionToMonitoredEvents (sd_ptr);
-  AddAllWorkerDelegatorPipeConnectionsToMonitoredEvents (sd_ptr);
+  AddPipeConnectionToMonitoredEvents(sd_ptr);
+  AddAllWorkerDelegatorPipeConnectionsToMonitoredEvents(sd_ptr);
 
   //new connections queue processing block
   dequeue:
@@ -1029,8 +1029,8 @@ ThreadWorkerDelegator (void *ptr)
 #endif
     } else {
       syslog(LOG_ERR, "%s (pid:'%lu', o:'%p', pid:'%lu'): ERROR: COULD NOT ADD new event... DROPPING PACKET and SUSPENDING into RECYCLER...", __func__, pthread_self(), sesn_ptr_new, SESSION_ID(sesn_ptr_new));
-      close (sesn_ptr_new->ssptr->sock);
-      SessionReturnToRecycler (instance_sesn_ptr_new, NULL, CALL_FLAG_HASH_SESSION_LOCALLY);
+      close(sesn_ptr_new->ssptr->sock);
+      SessionReturnToRecycler(instance_sesn_ptr_new, NULL, CALL_FLAG_HASH_SESSION_LOCALLY);
     }
   }
 

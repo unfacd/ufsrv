@@ -18,6 +18,6 @@
 #include <version.h>
 #include <main_types.h>
 
-char *t_compiled="Sat Jul 20 2019 at 23:05:57 AEST";
+char *t_compiled="Fri Oct 23 2020 at 22:55:41 AEDT";
 char *u_compiled="devops@DESKTOP-NV7F7PK";
 char *ufsrv_version=STRINGISE(UFSRV_MAJOR)"."STRINGISE(UFSRV_MINOR)"."STRINGISE(UFSRV_PATCH);

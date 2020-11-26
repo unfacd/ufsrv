@@ -20,19 +20,19 @@
 #endif
 
 #include <main.h>
-#include <fence_state.h>
-#include <user_preferences.h>
-#include <location.h>
+#include <ufsrv_core/fence/fence_state.h>
+#include <ufsrv_core/user/user_preferences.h>
+#include <ufsrv_core/location/location.h>
 #include <share_list.h>
-#include <persistance.h>
+#include <ufsrv_core/cache_backend/persistance.h>
 #include <nportredird.h>
-#include <protocol_websocket_session.h>
+#include <ufsrvwebsock/include/protocol_websocket_session.h>
 #include <protocol_http.h>
-#include <ufsrvcmd_broadcast.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
 #include <user_broadcast.h>
 #include <command_controllers.h>
 #include <ufsrvuid.h>
-#include <users_proto.h>
+#include <ufsrv_core/user/users_protobuf.h>
 
 extern ufsrv 							*const masterptr;
 extern SessionsDelegator 	*const sessions_delegator_ptr;
@@ -173,7 +173,7 @@ _PrepareInterBroadcastMessageForUser(BroadcastMessageEnvelopeForUser *envelope_p
  * 	@worker: ufsrv
  */
 int
-HandleInterBroadcastForUser (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleInterBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int 										rescode					=	0;
 
@@ -428,13 +428,11 @@ _HandleInterBroadcastShareListProfile (ClientContextData *context_ptr, MessageQu
 	UserPreference 						*user_command_prefs =	user_command_ptr->prefs[0];
 
 	if (user_command_prefs->vaues_blob.len != CONFIG_USER_PROFILEKEY_MAX_SIZE || IS_EMPTY(user_command_prefs->vaues_blob.data)) {
-			_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM);
+			_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USERCMD_MISSING_PARAM)
 		}
 
-		//this is not foolproof as the first byte could be legit '\0': use memcmp instead
-		if (SESSION_USER_PROFILE_KEY(ctx_ptr->sesn_ptr)[0] == '\0')	{
-			redisReply *redis_ptr;
-			memcpy (SESSION_USER_PROFILE_KEY(ctx_ptr->sesn_ptr), user_command_prefs->vaues_blob.data, CONFIG_USER_PROFILEKEY_MAX_SIZE);
+		if (!IsProfileKeyLoaded(ctx_ptr->sesn_ptr))	{
+			memcpy(SESSION_USER_PROFILE_KEY(ctx_ptr->sesn_ptr), user_command_prefs->vaues_blob.data, CONFIG_USER_PROFILEKEY_MAX_SIZE);
 		}
 
 	switch (user_command_ptr->header->args)
@@ -617,7 +615,7 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, ShareListContex
 		if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_ERR)) {
 			_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_CANTLOCK)
 		}
-		lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+		lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 		SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
 		SessionLoadEphemeralMode(sesn_ptr_localuser);
@@ -662,19 +660,21 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, ShareListContex
 /////// INTRA	\\\\\
 
 
-static inline int _VetrifyUserCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked);
+static inline int _VetrifyUserCommandForIntra	(WireProtocolData *);
 
 /**
  * 	@brief: Main controller for handling INTRA broadcasts for UserComands.
  */
 int
-HandleIntraBroadcastForUser (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleIntraBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int 			rc					=	0;
 	long long timer_start	=	GetTimeNowInMicros(),
 						timer_end;
 
-	if ((rc=_VetrifyUserCommandForIntra(mqm_ptr, false))<0)	goto return_final;
+  if (unlikely(mqm_ptr->has_ufsrvuid == 0)) goto return_error_undefined_ufsrvuid;
+
+	if ((rc = _VetrifyUserCommandForIntra(_WIRE_PROTOCOL_DATA(mqm_ptr->wire_data->ufsrvcommand->usercommand))) < 0)	goto return_final;
 
 	unsigned long userid = UfsrvUidGetSequenceId((const UfsrvUid *)(mqm_ptr->ufsrvuid.data));
 
@@ -707,7 +707,7 @@ HandleIntraBroadcastForUser (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessag
 
 	SessionLoadEphemeralMode(sesn_ptr_local_user);
 	//>>>>>>>>><<<<<<<<<<
-	CommandCallbackControllerUserCommand (instance_sesn_ptr_local_user, NULL, mqm_ptr->wire_data, mqp_ptr);
+	CommandCallbackControllerUserCommand (instance_sesn_ptr_local_user, NULL, mqm_ptr->wire_data);
 	//>>>>>>>>><<<<<<<<<<
 
 	SESSION_WHEN_SERVICED(sesn_ptr_local_user) = time(NULL);
@@ -716,6 +716,11 @@ HandleIntraBroadcastForUser (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessag
 
 	return_success:
 	goto return_deallocate_carrier;
+
+  return_error_undefined_ufsrvuid:
+  syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: COULD NOT FIND UFSRVUID", __func__, pthread_self());
+  rc = -7;
+  goto return_deallocate_carrier;
 
 	return_error_unknown_uname:
 	syslog(LOG_DEBUG, "%s {pid:'%lu', userid:'%lu'}: ERROR: COULD NOT RETRIEVE SESSION FOR USER", __func__, pthread_self(), userid);
@@ -736,16 +741,16 @@ HandleIntraBroadcastForUser (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessag
  * 	@brief: Verify the fitness of the UserCommand message in the context of on INTRA broadcast
  */
 inline static int
-_VetrifyUserCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked)
+_VetrifyUserCommandForIntra	(WireProtocolData *data_ptr)
 {
-	int rc=1;
+	int rc = 1;
+  UserCommand *user_cmd_ptr = (UserCommand *)data_ptr;
 
-	if (unlikely(IS_EMPTY((mqm_ptr->wire_data->ufsrvcommand->usercommand))))				goto return_error_usercommand_missing;
-	if (unlikely(IS_EMPTY(mqm_ptr->wire_data->ufsrvcommand->usercommand->header)))	goto return_error_commandheader_missing;
-	if (mqm_ptr->wire_data->ufsrvcommand->usercommand->header->command==USER_COMMAND__COMMAND_TYPES__PREFERENCE)
-	{
-		if (unlikely((mqm_ptr->wire_data->ufsrvcommand->usercommand->n_prefs<1) ||
-								 IS_EMPTY(mqm_ptr->wire_data->ufsrvcommand->usercommand->prefs)))				goto return_error_missing_prefs_definition;
+	if (unlikely(IS_EMPTY((data_ptr))))				goto return_error_usercommand_missing;
+	if (unlikely(IS_EMPTY(user_cmd_ptr->header)))	goto return_error_commandheader_missing;
+	if (user_cmd_ptr->header->command == USER_COMMAND__COMMAND_TYPES__PREFERENCE) {
+		if (unlikely((user_cmd_ptr->n_prefs < 1) ||
+								 IS_EMPTY(user_cmd_ptr->prefs)))				goto return_error_missing_prefs_definition;
 	}
 
 	return_success:
@@ -763,22 +768,20 @@ _VetrifyUserCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpack
 
 	return_error_commandheader_missing:
 	syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: COULD NOT FIND COMMAND HEADER", __func__, pthread_self());
-	rc=-8;
+	rc = -8;
 	goto return_free;
 
 	return_error_usercommand_missing:
 	syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: COULD NOT FIND USER COMMAND IN UNPACKED MESAGEQUEUE", __func__, pthread_self());
-	rc=-4;
+	rc = -4;
 	goto return_free;
 
 	return_error_missing_prefs_definition:
 	syslog(LOG_DEBUG, "%s (pid:'%lu): ERROR: USER COMMAND DID NOT INCLUDE VALID PREFS DEFINITION", __func__, pthread_self());
-	rc=-6;
+	rc = -6;
 	goto	return_free;
 
-	return_free://exit_proto:
-	if (flag_free_unpacked)	message_queue_message__free_unpacked(mqm_ptr, NULL);
-
+	return_free:
 	return_final:
 	return rc;
 

@@ -21,9 +21,6 @@
 	<http://www.gnu.org/licenses/> and
 	<http://www.apache.org/licenses/LICENSE-2.0>.
 	*/
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
 
 #include <main.h>
 #include <regex.h>
@@ -62,74 +59,59 @@ struct onion_url_data_t{
 	struct onion_url_data_t *next;
 };
 
-
 //AA+ enabled
 typedef struct onion_url_data_t onion_url_data; // already at types-internal.h
-
 
 /**
  * @short Performs the real request: checks if its for me, and then calls the inside level.
  * @ingroup url
  */
-int onion_url_handler(Session *sesn_ptr, onion_url_data **dd, onion_request *request, onion_response *response)
+int onion_url_handler(InstanceHolderForSession *instance_sesn_ptr, onion_url_data **dd, onion_request *request, onion_response *response)
 {
-	onion_url_data *next=*dd;
+	onion_url_data *next = *dd;
 	regmatch_t match[16];
 	int i;
-	struct json_object *jobj=NULL;
+	struct json_object *jobj = NULL;
 	const char *content_type;
 
-	const char *path=onion_request_get_path(request);
+	const char *path = onion_request_get_path(request);
 
-	__check_for_json_data:
-	#if 1
+	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
-	content_type=onion_request_get_header(request, "Content-Type");
-	if ((content_type) && (strstr(content_type, "application/json"))) {
-		const onion_block *request_data=onion_request_get_data(request);
+	content_type = onion_request_get_header(request, "Content-Type");
+	if (content_type && strstr(content_type, "application/json")) {
+		const onion_block *request_data = onion_request_get_data(request);
 
 		if (request_data) {
 			enum json_tokener_error jerr;
 			struct json_tokener *jtok;
 
-			#if 1
-
-			const char *json_data=onion_block_data(request_data);
+			const char *json_data = onion_block_data(request_data);
 
 #ifdef __UF_TESTING
 			syslog(LOG_NOTICE, "%s (pid:'%lu' o:'%p' cid:'%lu'): RECEIVED JSON:'%s'.",	__func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), json_data);
 #endif
 
-			jtok=json_tokener_new();
+			jtok = json_tokener_new();
 
 			do {
-				jobj=json_tokener_parse_ex(jtok, json_data, request_data->size);
-			} while ((jerr=json_tokener_get_error(jtok))==json_tokener_continue);
+				jobj = json_tokener_parse_ex(jtok, json_data, request_data->size);
+			} while ((jerr = json_tokener_get_error(jtok)) == json_tokener_continue);
 
-			if (jerr!=json_tokener_success) {
-				syslog(LOG_NOTICE, "%s (pid:'%lu' o:'%p' cid:'%lu'): JSON tokeniser Error: '%s'...",
-					__func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), json_tokener_error_desc(jerr));
+			if (jerr != json_tokener_success) {
+				syslog(LOG_NOTICE, "%s (pid:'%lu' o:'%p' cid:'%lu'): JSON tokeniser Error: '%s'...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), json_tokener_error_desc(jerr));
 
-				jobj=NULL;
+				jobj = NULL;
 			}
 
 			json_tokener_free(jtok);
-
-			#endif
-
-		}//if
-
-		if (jobj) {
-			HttpSession *http_ptr;
-			http_ptr=(HttpSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
-
-			HTTPSESN_JSONDATA(http_ptr)=jobj;
 		}
 
+		if (jobj) {
+      HttpSession *http_ptr = (HttpSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
+			HTTPSESN_JSONDATA(http_ptr) = jobj;
+		}
 	}
-
-	#endif
-	//end check_for_json
 
 	while (next)	{
 		///syslog(LOG_DEBUG, "%s: Check path: %s ", __func__, next->str);//, next->orig);
@@ -141,14 +123,14 @@ int onion_url_handler(Session *sesn_ptr, onion_url_data **dd, onion_request *req
 				onion_request_advance_path(request, strlen(next->str));
 
 				/////////<<<<<>>>>>
-				return onion_handler_handle(sesn_ptr, next->inside, request, response);
+				return onion_handler_handle(instance_sesn_ptr, next->inside, request, response);
 			}
 		}
-		else if (regexec(&next->regexp, onion_request_get_path(request), 16, match, 0)==0){
+		else if (regexec(&next->regexp, onion_request_get_path(request), 16, match, 0) == 0) {
 			//ONION_DEBUG("Ok,match");
-			onion_dict *reqheader=request->GET;
-			for (i=1;i<16;i++){
-				regmatch_t *rm=&match[i];
+			onion_dict *reqheader = request->GET;
+			for (i=1; i<16; i++){
+				regmatch_t *rm = &match[i];
 				if (rm->rm_so!=-1){
 					char *tmp=malloc(rm->rm_eo-rm->rm_so+1);
 					memcpy(tmp, &path[rm->rm_so], rm->rm_eo-rm->rm_so);
@@ -165,11 +147,12 @@ int onion_url_handler(Session *sesn_ptr, onion_url_data **dd, onion_request *req
 			//syslog(LOG_DEBUG, "Ok, regexp match.");
 
 			//<><><><><>...
-			return onion_handler_handle(sesn_ptr, next->inside, request, response);
+			return onion_handler_handle(instance_sesn_ptr, next->inside, request, response);
 		}
 
-		next=next->next;
+		next = next->next;
 	}
+
 	return 0;
 }
 
@@ -238,7 +221,7 @@ void onion_url_free_data(onion_url_data **d){
  * how to create proper regular expressions. They are compiled as REG_EXTENDED.
  */
 onion_url *onion_url_new(){
-	onion_url_data **priv_data=calloc(1,sizeof(onion_url_data*));
+	onion_url_data **priv_data = calloc(1,sizeof(onion_url_data*));
 	*priv_data=NULL;
 
 	onion_handler *ret=onion_handler_new((onion_handler_handler)onion_url_handler,
@@ -253,8 +236,6 @@ onion_url *onion_url_new(){
 void onion_url_free(onion_url* url){
 	onion_handler_free((onion_handler*)url);
 }
-
-
 
 /**
  * @short Adds a new handler with the given regexp.
@@ -339,12 +320,12 @@ struct onion_url_static_data{
 
 
 /// Handles the write of static data
-static int onion_url_static(Session *sesn_ptr, struct onion_url_static_data *data, onion_request *req, onion_response *res){
+static int onion_url_static(InstanceHolderForSession *instance_sesn_ptr, struct onion_url_static_data *data, onion_request *req, onion_response *res){
 	onion_response_set_code(res, data->code);
 	onion_response_set_length(res, strlen(data->text));
 
 	//TODO: convert write
-	onion_response_write0(sesn_ptr, res, data->text);
+	onion_response_write0(instance_sesn_ptr, res, data->text);
 
 	return OCS_PROCESSED;
 }

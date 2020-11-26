@@ -1,9 +1,4 @@
-/*
- * message.h
- *
- *  Created on: 21 Mar 2015
- *      Author: ayman
- */
+
 
 
 #ifndef INCLUDE_MESSAGE_TYPE_H_

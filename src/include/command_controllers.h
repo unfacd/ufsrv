@@ -18,36 +18,46 @@
 #ifndef SRC_INCLUDE_COMMAND_CONTROLLERS_H_
 #define SRC_INCLUDE_COMMAND_CONTROLLERS_H_
 
+#include <command_base_context_type.h>
 #include <ufsrvresult_type.h>
-#include <fence_type.h>
-#include <fence_state_descriptor_type.h>
+#include <ufsrv_core/fence/fence_type.h>
+#include <ufsrv_core/fence/fence_state_descriptor_type.h>
 #include <session_type.h>
-#include <SignalService.pb-c.h>
-#include <WebSocketMessage.pb-c.h>
+#include <incoming_message_descriptor_type.h>
 
-typedef UFSRVResult * (*CallbackCommandMarshaller)(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *event_ptr);
-#define INVOKE_COMMAND_MARSHALLER(command_marshaller, sesn_ptr, ctx_ptr, data_msg_ptr_received, event_ptr) return (*command_marshaller)(sesn_ptr, CLIENT_CTX_DATA(&share_list_ctx), data_msg_ptr_received,  event_ptr)
+//DO NOT INCLUDE ANY OF xxx_command_controller.h files here
 
-UFSRVResult *CommandCallbackControllerFenceCommand (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, MessageQueueMsgPayload *mqp_ptr);
-UFSRVResult *CommandCallbackControllerCallCommand (Session *sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, MessageQueueMsgPayload *mqp_ptr);
-UFSRVResult *CommandCallbackControllerUserCommand (InstanceHolderForSession *instance_sesn_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, MessageQueueMsgPayload *mqp_ptr);
-UFSRVResult *CommandCallbackControllerMessageCommand (Session *sesn_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, MessageQueueMsgPayload *mqp_ptr);
-UFSRVResult *CommandCallbackControllerReceiptCommand (Session *sesn_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, MessageQueueMsgPayload *mqp_ptr);
+#include <ufsrv_core/SignalService.pb-c.h>
+#include <ufsrvwebsock/include/WebSocketMessage.pb-c.h>
 
-UFSRVResult *MarshalFenceJoinToUser (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
-UFSRVResult *MarshalFenceJoinInvitedToUser (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
-UFSRVResult *MarshalFenceStateSync (Session *sesn_ptr, FenceStateDescriptor *fstate_ptr, DataMessage *data_msg_ptr, unsigned long call_flags);
-UFSRVResult *MarshalGeoFenceJoinToUser (Session *sesn_ptr, Session *sesn_ptr_target, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr, unsigned call_flags);
-UFSRVResult *MarshalFenceStateSyncForLeave (Session *sesn_ptr, Session *sesn_ptr_newly_left, Fence *f_ptr, DataMessage *data_msg_ptr, unsigned call_flags);
-UFSRVResult *MarshalFenceStateSyncForJoin (Session *sesn_ptr, Session *sesn_ptr_newly_joined, Fence *f_ptr, unsigned call_flags);
-UFSRVResult *MarshalFenceInvitation (Session *sesn_ptr, Fence *f_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, CollectionDescriptor *unchanged_collection_ptr, unsigned call_flags);
-UFSRVResult *MarshalFenceUnInvitedToUser (Session *sesn_ptr, Session *sesn_ptr_uninvited, Fence *f_ptr, FenceEvent *fence_event_ptr, unsigned call_flags);
-UFSRVResult *MarshalUserPrefProfile(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *event_ptr);
-UFSRVResult *MarshalUserPrefProfileForFence  (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *event_ptr);
-UFSRVResult *MarshalUserPrefNetstate(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, UfsrvEvent *fence_event_ptr);
-UFSRVResult *MarshalUserPrefGroupRoaming(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, unsigned long call_flags, UfsrvEvent *fence_event_ptr);
 
-UFSRVResult *MarshalFenceUserPrefProfileSharing(Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *fence_event_ptr);
-UFSRVResult *MarshalUserPref (Session *sesn_ptr, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, UfsrvEvent *event_ptr);
+//todo: this style is to be phased out in favour of one defined below
+typedef UFSRVResult * (*CallbackCommandMarshaller)(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr);
+#define _INVOKE_COMMAND_MARSHALLER(command_marshaller, ctx_ptr, ctx_data_ptr, data_msg_ptr_received,  wsm_ptr_received, event_ptr) return (*command_marshaller)(ctx_ptr, CLIENT_CTX_DATA((ctx_data_ptr)), data_msg_ptr_received, wsm_ptr_received, event_ptr)
+
+typedef UFSRVResult * (*CommandMarshallerCallback)(CommandBaseContext *);
+#define INVOKE_COMMAND_MARSHALLER(command_marshaller, command_context) (*command_marshaller)((command_context))
+
+UFSRVResult *CommandCallbackControllerFenceCommand (InstanceHolderForSession *instance_sesn_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+UFSRVResult *CommandCallbackControllerCallCommand (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+UFSRVResult *CommandCallbackControllerUserCommand (InstanceHolderForSession *instance_sesn_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+
+UFSRVResult *CommandCallbackControllerReceiptCommand (InstanceContextForSession *ctx_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+
+UFSRVResult *MarshalFenceJoinToUser (InstanceContextForSession *, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+UFSRVResult *MarshalFenceJoinInvitedToUser (InstanceContextForSession *, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+UFSRVResult *MarshalFenceStateSync (InstanceContextForSession *ctx_ptr, FenceStateDescriptor *fstate_ptr, WebSocketMessage *, DataMessage *data_msg_ptr, unsigned long call_flags);
+UFSRVResult *MarshalGeoFenceJoinToUser (InstanceContextForSession *, InstanceContextForSession *, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr, unsigned call_flags);
+UFSRVResult *MarshalFenceStateSyncForLeave (InstanceContextForSession *, InstanceContextForSession *ctx_ptr_newly_left, InstanceContextForFence *, DataMessage *data_msg_ptr, unsigned call_flags);
+UFSRVResult *MarshalFenceStateSyncForJoin (InstanceContextForSession *, Session *sesn_ptr_newly_joined, InstanceHolderForFence *, unsigned call_flags);
+UFSRVResult *MarshalFenceInvitation (InstanceContextForSession *, InstanceHolderForFence *, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, CollectionDescriptor *invited_eids_collection_ptr, CollectionDescriptor *unchanged_collection_ptr, unsigned call_flags);
+UFSRVResult *MarshalFenceUnInvitedToUser (InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_uninvited, Fence *f_ptr, FenceEvent *fence_event_ptr, unsigned call_flags);
+UFSRVResult *MarshalUserPrefProfile(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *, DataMessage *data_msg_ptr_received, UfsrvEvent *event_ptr);
+UFSRVResult *MarshalUserPrefProfileForFence  (InstanceContextForSession *, ClientContextData *ctx_ptr, WebSocketMessage *, DataMessage *data_msg_ptr_received, UfsrvEvent *event_ptr);
+UFSRVResult *MarshalUserPrefNetstate(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, WebSocketMessage *, DataMessage *data_msg_ptr_received, unsigned long call_flags, UfsrvEvent *fence_event_ptr);
+UFSRVResult *MarshalUserPrefGroupRoaming(InstanceContextForSession *, ClientContextData *ctx_ptr, WebSocketMessage *, DataMessage *data_msg_ptr_received, unsigned long call_flags, UfsrvEvent *fence_event_ptr);
+
+UFSRVResult *MarshalFenceUserPrefProfileSharing(InstanceContextForSession *, ClientContextData *ctx_ptr, DataMessage *data_msg_ptr_recieved, WebSocketMessage *, UfsrvEvent *fence_event_ptr);
+UFSRVResult *MarshalUserPref (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_recieved, WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr);
 
 #endif /* SRC_INCLUDE_COMMAND_CONTROLLERS_H_ */

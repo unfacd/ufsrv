@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2020 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,9 +18,8 @@
 #ifndef SRC_INCLUDE_ADT_LOCKING_LRU_H_
 #define SRC_INCLUDE_ADT_LOCKING_LRU_H_
 
-
 #include <hashtable.h>
-#include <instance_type.h>
+#include <recycler/instance_type.h>
 #include <adt_locking_lru_type.h>
 
 typedef void (*hashtable_init_callback)(HashTable *, size_t, unsigned long);

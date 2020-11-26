@@ -13,12 +13,11 @@ MODULEID("$Id: utils.h,v 1.1 1999/07/26 01:46:59 ayman Exp $")
 # include <config.h>
 #endif
 
-#include <stdarg.h>
+#include <standard_c_includes.h>
+#include <utils_b64.h>
+#include <utils_time.h>
+#include <utils_file.h>
 #include <sys/time.h>
-
-#define FILE_EXISTS 1
-#define FILE_READ   2
-#define FILE_EXEC   4
 
 enum AccountRegoStatus {
 	REGOSTATUS_UNKNOWN		=	0,
@@ -45,38 +44,38 @@ typedef struct UserCredentials {
 
 typedef struct VerificationCode {
 	unsigned long code;
-	char code_formatted[CONFIG_MAX_VERIFICATION_CODE_FORMATTED_SZ+1]; //extra for '\0'
+	char code_formatted[CONFIG_MAX_VERIFICATION_CODE_FORMATTED_SZ + 1]; //extra for '\0'
 } VerificationCode;
 
-typedef struct FileInfo
-{
-    size_t size;
-    time_t last_modification;
-
-    /* Suggest flags to open this file */
-    int flags_read_only;
-
-    bool exists;
-    bool is_file;
-    bool is_link;
-    bool is_directory;
-    bool exec_access;
-    bool read_access;
-} FileInfo;
-
- typedef struct LogFile {
-          FILE *file;
-          char *fname;
-         } LogFile;
-
- struct OpenFile {
-  const char *filename;
-  char *conts; /* contents of the file */
-  FILE *fp;
-  size_t size;
-  unsigned stat; /* errno information */
- };
- typedef struct OpenFile OpenFile;
+//typedef struct FileInfo
+//{
+//    size_t size;
+//    time_t last_modification;
+//
+//    /* Suggest flags to open this file */
+//    int flags_read_only;
+//
+//    bool exists;
+//    bool is_file;
+//    bool is_link;
+//    bool is_directory;
+//    bool exec_access;
+//    bool read_access;
+//} FileInfo;
+//
+// typedef struct LogFile {
+//          FILE *file;
+//          char *fname;
+//         } LogFile;
+//
+// struct OpenFile {
+//  const char *filename;
+//  char *conts; /* contents of the file */
+//  FILE *fp;
+//  size_t size;
+//  unsigned stat; /* errno information */
+// };
+// typedef struct OpenFile OpenFile;
 
  #define splitw(x) tokenize((x), ' ')
 
@@ -119,39 +118,22 @@ bool IsEmailAddressValid(const char *EM_Addr);
  //http://locklessinc.com/articles/next_pow2/
 __attribute__((noinline)) unsigned next_pow2(unsigned x);
 char * mdsprintf(const char * message, ...) __attribute__ ((format (printf, 1, 2)));
-void GetTimeNow (long *, long *);
-long long GetTimeNowInMillis (void);
-long long GetTimeNowInMicros (void);
-void AddMillisecondsToNow (long long, long *, long *);
+
  void *mymalloc(size_t);
- char * mystrdup(const char *);
+
  unsigned char *mystrndup(const unsigned char *, size_t);
  char *io_error (int);
 
  char *tokenize (char **, const char);
 
- #define GET_N_BITS_FROM_REAR(k,n) ((k) & ((1UL<<(n))-1))
- //cut out from m(inclusive)->n(exclusive) starting from LSB, starting (0, 1 ..63)
- #define GET_BITS_IN_BETWEEN(k,m,n) GET_N_BITS_FROM_REAR((k)>>(m),((n)-(m)))
-
  static inline double
- GetRandomFromRangeInDoubles (double x0, double x1)
- {
+ GetRandomFromRangeInDoubles (double x0, double x1) {
 	 return x0 + (x1 - x0) * rand() / ((double) RAND_MAX);
  }
-
- size_t  GetBase64BufferAllocationSize (size_t str_sz);
- unsigned char *base64_encode(const unsigned char *, int, unsigned char *str_in);
- unsigned char *base64_decode(const unsigned char *, int, int *);
- void	set_bit (unsigned char *buffer, int position);
- int	get_bit (char byte, int position);
- void	set_32bit (int value, unsigned char *buffer);
- int get_16bit (const unsigned char *buffer);
 
 bool IsPrimeNumber (size_t x);
  size_t GetNextPrimeNumber (size_t x);
 
- void set_time(struct timeval *);
  void SeedRandom (struct timeval *);
  int GeneratePasswordHash (UserCredentials *creds_ptr);
  int GenerateVerificationCode (VerificationCode *);
@@ -160,15 +142,9 @@ bool IsPrimeNumber (size_t x);
 
  void DoBusyWait (size_t counter);
 
- size_t mstrlcpy(char *, const char *, size_t);
 
- int MakePidFile(const char *path, pid_t serverpid);
- int RemovePidFile	(const char *path);
- int GetFileInfo (const char *path, FileInfo *f_info, int mode);
- char *LoadFileToMemory (const char *path);
- int FileUtilsRenameFile	(const char *orig, const char *dest);
- int OpenThisFile (OpenFile *);
  void GenerateEtag (struct stat *st, char etag[]);
 
  uint64_t inthash_u64 (uint64_t key, size_t key_len);
+
 #endif

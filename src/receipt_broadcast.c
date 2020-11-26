@@ -21,22 +21,22 @@
 
 #include <main.h>
 #include <thread_context_type.h>
-#include <fence_state.h>
-#include <user_preferences.h>
-#include <users_proto.h>
-#include <location.h>
-#include <persistance.h>
+#include <ufsrv_core/fence/fence_state.h>
+#include <ufsrv_core/user/user_preferences.h>
+#include <ufsrv_core/user/users_protobuf.h>
+#include <ufsrv_core/location/location.h>
+#include <ufsrv_core/cache_backend/persistance.h>
 #include <misc.h>
 #include <net.h>
 #include <nportredird.h>
-#include <protocol_websocket_session.h>
+#include <ufsrvwebsock/include/protocol_websocket_session.h>
 #include <protocol_http.h>
 #include <receipt_broadcast.h>
 #include <sessions_delegator_type.h>
-#include <ufsrvcmd_broadcast.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
 #include <ufsrvuid.h>
 #include <command_controllers.h>
-#include <UfsrvMessageQueue.pb-c.h>
+#include <ufsrv_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
 #include <hiredis.h>
 
 extern ufsrv *const masterptr;
@@ -137,17 +137,17 @@ HandleInterBroadcastForUserMessage (MessageQueueMsgPayload *mqp_ptr, MessageQueu
 
 #if 1
 
-inline static int _VetrifyReceiptCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked);
-
-
 int
-HandleIntraBroadcastForReceipt (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleIntraBroadcastForReceipt (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int				rc					= 0;
 	long long timer_start	=	GetTimeNowInMicros();
 	long long timer_end;
+  ReceiptCommand *cmd_ptr = mqm_ptr->wire_data->ufsrvcommand->receiptcommand;
 
-	if ((rc = _VetrifyReceiptCommandForIntra(mqm_ptr, false))<0)	goto return_final;
+  if (unlikely(mqm_ptr->has_ufsrvuid == 0)) goto return_error_undefined_ufsrvuid;
+
+	if ((rc = VerifyReceiptCommandForIntra(_WIRE_PROTOCOL_DATA(cmd_ptr))) < 0)	goto return_final;
 
   unsigned long userid = UfsrvUidGetSequenceId((const UfsrvUid *)(mqm_ptr->ufsrvuid.data));
 
@@ -174,14 +174,13 @@ HandleIntraBroadcastForReceipt (MessageQueueMsgPayload *mqp_ptr, MessageQueueMes
 	SESSION_WHEN_SERVICE_STARTED(sesn_ptr_local_user) = time(NULL);
 
 #ifdef __UF_TESTING
-	ReceiptCommand 		*recptcmd_ptr	= mqm_ptr->wire_data->ufsrvcommand->receiptcommand;
-	syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fid:'%lu', userid:'%lu'}: FULLY CONSTRUCTED RECEIPT COMMAND.", __func__, pthread_self(), sesn_ptr_local_user, SESSION_ID(sesn_ptr_local_user), recptcmd_ptr->fid, userid);
+	syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fid:'%lu', userid:'%lu'}: FULLY CONSTRUCTED RECEIPT COMMAND.", __func__, pthread_self(), sesn_ptr_local_user, SESSION_ID(sesn_ptr_local_user),  cmd_ptr->fid, userid);
 #endif
 
 	//////////////////////////
 	SessionLoadEphemeralMode(sesn_ptr_local_user);
 
-	CommandCallbackControllerReceiptCommand (sesn_ptr_local_user, NULL, mqm_ptr->wire_data, mqp_ptr);
+	CommandCallbackControllerReceiptCommand(&(InstanceContextForSession){instance_sesn_ptr_local_user, sesn_ptr_local_user}, NULL, mqm_ptr->wire_data);
 
 	SessionUnLoadEphemeralMode(sesn_ptr_local_user);
 	SESSION_WHEN_SERVICED(sesn_ptr_local_user) = time(NULL);
@@ -191,6 +190,11 @@ HandleIntraBroadcastForReceipt (MessageQueueMsgPayload *mqp_ptr, MessageQueueMes
 
 	return_success:
 	goto return_deallocate_carrier;
+
+  return_error_undefined_ufsrvuid:
+  syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: COULD NOT FIND UFSRVUID", __func__, pthread_self());
+  rc = -7;
+  goto return_deallocate_carrier;
 
 	return_error_unknown_uname:
 	syslog(LOG_DEBUG, "%s {pid:'%lu', userid:'%lu'}: ERROR: COULD NOT RETRIEVE SESSION FOR USER", __func__, pthread_self(), userid);
@@ -207,19 +211,19 @@ HandleIntraBroadcastForReceipt (MessageQueueMsgPayload *mqp_ptr, MessageQueueMes
 
 }
 
-
 /**
  * 	@brief: Verify the fitness of the FenceCommand message in the context of on INTRA broadcast
  */
-inline static int
-_VetrifyReceiptCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked)
+int
+VerifyReceiptCommandForIntra	(WireProtocolData *data_ptr)
 {
-	int rc=1;
+	int rc = 1;
+  ReceiptCommand *cmd_ptr = (ReceiptCommand *)data_ptr;
 
-	if (unlikely(IS_EMPTY((mqm_ptr->wire_data->ufsrvcommand->receiptcommand))))				goto return_error_receiptcommand_missing;
-	if (unlikely(IS_EMPTY(mqm_ptr->wire_data->ufsrvcommand->receiptcommand->header)))	goto return_error_commandheader_missing;
-//	if (unlikely(IS_EMPTY(mqm_ptr->wire_data->ufsrvcommand->receiptcommand->fence)))		goto return_error_missing_fence_definition;
-//	if (unlikely(mqm_ptr->wire_data->ufsrvcommand->callcommand->fence->fid<=0))			goto return_error_invalid_fence_definition;
+	if (unlikely(IS_EMPTY((cmd_ptr))))				goto return_error_receiptcommand_missing;
+	if (unlikely(IS_EMPTY(cmd_ptr->header)))	goto return_error_commandheader_missing;
+//	if (unlikely(IS_EMPTY(cmd_ptr->fence)))		goto return_error_missing_fence_definition;
+//	if (unlikely(cmd_ptr->fence->fid<=0))			goto return_error_invalid_fence_definition;
 
 	return_success:
 	goto return_final;
@@ -244,24 +248,7 @@ _VetrifyReceiptCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unp
 	rc=-4;
 	goto return_free;
 
-	return_error_missing_uname:
-	syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: USERNAME MISSING FROM MESSAGE", __func__, pthread_self());
-	rc=-5;
-	goto return_free;
-
-	return_error_missing_fence_definition:
-	syslog(LOG_DEBUG, "%s (pid:'%lu, command:'%d'): ERROR: FENCE COMMAND DID NOT INCLUDE FENCE DEFINITION", __func__, pthread_self(), mqm_ptr->wire_data->ufsrvcommand->callcommand->header->command);
-	rc=-6;
-	goto	return_free;
-
-	return_error_invalid_fence_definition:
-	syslog(LOG_DEBUG, "%s (pid:'%lu, command:'%d', fid:'%lu'): ERROR: FENCE COMMAND DID NOT INCLUDE VALID FENCE DEFINITION", __func__, pthread_self(), mqm_ptr->wire_data->ufsrvcommand->callcommand->header->command, mqm_ptr->wire_data->ufsrvcommand->callcommand->fence->fid);
-	rc=-7;
-	goto	return_free;
-
-	return_free://exit_proto:
-	if (flag_free_unpacked)	message_queue_message__free_unpacked(mqm_ptr, NULL);
-
+	return_free:
 	return_final:
 	return rc;
 

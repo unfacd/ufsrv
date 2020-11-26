@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2020 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,27 +18,16 @@
 #ifndef PROTOCOL_WEBSOCKETS_DATA_H_
 #define PROTOCOL_WEBSOCKETS_DATA_H_
 
-#include <session.h>
-#include <protocol.h>
-#include <nportredird.h>
+#include <session_type.h>
+#include <ufsrv_core/protocol/protocol.h>
+//#include <nportredird.h>
 
-#include <protocol_websocket.h>//function definitions for this protocol
-#include <protocol_http.h>
+#include <ufsrvwebsock/include/protocol_websocket.h>//function definitions for this protocol
+#include <ufsrvrest/include/protocol_http.h>
 #include <proto_stun/include/protocol_stun.h>
 #include <proto_stun/include/worker_stun_thread.h>
 
 //#include <protocol_future.h>
-
-#if 0
- //for reference only to aid in building the static data structure below
-struct Protocol {
-        const char *protocol_name;
-        void(*protocol_thread)(void *);
-        ProtocolCallbacks protocol_callbacks;
-};
-typedef struct Protocol Protocol;
-#endif
-
 
 #define _GET_PROTOCOL_CALLBACKS_WEBSOCKETS \
 	(protocols_registry_ptr+PROTOCOLID_WEBSOCKTES)->protocol_callback
@@ -50,8 +39,7 @@ typedef struct Protocol Protocol;
 //static definition should only be accessed via 'const ProtocolsRegistry *const ptr'
 //declared as 'extern  const  ProtocolsRegistry *const protocols_registry_ptr'
 
-static  Protocol ProtocolsRegistry []={
-
+static  Protocol ProtocolsRegistry [] = {
 {
  "WebSockets", 0, ThreadWebSockets,
  {
@@ -60,7 +48,7 @@ static  Protocol ProtocolsRegistry []={
 	proto_websocket_init_listener,
 	proto_websocket_init_workers_delegator_callback,//init_workers_delegator_callback -> to be phased out
 	proto_websocket_main_listener_callback,
-	NULL,//session init
+  proto_websocket_init_session_callback,
 	proto_websocket_reset_callback,
 	proto_websocket_hanshake_callback,
 	proto_websocket_post_hanshake_callback,
@@ -168,15 +156,4 @@ static  Protocol ProtocolsRegistry []={
 }
 };
 
-//should only be accessed via const  ProtocolCallbacks *const ptr;
-//declared as extern  const  ProtocolCallbacks **const protocol_callbacks;
-/*static const ProtocolCallbacks ProtocolCallbackWebsockets []= {
-	{
-	proto_websockets_hanshake_callback,
-	proto_websockets_write_callback,
-	proto_websockets_read_callback,
-	proto_websockets_close_callback
-	}
-};
-*/
 #endif /* SRC_INCLUDE_PROTOCOL_DATA_WEBSOCKETS_H_ */

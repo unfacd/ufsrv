@@ -19,28 +19,30 @@
 # define FENCE_H
 
 #include <thread_context_type.h>
-#include <instance_type.h>
+#include <recycler/instance_type.h>
+#include <digest_mode_enum.h>
 #include <misc.h>
 #include <utils.h>
-#include <fence_type.h>
-#include <list.h>
+#include <ufsrv_core/fence/fence_type.h>
+#include <uflib/adt/adt_linkedlist.h>
 #include <session_type.h>
-#include <queue.h>
-#include <location_type.h>
-#include <users.h>
+#include <uflib/adt/adt_queue.h>
+#include <ufsrv_core/location/location_type.h>
+#include <ufsrv_core/user/users.h>
 #include <json/json.h>
-#include <protocol_websocket.h>//WireProtocolData
-#include <SignalService.pb-c.h>//proto
+#include <ufsrvwebsock/include/protocol_websocket.h>//WireProtocolData
+#include <ufsrv_core/SignalService.pb-c.h>//proto
 #include <message_type.h>
 #include <ufsrvresult_type.h>
-#include <fence_state_descriptor_type.h>
+#include <ufsrv_core/fence/fence_state_descriptor_type.h>
 #include <sessions_delegator_type.h>
-#include <scheduled_jobs_type.h>
+#include <uflib/scheduled_jobs/scheduled_jobs_type.h>
 
 
 typedef enum EnumFenceNetworkType {
 	FENCE_NETWORK_TYPE_GEO=1,
 	FENCE_NETWORK_TYPE_USER,
+  FENCE_NETWORK_TYPE_GUARDIAN,
 } EnumFenceNetworkType;
 
 typedef enum EnumFenceCollectionType {
@@ -295,7 +297,7 @@ enum {
 
 
 ////ZADD FEVREGO:%bid 						    eid eid:sid:cid:when:oid:tid:%evt:%ev
-#define REDIS_CMD_FENCE_EVENTS "ZADD FEVREGO:%lu %lu %lu:%d:%lu:%lu:%lu:%lu:%d:%s"
+//#define REDIS_CMD_FENCE_EVENTS "ZADD FEVREGO:%lu %lu %lu:%d:%lu:%lu:%lu:%lu:%d:%s"
 
 
 //privacy mode
@@ -311,11 +313,11 @@ enum {
 #define F_ATTR_BASEFENCE				(0x1U<<4U) //also known as GEO
 #define F_ATTR_USERFENCE				(0x1U<<7U)//normal channel style
 
-#define F_ATTR_TIMED						(0x1<<2)
+#define F_ATTR_GUARDIANFENCE		(0x1<<2)
 
 //visibility modes
-#define F_ATTR_VISIBLE					(0x1<<3) //default if not set
-#define F_ATTR_HIDDEN						(0x1<<14)
+#define F_ATTR_VISIBLE					(0x1U<<3U) //default if not set
+#define F_ATTR_HIDDEN						(0x1U<<14U)
 
 #define F_ATTR_SESSNLIST_LAZY		(0x1U<<9U)//A fence has been instantiated from backend without its full session list so it is being being on demand
 #define F_ATTR_DIRTY						(0x1U<<10U)//A fence has been updated by another server instance and has not been reloaded locally
@@ -326,6 +328,8 @@ enum {
 #define F_ATTR_JOINMODE_INVITE_ONLY			(0x1U<<15U)
 #define F_ATTR_JOINMODE_OPEN						(0x1U<<16U)	//default
 #define F_ATTR_JOINMODE_KEY							(0x1U<<17U)
+#define F_ATTR_TIMED						        (0x1U<<18U)
+//19
 
 #define F_ATTR_IS_SET(x, y)		(x&y)
 #define F_ATTR_SET(x,y)				(x|=(y))
@@ -351,15 +355,12 @@ typedef struct FenceContextDescriptor {
 
 }	FenceContextDescriptor;
 
-int FenceEventsLockRD (Fence *f_ptr,int try_flag);
 UFSRVResult *FenceEventsLockRDCtx (ThreadContext *thread_ctx_ptr, Fence *f_ptr, int try_flag, UFSRVResult *res_ptr, const char *);
-int FenceEventsLockRW (Fence *f_ptr, int try_flag);
 UFSRVResult *FenceEventsLockRWCtx (ThreadContext *thread_ctx_ptr, Fence *f_ptr, int try_flag, UFSRVResult *res_ptr, const char *func);
-int FenceEventsUnLock (Fence *f_ptr);
 UFSRVResult *FenceEventsUnLockCtx (ThreadContext *thread_ctx_ptr, Fence *f_ptr, UFSRVResult *res_ptr);
 
 UFSRVResult *RepairFenceMembershipForUser (InstanceHolderForSession *instance_sesn_ptr, InstanceHolderForFence *instance_f_ptr, EnumImpairedFenceMembershipType impairment_type);
-bool IsFenceIdInCacheRecordForUser (Session *sesn_ptr_carrier,  unsigned long uid, unsigned long fid, unsigned long *uid_inviter);
+bool IsFenceIdInCacheRecordForUser (unsigned long uid, unsigned long fid, unsigned long *uid_inviter);
 bool IsUserIdInCacheRecordForFence (Session *sesn_ptr,  unsigned long fid);
 
 UFSRVResult *IsUserAllowedToChangeFence (Session *sesn_ptr, unsigned long fid, const char *cname, bool *fence_lock_state, unsigned long fence_call_flags);
@@ -378,28 +379,25 @@ UFSRVResult *UpdateFenceJoinModeAssignment (Session *sesn_ptr, Fence *f_ptr, Fen
 char *MakeCanonicalFenceName(Session *sesn_ptr, const char *fdname, unsigned  flag_selfzoned, char *);
 LocationDescription *MapFenceLocationDescription (const Fence *f_ptr, char *canonical_name_buffer, LocationDescription *location_ptr_out);
 size_t SizeofCanonicalFenceName (Session *sesn_ptr, const char *fdname);
-UFSRVResult *IsUserAllowedToJoinGeoFence (Session *, LocationDescription *);
-UFSRVResult *IsUserAllowedGeoFenceInvite(Session *sesn_ptr, Session *sesn_ptr_inviter, unsigned long fence_call_flags);
-//void CreateBroadcastFence ();
+UFSRVResult *IsUserAllowedToJoinGeoFence (InstanceHolderForSession *, LocationDescription *);
+UFSRVResult *IsUserAllowedGeoFenceInvite(InstanceHolderForSession *instance_sesn_ptr, Session *sesn_ptr_inviter, unsigned long fence_call_flags);
 void InitialiseMaserFenceRegistries (void);
 void SummariseUserFenceConfiguration (void);
 void SummariseBaseFenceConfiguration (void);
 UFSRVResult *IsUserAllowedToJoinFenceById(InstanceHolderForSession *, const unsigned long, unsigned long, bool *fence_lock_state);
-UFSRVResult *HandleJoinFence (Session *sesn_ptr, InstanceHolderForFenceStateDescriptor *, DataMessage *data_msg_ptr, EnumFenceJoinType join_type, UFSRVResult *res_ptr);
+UFSRVResult *HandleJoinFence (InstanceContextForSession *, InstanceHolderForFenceStateDescriptor *, WebSocketMessage *, DataMessage *data_msg_ptr, EnumFenceJoinType join_type, UFSRVResult *res_ptr);
 UFSRVResult *IsUserAllowedToJoinFenceByCanonicalName(InstanceHolderForSession *, const char *, unsigned long);
 
 UFSRVResult *IsUserAllowedToChangeFenceMaxMembers (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, int32_t maxmembers, unsigned long fence_call_flags, FenceEvent *fence_event_ptr_out);
 UFSRVResult *IsUserAllowedToChangeFenceDeliveryMode (Session *sesn_ptr, FenceStateDescriptor *fence_state_ptr, int delivery_mode, unsigned long fence_call_flags, FenceEvent *fence_event_ptr_out);
 
-json_object *MakeFenceMembersInJson(Session *, Session *, Fence *, unsigned long, unsigned long);
-json_object *GetFencesNearbyInJson (const Session *, const char *, unsigned);
 struct json_object *JsonFormatSessionFenceList (Session *, enum DigestMode);
 struct json_object *JsonFormatSessionInvitedFenceList (Session *sesn_ptr, enum DigestMode digest_mode);
 struct json_object *JsonFormatFenceForDbBackend(Session *sesn_ptr_carrier, Fence *f_ptr, enum DigestMode digest_mode,
                                                 unsigned long fence_call_flags);
 
 void DestructFenceRawSessionList (FenceRawSessionList *raw_sesn_list_ptr, bool self_destruct);
-Session *GetSessionForFenceOwner (Session *sesn_ptr, Fence *f_ptr);
+InstanceHolderForSession *GetSessionForFenceOwner (Session *sesn_ptr, Fence *f_ptr);
 FenceRawSessionList *GetRawMemberUsersListForFence  (Session *sesn_ptr, InstanceHolderForFence *instance_f_ptr, unsigned long fence_call_flags, FenceRawSessionList *raw_sesn_list_ptr_in);
 FenceRawSessionList *GetRawInvitedUsersListForFence  (Session *sesn_ptr, InstanceHolderForFence *instance_f_ptr, unsigned long fence_call_flags, FenceRawSessionList *raw_sesn_list_ptr_in);
 
@@ -407,7 +405,7 @@ int FenceRemoveUserByFenceId (Session *sesn_ptr_this, Session *sesn_ptr, unsigne
 unsigned RemoveUserFromAllFences (InstanceHolderForSession *, unsigned long);
 unsigned RemoveUserFromAllFencesSessionInstanceOnly (Session *sesn_ptr, unsigned long call_flags);
 int RemoveUserFromInvitedList(InstanceHolderForSession *instance_sesn_ptr, FenceStateDescriptor *fence_state_joined, FenceEvent *fe_ptr_out, unsigned long fence_call_flags);
-size_t NetworkRemoveUsersFromInviteList (Session *sesn_ptr_carrier, InstanceHolderForFence *);
+size_t NetworkRemoveUsersFromInviteList (InstanceContextForSession *ctx_ptr_carrier, InstanceHolderForFence *);
 unsigned long RemoveUserFromFence (InstanceHolderForSession *, Fence *, unsigned long);
 InstanceHolderForFenceStateDescriptor *RemoveFenceFromSessionFenceList (List *, Fence *);
 InstanceHolderForFenceStateDescriptor *RemoveFenceFromSessionInvitedFenceList (List *, unsigned long);
@@ -416,7 +414,7 @@ UFSRVResult *FindFenceByCanonicalName (Session *sesn_ptr_this, const char *fence
 InstanceHolder *FindBaseFenceByCanonicalName (Session *, const char *, bool *fence_already_locked, unsigned long);
 InstanceHolderForFence *FindUserFenceByCanonicalName (Session *sesn_ptr_this, const char *fence_canonical_name, bool *fence_already_locked, unsigned long call_flags);
 InstanceHolderForFenceStateDescriptor *FindFenceStateInSessionFenceListByFenceId (Session *sesn_ptr, List *sesn_fence_ist_ptr, unsigned long fence_id);
-UFSRVResult *FindFenceById (Session *, const unsigned long fence_id, unsigned long);
+UFSRVResult *FindFenceById (Session *, const unsigned long fence_id, unsigned long fence_call_flags);
 InstanceHolderForSession * FindUserInFenceSessionListByID (const List *const lst_ptr_sesn, Fence *f_ptr, unsigned long cid);
 InstanceHolderForFenceStateDescriptor *IsUserMemberOfFenceById (const List *const, const unsigned long fence_id, bool);
 InstanceHolderForFenceStateDescriptor *IsUserMemberOfThisFence (const List *const lst_ptr, Fence *f_ptr, bool lock_flag);
@@ -425,7 +423,6 @@ int CrossCheckSessionInFenceBySessionId (Fence *f_ptr, unsigned long session_id)
 bool IsUserOnFenceInvitedList (Fence *f_ptr, unsigned long uid);
 int CrossCheckFenceInSessionByFenceId (Session *sesn_ptr, unsigned long fence_id);
 InstanceHolderForFenceStateDescriptor *CreateUserFenceAndLinkToUser (InstanceHolderForSession *instance_sesn_ptr, const char *fence_banner, char *userfence_canonical_name_in, FenceContextDescriptor *, unsigned long call_flags);
-FenceStateDescriptor *AddUserToExistingFenceAndLinkToUser(Fence *, Session *, unsigned);
 InstanceHolderForFenceStateDescriptor *AddUserToThisFenceListWithLinkback(InstanceHolderForSession *instance_sesn_ptr, InstanceHolderForFence *, List *user_fence_list_ptr, List *fence_user_list_ptr,  int event_type, unsigned call_flags);
 CollectionDescriptor *AddToFenceInvitedListFromProtoRecord(InstanceHolderForSession *instance_sesn_ptr, InstanceHolderForFence *instance_f_ptr, UserRecord **user_records, size_t invited_members_sz, CollectionDescriptorPair *, bool flag_exclude_self);
 UFSRVResult *AddMemberToInvitedFenceList (InstanceHolderForSession *instance_sesn_ptr_invited, InstanceHolderForFence *instance_f_ptr, Session *sesn_ptr_inviter, unsigned long);
@@ -433,8 +430,6 @@ UFSRVResult *IsUserAllowedToMakeUserFence (InstanceHolderForSession *instance_se
 FenceEvent *UpdateBackendFenceInvitedData (Session *sesn_ptr_inviter, Session *sesn_ptr_invited, FenceStateDescriptor *fstate_ptr, unsigned event_type, FenceEvent *fe_ptr_out);
 
 int InstateFenceListsForUser (InstanceHolderForSession *instance_sesn_ptr, unsigned long sesn_call_flags, FenceTypes fence_type, bool flag_abort_on_failure);
-
-UFSRVResult *ProcessFenceNetworkBroadcast (unsigned long server_id_origin, unsigned long session_id, json_object *jobj, UFSRVResult *res_ptr);
 
 void DestructFenceCollection (CollectionDescriptor *fence_collection_ptr, bool flag_self_destruct);
 CollectionDescriptor *GetFenceCollectionForUser (Session *sesn_ptr, CollectionDescriptor *, CollectionDescriptor *overflow_collection_ptr_in, EnumFenceCollectionType);
@@ -446,6 +441,10 @@ unsigned long GetFenceEventId (Fence *f_ptr, unsigned lock_flag);
 int DestructFenceEvent (FenceEvent *fe_ptr, bool self_destruct);
 void *DestructFenceEventQueue (Session *sessn_ptr, Fence *f_ptr, unsigned reset_counter_flag);
 
+UFSRVResult *DbBackendInsertUfsrvEvent (UfsrvEvent *event_ptr);
+int DbBackendUpdateEventFlagger (unsigned long event_rowid, unsigned  long uid_flagged_by, time_t timestamp);
+unsigned long IsEventValid (unsigned long, unsigned long, EnumEventCommandType);
+
 FenceEvent *UpdateBackendFenceData (Session *sesn_ptr_target, Fence *f_ptr, void *user_data, unsigned event_type, FenceEvent *);
 
 UFSRVResult *CacheBackendGetFencesListSize (Session *sesn_ptr, unsigned long userid);
@@ -453,13 +452,13 @@ UFSRVResult *CacheBackendGetFenceInviteListSize (Session *sesn_ptr, Fence *f_ptr
 UFSRVResult *CacheBackendGetUserFencesInviteListSize (Session *sesn_ptr, unsigned long);
 UFSRVResult *GetInvitedMembersListCacheRecordForFence (Session *sesn_ptr,  InstanceHolderForFence *instance_f_ptr, unsigned long userid, EnumFenceCollectionType list_type_target, EnumFenceCollectionType list_type_context, unsigned long call_flags);
 UFSRVResult *GetMembersListCacheRecordForFence (Session *sesn_ptr_this,  InstanceHolderForFence *instance_f_ptr, unsigned long userid_loading_for, EnumFenceCollectionType list_type_target, EnumFenceCollectionType list_type_context, unsigned long attach_to_fence_flag);
-UFSRVResult *CacheBackendGetUserIdsCacheRecordForFence (Session *sesn_ptr_carrier,  unsigned long);
+UFSRVResult *CacheBackendGetUserIdsCacheRecordForFence (unsigned long);
 UFSRVResult *CacheBackendSetFenceAttributesByCollection (Session *sesn_ptr, unsigned long fence_id, CollectionDescriptor *collection_attributes, CollectionDescriptor *collection_values, CollectionDescriptorPair *);
 UFSRVResult *CacheBackendSetFenceAttribute (Session *sesn_ptr, unsigned long fence_id, const char *attribute_name, const char *attribute_value);
 UFSRVResult *CacheBackendSetFenceAttributeBinary (Session *sesn_ptr, unsigned long fence_id, const char *attribute_name, BufferDescriptor *buffer_attribute_value);
 UFSRVResult *CacheBackendGetFenceAttribute (Session *sesn_ptr, unsigned long fence_id, const char *attribute_name);
 
-UFSRVResult *GetCacheRecordForFence (Session *sesn_ptr_this, EnumFenceCollectionType list_type_context, unsigned long fence_id, bool *fence_lock_state, unsigned long call_flags);
+UFSRVResult *GetCacheRecordForFence (Session *sesn_ptr_this, EnumFenceCollectionType list_type_context, unsigned long fence_id, unsigned long uid, bool *fence_lock_state, unsigned long call_flags);
 
 Session *InstateMembersFenceListForUser (InstanceHolderForSession *instance_sesn_ptr_this, unsigned long call_flags, unsigned long);
 Session *InstateInvitedFenceListForUser (InstanceHolderForSession *instance_sesn_ptr_this, unsigned long sesn_call_flags, unsigned long fence_call_flags);
@@ -500,6 +499,7 @@ static inline EnumFenceNetworkType GetFenceNetworkType (Fence *f_ptr)
 {
 	if (f_ptr->attrs&F_ATTR_BASEFENCE)	return FENCE_NETWORK_TYPE_GEO;
 	if (f_ptr->attrs&F_ATTR_USERFENCE)	return FENCE_NETWORK_TYPE_USER;
+  if (f_ptr->attrs&F_ATTR_GUARDIANFENCE)	return FENCE_NETWORK_TYPE_GUARDIAN;
 
 	syslog (LOG_ERR, "%s {pid:'%lu', fo:'%p', fid:'%lu', attrs:'%u'}: ERROR: COULD NOT DETERMINE FENCE NETWORK TYPE", __func__, pthread_self(), f_ptr, FENCE_ID(f_ptr), f_ptr->attrs);
 
@@ -509,27 +509,23 @@ static inline EnumFenceNetworkType GetFenceNetworkType (Fence *f_ptr)
 inline static unsigned long
 GenerateFenceEventId (Session *sesn_ptr_this, Fence *f_ptr, unsigned lock_flag)
 {
-	extern SessionsDelegator *const sessions_delegator_ptr;
 	extern __thread ThreadContext ufsrv_thread_context;
 
-	if (!(IS_EMPTY(f_ptr)))
-	{
+	if (!(IS_EMPTY(f_ptr))) {
 		PersistanceBackend	*pers_ptr;
 		redisReply					*redis_ptr;
 
-		pers_ptr=sesn_ptr_this->fence_cachebackend;//persistance_backend;
+		pers_ptr = THREAD_CONTEXT_FENCE_CACHEBACKEND;
 
-		char command_buf[MBUF]={0};
+		char command_buf[MBUF] = {0};
 		snprintf (command_buf, MBUF, REDIS_CMD_FENCE_INC_EVENT_COUNTER, f_ptr->fence_id);
-		if (!(redis_ptr=(*pers_ptr->send_command)(sesn_ptr_this, SESSION_FENCE_CACHEBACKEND(sesn_ptr_this), command_buf)))
-		{
+		if (!(redis_ptr = (*pers_ptr->send_command)(NULL, pers_ptr, command_buf))) {
 			syslog(LOG_DEBUG, "%s: ERROR COULD NOT INC EVENTS CUNTER for UID:'%lu': BACKEND CONNECTIVITY ERROR", __func__, f_ptr->fence_id);
 
 			return 0;
 		}
 
-		if (redis_ptr->type==REDIS_REPLY_ERROR)
-		{
+		if (redis_ptr->type == REDIS_REPLY_ERROR) {
 		   syslog(LOG_DEBUG, "%s: ERROR COULD NOT INC EVENTS CUNTER for UID:'%lu': REPLY ERROR '%s'", __func__, f_ptr->fence_id, redis_ptr->str);
 
 		   freeReplyObject(redis_ptr);
@@ -537,8 +533,7 @@ GenerateFenceEventId (Session *sesn_ptr_this, Fence *f_ptr, unsigned lock_flag)
 		   return 0;
 		}
 
-		if (redis_ptr->type == REDIS_REPLY_NIL)
-		{
+		if (redis_ptr->type == REDIS_REPLY_NIL) {
 		   syslog(LOG_DEBUG, "%s: ERROR COULD NOT INC EVENTS CUNTER for UID:'%lu': REPLY NIL '%s'", __func__, f_ptr->fence_id, redis_ptr->str);
 
 		   freeReplyObject(redis_ptr);
@@ -546,38 +541,33 @@ GenerateFenceEventId (Session *sesn_ptr_this, Fence *f_ptr, unsigned lock_flag)
 		   return 0;
 		}
 
-		long long ev_counter=redis_ptr->integer;
+		long long ev_counter = redis_ptr->integer;
 
 		freeReplyObject(redis_ptr);
 
 		//TODO: REVISIT IF THIS IS NECESSARY: the event structure should have the event id in it
-		if (lock_flag)
-		{
-			FenceEventsLockRWCtx (THREAD_CONTEXT_PTR, f_ptr, _LOCK_TRY_FLAG_TRUE, SESSION_RESULT_PTR(sesn_ptr_this), __func__);
+		if (lock_flag) {
+			FenceEventsLockRWCtx(THREAD_CONTEXT_PTR, f_ptr, _LOCK_TRY_FLAG_TRUE, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), __func__);
 
-			if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr_this, RESULT_TYPE_ERR))
-			{
+			if (THREAD_CONTEXT_UFSRV_RESULT_TYPE_ERR) {
 				return 0;
 			}
 		}
 
-		bool fence_lock_already_owned=(SESSION_RESULT_CODE_EQUAL(sesn_ptr_this, RESCODE_PROG_LOCKED_THIS_THREAD));
+		bool fence_lock_already_owned = THREAD_CONTEXT_UFSRV_RESULT_CODE_EQUAL(THREAD_CONTEXT, RESCODE_PROG_LOCKED_BY_THIS_THREAD);
 
-		f_ptr->fence_events.last_event_id=(unsigned long)ev_counter;
+		f_ptr->fence_events.last_event_id = (unsigned long)ev_counter;
 
-		if (lock_flag)
-		{
-			if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr_this));
+		if (lock_flag) {
+			if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
 		}
 
 		return (unsigned long)ev_counter;
 	}
 
-
 	return 0;
 
 }
-
 
 /**
  * 	@brief: This is just a convenient wrapper around updating  a given Fence's  event. The fence Identifier is a convenient
@@ -596,34 +586,27 @@ BackendUpdateFenceEvent (Session *sesn_ptr, FenceIdentifier *fs_ptr, FenceEvent 
 {
 	unsigned long				fence_id	= 0;
 	FenceEvent					*fe_ptr		= NULL;
-	PersistanceBackend 	*pers_ptr	= NULL;
+	__unused PersistanceBackend 	*pers_ptr	= NULL;
 	MessageQueueBackend *mq_ptr		= NULL;
 	redisReply 					*redis_ptr= NULL;
 	extern ufsrv *const masterptr;
 
-	if (IS_EMPTY(fe_ptr_in))
-	{
-		if (IS_PRESENT(fs_ptr->f_ptr))
-		{
-			fe_ptr=RegisterFenceEvent (sesn_ptr, fs_ptr->f_ptr, event_type,  NULL, 0/*LOCK_FLAG*/, NULL);
-			fence_id=FENCE_ID(fs_ptr->f_ptr);
-		}
-		else
-		{
-			fe_ptr=RegisterFenceEventWithFid (sesn_ptr, fs_ptr->fence_id, event_type,  NULL, NULL);
-			fence_id=fs_ptr->fence_id;
+	if (IS_EMPTY(fe_ptr_in)) {
+		if (IS_PRESENT(fs_ptr->f_ptr)) {
+			fe_ptr = RegisterFenceEvent(sesn_ptr, fs_ptr->f_ptr, event_type,  NULL, 0/*LOCK_FLAG*/, NULL);
+			fence_id = FENCE_ID(fs_ptr->f_ptr);
+		} else {
+			fe_ptr = RegisterFenceEventWithFid(sesn_ptr, fs_ptr->fence_id, event_type,  NULL, NULL);
+			fence_id = fs_ptr->fence_id;
 		}
 
 		if (unlikely(IS_EMPTY(fe_ptr)))		return NULL;
-	}
-	else
-	{
-		fe_ptr=fe_ptr_in;
-		fe_ptr=RegisterFenceEvent (sesn_ptr, fs_ptr->f_ptr, event_type,  NULL, 0/*LOCK_FLAG*/, fe_ptr);
+	} else {
+		fe_ptr = fe_ptr_in;
+		fe_ptr = RegisterFenceEvent (sesn_ptr, fs_ptr->f_ptr, event_type,  NULL, 0/*LOCK_FLAG*/, fe_ptr);
 	}
 
-	if (fe_ptr->eid==0)
-	{
+	if (fe_ptr->eid == 0) {
 		syslog(LOG_DEBUG, "%s {pid:'%lu',o:'%p', fid:'%lu'}: ERROR: EVENT ID WAS SET TO ZERO: NO EVENT WILL BE LOGGED", __func__, pthread_self(), sesn_ptr, fence_id);
 
 		if (IS_EMPTY(fe_ptr_in))	free (fe_ptr);//this comes from RegisterEvenetXXX() above
@@ -631,16 +614,18 @@ BackendUpdateFenceEvent (Session *sesn_ptr, FenceIdentifier *fs_ptr, FenceEvent 
 		return NULL;
 	}
 
-	if (IS_PRESENT(fs_ptr->f_ptr))			fence_id=FENCE_ID(fs_ptr->f_ptr);
-	else																fence_id=fs_ptr->fence_id;
+	if (IS_PRESENT(fs_ptr->f_ptr))			fence_id = FENCE_ID(fs_ptr->f_ptr);
+	else																  fence_id = fs_ptr->fence_id;
 
-	pers_ptr=sesn_ptr->persistance_backend;
+	pers_ptr = sesn_ptr->persistance_backend;
 
-	char command_buf[LBUF]={0};
-	snprintf(command_buf, LBUF, REDIS_CMD_FENCE_EVENTS, fence_id, fe_ptr->eid, fe_ptr->eid, masterptr->serverid, SESSION_ID(sesn_ptr), time(NULL), SESSION_ID(sesn_ptr), fence_id, event_type, "event");
-	redis_ptr=(*pers_ptr->send_command)(sesn_ptr, command_buf);
+//	char command_buf[LBUF] = {0};
+//	snprintf(command_buf, LBUF, REDIS_CMD_FENCE_EVENTS, fence_id, fe_ptr->eid, fe_ptr->eid, masterptr->serverid, SESSION_ID(sesn_ptr), time(NULL), SESSION_ID(sesn_ptr), fence_id, event_type, "event");
+//	redis_ptr = (*pers_ptr->send_command)(sesn_ptr, command_buf);
+//
+//	if (redis_ptr)	freeReplyObject(redis_ptr);
 
-	if (redis_ptr)	freeReplyObject(redis_ptr);
+  DbBackendInsertUfsrvEvent ((UfsrvEvent *)fe_ptr);
 
 	return fe_ptr;
 }
@@ -660,7 +645,6 @@ _GetUserListByFenceCollectionType (Session *sesn_ptr, EnumFenceCollectionType fe
 
 	return NULL;
 }
-
 
 /**
  * 	@locks f_ptr:

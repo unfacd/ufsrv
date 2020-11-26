@@ -59,7 +59,6 @@ bool LamportQueue_push(struct LamportQueue *queue, ClientData *elem)
     return true;
 }
 
-
 bool LamportQueue_pop(struct LamportQueue *queue, ClientData **elem)
 {
     size_t b, f;

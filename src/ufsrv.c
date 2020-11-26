@@ -22,19 +22,19 @@
 #include <main.h>
 #include <error.h>
 #include <misc.h>
-#include <recycler.h>
-#include <adt_lamport_queue.h>
-#include <queue.h>
+#include <recycler/recycler.h>
+#include <uflib/adt/adt_lamport_queue.h>
+#include <uflib/adt/adt_queue.h>
 #include <session.h>
 #include <net.h>
-#include <protocol.h>
-#include <protocol_websocket.h>
+#include <ufsrv_core/protocol/protocol.h>
+#include <ufsrvwebsock/include/protocol_websocket.h>
 #include <sessions_delegator_type.h>
 #include <nportredird.h>
-#include <persistance.h>
-#include <instrumentation_backend.h>
-#include <redis.h>
-#include <db_sql.h>
+#include <ufsrv_core/cache_backend/persistance.h>
+#include <ufsrv_core/instrumentation/instrumentation_backend.h>
+#include <ufsrv_core/cache_backend/redis.h>
+#include <uflib/db/db_sql.h>
 #include <include/nportredird.h>
 
 static ufsrv master;
@@ -48,12 +48,13 @@ static QueueClientData *listener_connection_queue[_CONFIG_LISTENER_CONNECTION_QU
 extern const Protocol 		*const protocols_registry_ptr;
 extern SessionsDelegator 	*const sessions_delegator_ptr;
 
-static void InitNewConnectionsQueue (void);
-static void InitConnectionListenerToWorkDelegatorPipe (void);
-static void UFSRVThreadsOnceInitialiser (void);
-static void _InitServerCertificates ();
+static void InitNewConnectionsQueue(void);
+static void InitConnectionListenerToWorkDelegatorPipe(void);
+static void UFSRVThreadsOnceInitialiser(void);
+static void _InitServerCertificates();
+static void _InitCredentialsIssuanceServerParams();
 
-static inline void InitHashTables (void);
+static inline void InitHashTables(void);
 
 //This is the classic self-pipe-trick
 //backdoor into the WorkDelegatorThread to unblock it from epoll_wait call to process new incoming connection
@@ -326,6 +327,28 @@ static void _InitServerCertificates ()
   MASTER_CONF_SERVER_KEYID       = SERVER_KEYID;
 }
 
+static void _InitCredentialsIssuanceServerParams()
+{
+  int size_out = 0;
+
+  base64_decode_buffered((const unsigned char *)PRIVATE_SERVER_PARAM, strlen(PRIVATE_SERVER_PARAM), MASTER_CONF_SERVER_PRIVATE_PARAMS, &size_out);
+  if (size_out != SERVER_SECRET_PARAMS_LEN) {
+    syslog(LOG_ERR, "%s: ERROR (size: '%d', param:'%s'): COULD NOT DECODE PRIVATE SERVER PARAMS: TERMINATING...", __func__, size_out, PRIVATE_SERVER_PARAM);
+
+    exit(-1);
+  }
+
+  size_out = 0;
+  base64_decode_buffered((const unsigned char *)PUBLIC_SERVER_PARAM, strlen(PUBLIC_SERVER_PARAM), MASTER_CONF_SERVER_PUBLIC_PARAMS, &size_out);
+  if (size_out != SERVER_PUBLIC_PARAMS_LEN) {
+    syslog(LOG_ERR, "%s: ERROR (size: '%d', param:'%s'): COULD NOT DECODE PUBLIC SERVER PARAMS: TERMINATING...", __func__, size_out, PUBLIC_SERVER_PARAM);
+
+    exit(-1);
+  }
+
+
+}
+
 void InvokeMainListener (int protocol_id, Socket *sock_ptr_listener, ClientContextData *context_ptr)
 {
 	if (_PROTOCOL_CLLBACKS_MAIN_LISTENER(protocols_registry_ptr, protocol_id)) {
@@ -433,6 +456,7 @@ InitUFSRV (void)
 	pthread_once(&(masterptr->threads_subsystem.ufsrv_once), UFSRVThreadsOnceInitialiser);
 
 	_InitServerCertificates();
+	_InitCredentialsIssuanceServerParams();
 	InitSSL();
 
 	InstrumentationBackendServerInit (masterptr->stats_backend.address, masterptr->stats_backend.port);
@@ -443,16 +467,23 @@ InitUFSRV (void)
 
 
 	{
-		//initialise PersistanceBackend object for main thread use
-		syslog(LOG_INFO, "%s: Initialising Persistance Backend for Main thread...", __func__);
-
     PersistanceBackend *per_ptr = InitialisePersistanceBackend(NULL);
 		if (per_ptr) {
 			masterptr->persistance_backend = per_ptr;
+      syslog(LOG_INFO, "%s: SUCCESS {o:'%p'}: Initialised Persistence Backend for Main Listener thread...", __func__, per_ptr);
 		} else {
-			syslog(LOG_INFO, "%s: ERROR: COULD NOT INITIALISE Persistance Backend for Main thread: Exiting", __func__);
+			syslog(LOG_INFO, "%s: ERROR: COULD NOT INITIALISE Persistence Backend for Main Listener thread: Exiting", __func__);
 			_exit (-1);
 		}
+
+    UserMessageCacheBackend *per_ptr_usrmsg = InitialiseCacheBackendUserMessage(NULL);
+    if (IS_PRESENT(per_ptr_usrmsg)) {
+      masterptr->usrmsg_cachebackend = per_ptr_usrmsg;
+      syslog(LOG_INFO, "%s: SUCCESS {o:'%p'}: Initialised Cache Backend UserMessage for Main Listener thread...", __func__, per_ptr_usrmsg);
+    } else {
+      syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE Cache Backend UserMessage  for Main Listener  thread: Exiting...", __func__);
+      _exit (-1);
+    }
 
 		{
 			//verify scripts. check redis.h for details
@@ -508,6 +539,26 @@ InitUFSRV (void)
 
  }  /**/
 
+/**
+ *  executed in a ufsrv thread context, so issuing mysql lib call unsigned long mysql_thread_id(MYSQL *mysql) returns
+ *  client thread associated with this ufsrv thread. or "SELECT CONNECTION_ID();"
+ */
+struct _h_connection *InitialiseDbBackend (void)
+{
+  struct _h_connection *db_ptr;
+
+//ANNOTATE_IGNORE_READS_BEGIN();
+  //__vdrd_AnnotateIgnoreReadsBegin();
+  db_ptr = h_connect_mariadb(masterptr->db_backend.address, masterptr->db_backend.username, masterptr->db_backend.password, CONFIG_DBBACKEND_DBNAME, masterptr->db_backend.port, NULL);
+//ANNOTATE_IGNORE_READS_END();
+  //__vdrd_AnnotateIgnoreReadsEnd();
+  if (db_ptr) {
+    SqlServerDisplayConnectedUsers (db_ptr);
+  }
+
+  return db_ptr;
+
+}
 
 #define COPY_SOCKET_CONNECTED_ADDRESSES \
 				sesn_ptr->ssptr->sock = nsocket;\
@@ -568,6 +619,8 @@ InitHashTables ()
 
 }
 
+static bool _IsRateLimitExceededForNewConnection (struct sockaddr_in *addr);
+
 #ifdef CONFIG_USE_LOCKLESS_NEW_CONNECTIONS_QUEUE
 
 int
@@ -588,6 +641,13 @@ AnswerTelnetRequest (Socket *s_ptr_listening)
 
 		return 0;
 	}
+
+#if 0 //currently relying on loadbalancer for this
+	if (_IsRateLimitExceededForNewConnection(&hisaddr)) {
+	  close(nsocket);
+	  return 0;
+	}
+#endif
 
   int opt = 1;
   setsockopt (nsocket, SOL_SOCKET, SO_KEEPALIVE, (void *)&opt, sizeof(int));
@@ -652,7 +712,7 @@ AnswerTelnetRequest (Socket *s_ptr_listening)
 
    return_error:
    close (nsocket);
-   SessionReturnToRecycler (instance_sesn_ptr, NULL, CALL_FLAG_HASH_SESSION_LOCALLY);
+   SessionReturnToRecycler(instance_sesn_ptr, NULL, CALL_FLAG_HASH_SESSION_LOCALLY);
 
    return 0;
 
@@ -789,6 +849,26 @@ int AnswerTelnetRequest (Socket *s_ptr_listening)
 
 #endif	//_CONFIG_LISTENER_CONNECTION_QUEUE_SZ
 
+#include <ufsrv_core/ratelimit/ratelimit.h>
+__unused static bool
+_IsRateLimitExceededForNewConnection (struct sockaddr_in *addr)
+{
+  char ipstr[INET6_ADDRSTRLEN];
+  __unused int port;
+
+  if (((struct sockaddr_storage *)addr)->ss_family == AF_INET) {
+    struct sockaddr_in *s = (struct sockaddr_in *)addr;
+//    port = ntohs(s->sin_port);
+    inet_ntop(AF_INET, &s->sin_addr, ipstr, sizeof ipstr);
+  } else {
+    struct sockaddr_in6 *s = (struct sockaddr_in6 *)addr;
+//    port = ntohs(s->sin6_port);
+    inet_ntop(AF_INET6, &s->sin6_addr, ipstr, sizeof ipstr);
+  }
+
+  return IsRateLimitExceededForIPAddress(masterptr->usrmsg_cachebackend, ipstr, RLNS_CONNECTONS, &(masterptr->result));
+}
+
 //
 //main processing port
 //
@@ -837,26 +917,23 @@ GetUfsrvInstance (Session *sesn_ptr, const char *server_class, unsigned ufsrv_ge
 	CollectionDescriptor 	collection_ufsrv_ids																					=	{.collection=(collection_t **)collection_idxs, CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP};
 	CollectionDescriptor 	collection_ufsrv_times																				=	{.collection=(collection_t **)collection_idxs_times, CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP};
 
-	if (unlikely((ufsrv_geogroup==0)))	ufsrv_geogroup=_CONFIGDEFAULT_DEFAULT_UFSRVGEOGROUP;
+	if (unlikely((ufsrv_geogroup == 0)))	ufsrv_geogroup = _CONFIGDEFAULT_DEFAULT_UFSRVGEOGROUP;
 
 	UfsrvConfigGetGeoGroup (sesn_ptr, server_class, ufsrv_geogroup, &collection_ufsrv_ids, &collection_ufsrv_times);
 
-	if (collection_ufsrv_ids.collection_sz>0)
-	{
+	if (collection_ufsrv_ids.collection_sz > 0) {
 		size_t		counter		=	0;
 		time_t		last_activity_time,
 							time_now	=	time(NULL);
 		long long reqid			=	UfsrvConfigGetReqid (sesn_ptr, server_class, ufsrv_geogroup);
 
-		if (reqid>0)
-		{
-			int ufsrv_instance									=	reqid%collection_ufsrv_ids.collection_sz;
-			int ufsrv_instance_idx							=	ufsrv_instance<CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP?ufsrv_instance:CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP-1;
-			do
-			{
-				last_activity_time=UfsrvConfigGetUfsrverActivityTime (sesn_ptr, server_class, ufsrv_geogroup, collection_idxs[ufsrv_instance_idx]);
-				if (time_now-last_activity_time<_CONFIGDEDAULT_IDLE_TIME_INTERVAL+5)//extra 5 seconds
-				{
+		if (reqid > 0) {
+			int ufsrv_instance									=	reqid % collection_ufsrv_ids.collection_sz;
+			int ufsrv_instance_idx							=	ufsrv_instance < CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP?ufsrv_instance:CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP-1;
+
+			do {
+				last_activity_time = UfsrvConfigGetUfsrverActivityTime (sesn_ptr, server_class, ufsrv_geogroup, collection_idxs[ufsrv_instance_idx]);
+				if (time_now - last_activity_time < _CONFIGDEDAULT_IDLE_TIME_INTERVAL_INTRA_REQUEST) {
 					instance_ptr_out->serverid_by_user	=	collection_idxs[ufsrv_instance_idx];
 					instance_ptr_out->reqid							=	reqid;
 					instance_ptr_out->ufsrv_geogroup		=	ufsrv_geogroup;
@@ -867,72 +944,17 @@ GetUfsrvInstance (Session *sesn_ptr, const char *server_class, unsigned ufsrv_ge
 	#endif
 
 					return (instance_ptr_out);
-				}
-				else
-				{
-					ufsrv_instance_idx=(ufsrv_instance_idx+1)%collection_ufsrv_ids.collection_sz;//wrap around as necessary
+				} else {
+					ufsrv_instance_idx = (ufsrv_instance_idx + 1) % collection_ufsrv_ids.collection_sz;//wrap around as necessary
 					syslog(LOG_ERR, "%s {pid:'%lu', o:'%p', cid:'%lu', reqid:'%llu, counter:'%lu',  server_id:'%d', ufsrv_instance_idx_incremented:'%d', time_now:'%lu', last_activity_time:'%lu', time_diff:'%lu'}: WARNING: FOUND UNRESPONSIVE SERVER IN GEOGROUP: TRYING NEXT", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), reqid, counter, collection_idxs[ufsrv_instance_idx], ufsrv_instance_idx, time_now, last_activity_time, time_now-last_activity_time);
 				}
-			}
-			while (++counter<=collection_ufsrv_ids.collection_sz);
-		}
-		else
-		{
+			} while (++counter <= collection_ufsrv_ids.collection_sz);
+		} else {
 			syslog(LOG_ERR, "%s {pid:'%lu', o:'%p', cid:'%lu', reqid:'%llu'}: ERROR: COULD NOT UNLOCK RETRIEVE REQUEST ID", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), reqid);
 		}
 	}
 
 	return NULL;
-
-#if 0
-	int 									collection_idxs[CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP]				=	{0};
-	time_t								collection_idxs_times[CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP]	=	{0};
-	CollectionDescriptor 	collection_ufsrv_ids																					=	{.collection=(collection_t **)collection_idxs, CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP};
-	CollectionDescriptor 	collection_ufsrv_times																				=	{.collection=(collection_t **)collection_idxs_times, CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP};
-
-	UfsrvConfigGetGeoGroup (sesn_ptr, &collection_ufsrv_ids, &collection_ufsrv_times);
-
-	if (collection_ufsrv_ids.collection_sz>0)
-	{
-		size_t		counter		=	0;
-		time_t		time_now	=	time(NULL);
-		long long reqid			=	UfsrvConfigGetReqid (sesn_ptr);
-
-		if (reqid>0)
-		{
-			int ufsrv_instance									=	reqid/collection_ufsrv_ids.collection_sz;//remainder division
-			int ufsrv_instance_idx							=	ufsrv_instance<CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP?ufsrv_instance:CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP;
-			do
-			{
-				//int ufsrv_instance									=	reqid/collection_ufsrv_ids.collection_sz;//remainder division
-				//int ufsrv_instance_idx							=	ufsrv_instance<CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP?ufsrv_instance:CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP;
-				if (time_now-collection_idxs_times[ufsrv_instance_idx-1]<_CONFIGDEDAULT_IDLE_TIME_INTERVAL)
-				{
-					instance_ptr_out->serverid_by_user	=	collection_idxs[ufsrv_instance_idx-1];
-
-	#ifdef __UF_TESTING
-				syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', reqid:'%llu', idx:'%d', server_id:'%d'}: Retrieve Ufsrv Instance...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), reqid, ufsrv_instance_idx, collection_idxs[ufsrv_instance_idx]);
-	#endif
-
-					return (instance_ptr_out);
-				}
-				else
-				{
-					//alloc_group_ptr->tail=(alloc_group_ptr->tail+1)%alloc_group_ptr->pool_size;
-					ufsrv_instance_idx=(ufsrv_instance_idx+1)%collection_ufsrv_ids.collection_sz;//wrap around as necessary
-					syslog(LOG_ERR, "%s {pid:'%lu', o:'%p', cid:'%lu', reqid:'%llu, counter:'%lu', ufsrv_instance_idx_incremented:'%d'}: WARNING: FOUND UNRESPONSIVE SERVER IN GEOGROUP: TRYING NEXT", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), reqid, counter, ufsrv_instance_idx);
-				}
-			}
-			while (++counter<=collection_ufsrv_ids.collection_sz);
-		}
-		else
-		{
-			syslog(LOG_ERR, "%s {pid:'%lu', o:'%p', cid:'%lu', reqid:'%llu'}: ERROR: COULD NOT UNLOCK RETRIEVE REQUEST ID", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), reqid);
-		}
-	}
-
-	return NULL;
-#endif
 }
 
 bool
@@ -954,52 +976,44 @@ UfsrvConfigRegisterUfsrverInstance (PersistanceBackend	*pers_ptr)
 _CacheBackendUfsrvConfigRegisterUfsrverInstance (PersistanceBackend	*pers_ptr, UFSRVResult *res_ptr)
 {
 	int rescode;
-
-	//PersistanceBackend	*pers_ptr		=	masterptr->persistance_backend;
 	redisReply 					*redis_ptr	=	NULL;
 
-
-	if (!(redis_ptr=(*pers_ptr->send_command_sessionless)(pers_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTRS_IDENTIFIERS_SET, masterptr->server_class, masterptr->ufsrv_geogroup, masterptr->serverid_by_user, getpid(), "0.0.0.0", masterptr->when, masterptr->serverid, masterptr->when)))	goto return_redis_error;
-	if (redis_ptr->type==REDIS_REPLY_STATUS && !(strcasecmp (redis_ptr->str, "OK")==0))
-	{
+	if (!(redis_ptr = (*pers_ptr->send_command_sessionless)(pers_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTRS_IDENTIFIERS_SET, masterptr->server_class, masterptr->ufsrv_geogroup, masterptr->serverid_by_user, getpid(), "0.0.0.0", masterptr->when, masterptr->serverid, masterptr->when)))	goto return_redis_error;
+	if (redis_ptr->type == REDIS_REPLY_STATUS && !(strcasecmp (redis_ptr->str, "OK") == 0)) {
 		syslog(LOG_ERR, "%s {pid:'%lu, reply:'%s'}: ERROR: COULD NOT SET SERVER ATTRIBUTES...", __func__, pthread_self(), redis_ptr->str);
-		rescode=RESCODE_BACKEND_DATA;
+		rescode = RESCODE_BACKEND_DATA;
 		goto return_error;
 	}
 
 	freeReplyObject(redis_ptr);
 
-	if (!(redis_ptr=(*pers_ptr->send_command_sessionless)(pers_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ADD, masterptr->server_class, masterptr->ufsrv_geogroup, masterptr->serverid_by_user)))	goto return_redis_error;
+	if (!(redis_ptr = (*pers_ptr->send_command_sessionless)(pers_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ADD, masterptr->server_class, masterptr->ufsrv_geogroup, masterptr->serverid_by_user)))	goto return_redis_error;
 
-	if (redis_ptr->type==REDIS_REPLY_INTEGER)// && redis_ptr->integer==1) //it can still suceed with 0 if the element is already in the set
-	{
-		long long result=redis_ptr->integer;
+	if (redis_ptr->type == REDIS_REPLY_INTEGER) {// && redis_ptr->integer==1) //it can still suceed with 0 if the element is already in the set
+		long long result = redis_ptr->integer;
 		freeReplyObject(redis_ptr);
-		_RETURN_RESULT_RES(res_ptr, (void *) (uintptr_t)result, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
+		_RETURN_RESULT_RES(res_ptr, (void *) (uintptr_t)result, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA)
 	}
 
-	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_redis_error;
-	if (redis_ptr->type==REDIS_REPLY_NIL)		goto return_redis_error;
+	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_redis_error;
+	if (redis_ptr->type == REDIS_REPLY_NIL)		goto return_redis_error;
 
 	return_redis_error:
-	if (IS_EMPTY(redis_ptr))
-	{
+	if (IS_EMPTY(redis_ptr)) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: CACHE BACKEND: NO REPLY RECEIVED...", __func__, pthread_self());
 	}
-	if (redis_ptr->type==REDIS_REPLY_ERROR)
-	{
+	if (redis_ptr->type == REDIS_REPLY_ERROR) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: REDIS RESULTSET. Error: '%s'", __func__, pthread_self(), redis_ptr->str);
-	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+	 rescode = RESCODE_BACKEND_DATA; goto return_error;
 	}
-	if (redis_ptr->type==REDIS_REPLY_NIL)
-	{
+	if (redis_ptr->type == REDIS_REPLY_NIL) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: NIL SET",  __func__, pthread_self());
-	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+	 rescode = RESCODE_BACKEND_DATA; goto return_error;
 	}
 
 	return_error:
 	freeReplyObject(redis_ptr);
-	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, rescode);
+	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 }
 
@@ -1026,35 +1040,31 @@ UfsrvConfigGetReqid (Session *sesn_ptr, const char *server_class, int ufsrv_geog
  	PersistanceBackend	*pers_ptr		=	sesn_ptr->persistance_backend;
  	redisReply 					*redis_ptr	=	NULL;
 
- 	if (!(redis_ptr=(*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_REQID_INC, server_class, ufsrv_geogroup)))	goto return_redis_error;
+ 	if (!(redis_ptr = (*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_REQID_INC, server_class, ufsrv_geogroup)))	goto return_redis_error;
 
- 	if (redis_ptr->type==REDIS_REPLY_INTEGER)
- 	{
- 		_RETURN_RESULT_SESN(sesn_ptr, (void *) (uintptr_t)redis_ptr->integer, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
+ 	if (redis_ptr->type == REDIS_REPLY_INTEGER) {
+ 		_RETURN_RESULT_SESN(sesn_ptr, (void *) (uintptr_t)redis_ptr->integer, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA)
  	}
 
- 	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_redis_error;
- 	if (redis_ptr->type==REDIS_REPLY_NIL)		goto return_redis_error;
+ 	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_redis_error;
+ 	if (redis_ptr->type == REDIS_REPLY_NIL)		goto return_redis_error;
 
  	return_redis_error:
- 	if (IS_EMPTY(redis_ptr))
- 	{
+ 	if (IS_EMPTY(redis_ptr)) {
  	 syslog(LOG_DEBUG, "%s {pid:'%lu, o:'%p', cid:'%lu'}: ERROR: CACHE BACKEND: NO REPLY RECEIVED...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr));
  	}
- 	if (redis_ptr->type==REDIS_REPLY_ERROR)
- 	{
+ 	if (redis_ptr->type == REDIS_REPLY_ERROR) {
  	 syslog(LOG_DEBUG, "%s {pid:'%lu, o:'%p', cid:'%lu'}: ERROR: REDIS RESULTSET. Error: '%s'", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), redis_ptr->str);
- 	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+ 	 rescode = RESCODE_BACKEND_DATA; goto return_error;
  	}
- 	if (redis_ptr->type==REDIS_REPLY_NIL)
- 	{
+ 	if (redis_ptr->type == REDIS_REPLY_NIL) {
  	 syslog(LOG_DEBUG, "%s {pid:'%lu, o:'%p', cid:'%lu'}: ERROR: NIL SET",  __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr));
- 	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+ 	 rescode = RESCODE_BACKEND_DATA; goto return_error;
  	}
 
  	return_error:
  	freeReplyObject(redis_ptr);
- 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+ 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
  }
 
@@ -1062,8 +1072,7 @@ UfsrvConfigGetReqid (Session *sesn_ptr, const char *server_class, int ufsrv_geog
 UfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup, int serverid_by_user)
 {
 	_CacheBackendUfsrvConfigGetUfsrverActivityTime (sesn_ptr, server_class, ufsrv_geogroup, serverid_by_user);
-	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))
-	{
+	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
 		return ((time_t)(intptr_t)SESSION_RESULT_USERDATA(sesn_ptr));
 	}
 
@@ -1078,35 +1087,31 @@ _CacheBackendUfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *s
 	PersistanceBackend	*pers_ptr		=	sesn_ptr->persistance_backend;
 	redisReply 					*redis_ptr	=	NULL;
 
-	if (!(redis_ptr=(*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTR_LAST_GET, server_class, ufsrv_geogroup, serverid_by_user)))	goto return_redis_error;
+	if (!(redis_ptr = (*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTR_LAST_GET, server_class, ufsrv_geogroup, serverid_by_user)))	goto return_redis_error;
 
-	if (redis_ptr->type==REDIS_REPLY_ARRAY)// && redis_ptr->integer==1) //it can still suceed with 0 if the element is already in the set
-	{
-		_RETURN_RESULT_SESN(sesn_ptr, (void *) (uintptr_t)strtoul(redis_ptr->element[0]->str, NULL, 10), RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
+	if (redis_ptr->type == REDIS_REPLY_ARRAY) {// && redis_ptr->integer==1) //it can still succeed with 0 if the element is already in the set
+		_RETURN_RESULT_SESN(sesn_ptr, (void *) (uintptr_t)strtoul(redis_ptr->element[0]->str, NULL, 10), RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA)
 	}
 
-	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_redis_error;
-	if (redis_ptr->type==REDIS_REPLY_NIL)		goto return_redis_error;
+	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_redis_error;
+	if (redis_ptr->type == REDIS_REPLY_NIL)		goto return_redis_error;
 
 	return_redis_error:
-	if (IS_EMPTY(redis_ptr))
-	{
+	if (IS_EMPTY(redis_ptr)) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: CACHE BACKEND: NO REPLY RECEIVED...", __func__, pthread_self());
 	}
-	if (redis_ptr->type==REDIS_REPLY_ERROR)
-	{
+	if (redis_ptr->type == REDIS_REPLY_ERROR) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: REDIS RESULTSET. Error: '%s'", __func__, pthread_self(), redis_ptr->str);
-	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+	 rescode = RESCODE_BACKEND_DATA; goto return_error;
 	}
-	if (redis_ptr->type==REDIS_REPLY_NIL)
-	{
+	if (redis_ptr->type == REDIS_REPLY_NIL) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: NIL SET",  __func__, pthread_self());
-	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+	 rescode = RESCODE_BACKEND_DATA; goto return_error;
 	}
 
 	return_error:
 	freeReplyObject(redis_ptr);
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 }
 
@@ -1132,42 +1137,38 @@ _CacheBackendUfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *s
 
  	if (!(redis_ptr=(*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTR_LAST_SET, masterptr->server_class, masterptr->ufsrv_geogroup, masterptr->serverid_by_user, activity_time)))	goto return_redis_error;
 
- 	if (redis_ptr->type==REDIS_REPLY_INTEGER)// && redis_ptr->integer==1) //it can still suceed with 0 if the element is already in the set
- 	{
- 		_RETURN_RESULT_SESN(sesn_ptr, (void *) (uintptr_t)redis_ptr->integer, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
+ 	if (redis_ptr->type == REDIS_REPLY_INTEGER) {// && redis_ptr->integer==1) //it can still suceed with 0 if the element is already in the set
+ 		_RETURN_RESULT_SESN(sesn_ptr, (void *) (uintptr_t)redis_ptr->integer, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA)
  	}
 
- 	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_redis_error;
- 	if (redis_ptr->type==REDIS_REPLY_NIL)		goto return_redis_error;
+ 	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_redis_error;
+ 	if (redis_ptr->type == REDIS_REPLY_NIL)		goto return_redis_error;
 
  	return_redis_error:
- 	if (IS_EMPTY(redis_ptr))
- 	{
+ 	if (IS_EMPTY(redis_ptr)) {
  	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: CACHE BACKEND: NO REPLY RECEIVED...", __func__, pthread_self());
  	}
- 	if (redis_ptr->type==REDIS_REPLY_ERROR)
- 	{
+ 	if (redis_ptr->type == REDIS_REPLY_ERROR) {
  	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: REDIS RESULTSET. Error: '%s'", __func__, pthread_self(), redis_ptr->str);
- 	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+ 	 rescode = RESCODE_BACKEND_DATA; goto return_error;
  	}
- 	if (redis_ptr->type==REDIS_REPLY_NIL)
- 	{
+ 	if (redis_ptr->type == REDIS_REPLY_NIL) {
  	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: NIL SET",  __func__, pthread_self());
- 	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+ 	 rescode = RESCODE_BACKEND_DATA; goto return_error;
  	}
 
  	return_error:
  	freeReplyObject(redis_ptr);
- 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+ 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
  }
 
 bool
 UfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, time_t activity_time)
 {
-	UFSRVResult 	res={0};
+	UFSRVResult 	res = {0};
 	_CacheBackendUfsrvConfigRegisterUfsrverActivity (pers_ptr, activity_time, &res);
-	 if (res.result_type==RESULT_TYPE_SUCCESS)	return  true;
+	 if (res.result_type == RESULT_TYPE_SUCCESS)	return  true;
 
 	 return false;
 }
@@ -1184,17 +1185,15 @@ _CacheBackendUfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, t
 	int rescode;
 	redisReply 					*redis_ptr	=	NULL;
 
-	if (!(redis_ptr=(*pers_ptr->send_command_sessionless)(pers_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTR_LAST_SET, masterptr->server_class, masterptr->ufsrv_geogroup, masterptr->serverid_by_user, activity_time)))	goto redis_connectivity_error;
+	if (!(redis_ptr = (*pers_ptr->send_command_sessionless)(pers_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTR_LAST_SET, masterptr->server_class, masterptr->ufsrv_geogroup, masterptr->serverid_by_user, activity_time)))	goto redis_connectivity_error;
 
-//	if (redis_ptr->type==REDIS_REPLY_INTEGER)// && redis_ptr->integer==1) //it can still suceed with 0 if the element is already in the set
-	if ((redis_ptr->type == REDIS_REPLY_STATUS) && (strcasecmp(redis_ptr->str,"OK") == 0))
-	{
+	if ((redis_ptr->type == REDIS_REPLY_STATUS) && (strcasecmp(redis_ptr->str,"OK") == 0)) {
 		//NOTE: redis_ptr->integer is not relevant for HMSET
-		_RETURN_RESULT_RES(res_ptr, (void *) (uintptr_t)redis_ptr->integer, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
+		_RETURN_RESULT_RES(res_ptr, (void *) (uintptr_t)redis_ptr->integer, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA)
 	}
 
-	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto redis_error_reply;
-	if (redis_ptr->type==REDIS_REPLY_NIL)		goto redis_error_nil;
+	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto redis_error_reply;
+	if (redis_ptr->type == REDIS_REPLY_NIL)		goto redis_error_nil;
 
 	redis_connectivity_error:
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: CACHE BACKEND: NO REPLY RECEIVED...", __func__, pthread_self());
@@ -1202,17 +1201,17 @@ _CacheBackendUfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, t
 
 	redis_error_reply:
 	syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: REDIS RESULTSET. Error: '%s'", __func__, pthread_self(), redis_ptr->str);
-	rescode=RESCODE_BACKEND_DATA; goto return_error_free;
+	rescode = RESCODE_BACKEND_DATA; goto return_error_free;
 
 	redis_error_nil:
   syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: NIL SET",  __func__, pthread_self());
-	rescode=RESCODE_BACKEND_DATA; goto return_error_free;
+	rescode = RESCODE_BACKEND_DATA; goto return_error_free;
 
 	return_error_free:
 	freeReplyObject(redis_ptr);
 
 	return_error:
-	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, rescode);
+	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 }
 
@@ -1417,4 +1416,9 @@ _CacheBackendUfsrvConfigGetGeogroupSize (Session *sesn_ptr)
 	freeReplyObject(redis_ptr);
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
 
+}
+
+__attribute_const__ int UfsrvGetServerId()
+{
+  return masterptr->serverid;
 }

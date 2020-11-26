@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2020 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -22,7 +22,8 @@
 #include <main.h>
 #include <delegator_session_worker_thread.h>
 #include <adt_locking_lru.h>
-#include <recycler.h>
+#include <recycler/recycler.h>
+#include <include/nportredird.h>
 
 #ifdef CONFIG_USE_ANDERSON_SPINLOCK
 #define	SPIN_LOCK() \
@@ -59,6 +60,8 @@ typedef struct LockingLru {
 	HashTable 			*hashtable;
 } LockingLru;
 #endif
+
+extern ufsrv *const masterptr;
 
 static LruClientData *_DefaultLruItemExtractor (LruClientData *client_data_ptr);
 static char *_DefaultLruItemPrinter (LruClientData *client_data_ptr, size_t);
@@ -482,7 +485,9 @@ InitLockingLruItemRecyclerTypePool ()
 {
 	#define _LockingLruItem_EXPANSION_THRESHOLD (1024*10)
 	if (IS_EMPTY(LockingLruItemPoolHandle)) {
-		LockingLruItemPoolHandle = RecyclerInitTypePool ("LockingLruItem", sizeof(LockingLruItem), _LockingLruItem_EXPANSION_THRESHOLD, &ops_lockinglruitem_descriptor);
+		LockingLruItemPoolHandle = RecyclerInitTypePool("LockingLruItem", sizeof(LockingLruItem), _CONF_SESNMEMSPECS_ALLOC_GROUPS(masterptr),
+                                                    _LockingLruItem_EXPANSION_THRESHOLD,
+                                                    &ops_lockinglruitem_descriptor);
 
 		syslog(LOG_INFO, "%s: Initialised TypePool: '%s'. TypeNumber:'%d', Block Size:'%lu'", __func__, LockingLruItemPoolHandle->type_name, LockingLruItemPoolHandle->type, LockingLruItemPoolHandle->blocksz);
 	}

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2020 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -15,15 +15,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-//
-// Created by devops on 5/15/19.
-//
-
 #ifndef UFSRV_VERSION_H
 #define UFSRV_VERSION_H
 
 #define UFSRV_MAJOR 2
-#define UFSRV_MINOR 2
-#define UFSRV_PATCH 1
+#define UFSRV_MINOR 15
+#define UFSRV_PATCH 41
 
 #endif //UFSRV_VERSION_H

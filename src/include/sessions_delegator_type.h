@@ -1,26 +1,35 @@
-/*
- * sessions_delegator_type.h
+/**
+ * Copyright (C) 2015-2020 unfacd works
  *
- *  Created on: 28 Jul 2016
- *      Author: ayman
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 #ifndef SRC_INCLUDE_SESSIONS_DELEGATOR_TYPE_H_
 #define SRC_INCLUDE_SESSIONS_DELEGATOR_TYPE_H_
 
 #include <session_type.h>
-#include <instance_type.h>
+#include <recycler/instance_type.h>
 #include <pthread.h>
-#include <queue.h>
+#include <uflib/adt/adt_queue.h>
 #include <hashtable.h>
-#include <list.h>
-#include <ufsrvmsgqueue_type.h>
-#include <instrumentation_backend.h>
-#include <db_sql.h>
-#include <adt_lamport_queue.h>
+#include <uflib/adt/adt_linkedlist.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue_type.h>
+#include <ufsrv_core/instrumentation/instrumentation_backend.h>
+#include <uflib/db/db_sql.h>
+#include <uflib/adt/adt_lamport_queue.h>
 
 enum  WorkerType {
-	WORKERTYPE_SESSIONWORKER=1,
+	WORKERTYPE_SESSIONWORKER = 1,
 	WORKERTYPE_UFSRVWORKER
 } ;
 
@@ -72,6 +81,7 @@ struct SessionsDelegator {
 #endif
  } new_connections;
 
+  //todo: why is this used for Timermanager thread?
   struct {
    Queue				queue;//sessions which have been previously suspended and never reclaimed within set timeout period
    pthread_rwlock_t 	queue_rwlock;

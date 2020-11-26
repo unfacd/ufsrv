@@ -36,6 +36,7 @@
 #include <vector.h>
 #include <http_session_type.h>
 #include <protocol_http_io.h>
+#include <recycler/recycler.h>
 
 
 /// @defgroup response Response. Write response data to client: headers, content body...
@@ -45,8 +46,8 @@ const char *onion_response_code_description(int code);
 // DONT_USE_DATE_HEADER is not defined anywhere, but here just in case needed in the future.
 
 #ifndef DONT_USE_DATE_HEADER
-static volatile time_t onion_response_last_time=0;
-static char *onion_response_last_date_header=NULL;
+static volatile time_t onion_response_last_time = 0;
+static char *onion_response_last_date_header = NULL;
 #ifdef HAVE_PTHREADS
 pthread_rwlock_t onion_response_date_lock=PTHREAD_RWLOCK_INITIALIZER;
 #endif
@@ -77,10 +78,10 @@ pthread_rwlock_t onion_response_date_lock=PTHREAD_RWLOCK_INITIALIZER;
 onion_response *onion_response_initialise(Session *sesn_ptr)
  {
 	//onion_response *res=malloc(sizeof(onion_response));
-	 onion_response *res=SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr);
-	 onion_request *req=SESSION_HTTPSESN_REQUEST_PTR(sesn_ptr);
+	 onion_response *res = SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr);
+	 onion_request *req = SESSION_HTTPSESN_REQUEST_PTR(sesn_ptr);
 
-	res->request=req;
+	res->request = req;
 	res->headers=onion_dict_new();
 	res->code=200; // The most normal code, so no need to overwrite it in other codes.
 	res->flags=0;
@@ -255,14 +256,13 @@ void onion_response_destruct(Session *sesn_ptr)
 
 	onion_dict_free(SESSION_HTTPSESN_RESPONSE(sesn_ptr).headers);
 
-	SESSION_HTTPSESN_RESPONSE(sesn_ptr).flags=0;
+	SESSION_HTTPSESN_RESPONSE(sesn_ptr).flags = 0;
 
 	//AA- we don't kill as it is ot pointer
 	//free(res);
 
 	return ;
 }
-
 
 /**
  * @short Frees the memory consumed by this object
@@ -274,7 +274,8 @@ void onion_response_destruct(Session *sesn_ptr)
  * @returns Whether the connection should be closed or not, or an error status to be handled by server.
  * @see onion_connection_status
  */
-onion_connection_status onion_response_free(Session *sesn_ptr, onion_response *res)
+onion_connection_status
+onion_response_free(InstanceHolderForSession *instance_sesn_ptr, onion_response *res)
 {
 	// write pending data.
 
@@ -287,24 +288,24 @@ onion_connection_status onion_response_free(Session *sesn_ptr, onion_response *r
 		return OCS_CLOSE_CONNECTION;
 	}
 
-	if (!(res->flags&OR_HEADER_SENT) && res->buffer_pos<sizeof(res->buffer))
-		onion_response_set_length(res, res->buffer_pos);
+	if (!(res->flags&OR_HEADER_SENT) && res->buffer_pos<sizeof(res->buffer))  onion_response_set_length(res, res->buffer_pos);
+
+	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
 	//TODO: modify write
-	if (!(res->flags&OR_HEADER_SENT))
-		onion_response_write_headers(sesn_ptr, res);
+	if (!(res->flags&OR_HEADER_SENT)) onion_response_write_headers(instance_sesn_ptr, res);
 
-	onion_response_flush(sesn_ptr, res);
-	onion_request *req=res->request;
+	onion_response_flush(instance_sesn_ptr, res);
+	onion_request *req = res->request;
 
 	if (res->flags&OR_CHUNKED) { // Set the chunked data end.
 		//AA-
 		//req->connection.listen_point->write(req, "0\r\n\r\n",5);
 
-		HttpSendMessage (sesn_ptr, "0\r\n\r\n", 5);
+		HttpSendMessage (instance_sesn_ptr, "0\r\n\r\n", 5);
 	}
 
-	int r=OCS_CLOSE_CONNECTION;
+	int r = OCS_CLOSE_CONNECTION;
 
 	//this comment is not applicable when code below is enabled
 	//AA+ we do this check as a stand-alone request in IsConnectionKeepAlive(). In the interested of keeping this function
@@ -312,8 +313,7 @@ onion_connection_status onion_response_free(Session *sesn_ptr, onion_response *r
 
 #if 1
 	// it is a rare occasion that there is no request, but although unlikely, it may happen
-	if (req)
-	{
+	if (req) {
 		// keep alive only on HTTP/1.1.
 		syslog(LOG_DEBUG, "%s: keep alive [req wants] %d && ([SENDFILE] %d || [skip] %d || [lenght ok] %d==%d || [chunked] %d)", __func__,
 								onion_request_keep_alive(req), res->flags&OR_RES_SENDFILE_INROGRESS, res->flags&OR_SKIP_CONTENT,res->length, res->sent_bytes, res->flags&OR_CHUNKED);
@@ -322,7 +322,7 @@ onion_connection_status onion_response_free(Session *sesn_ptr, onion_response *r
 				(res->flags&OR_RES_SENDFILE_INROGRESS) ||
 				((onion_request_keep_alive(req)) && ((res->flags&OR_SKIP_CONTENT) || (res->length==res->sent_bytes) || (res->flags&OR_CHUNKED)))
 			 )
-			r=OCS_KEEP_ALIVE;
+			r = OCS_KEEP_ALIVE;
 	}
 #endif
 
@@ -335,7 +335,6 @@ onion_connection_status onion_response_free(Session *sesn_ptr, onion_response *r
 
 	return r;
 }
-
 
 /**
  * @short Adds a header to the response object
@@ -375,19 +374,20 @@ void onion_response_set_code(onion_response *res, int  code){
 	res->code=code;
 }
 
-static void write_header(Session *sesn_ptr, /*onion_response *res,*/ const char *key, const char *value, int flags);
+static void write_header(InstanceHolderForSession *instance_sesn_ptr, /*onion_response *res,*/ const char *key, const char *value, int flags);
 /**
  * @short Helper that is called on each header, and writes the header
  * @memberof onion_response_t
  * @ingroup response
  */
-static void write_header(Session *sesn_ptr, /*onion_response *res,*/ const char *key, const char *value, int flags){
+static void write_header(InstanceHolderForSession *instance_sesn_ptr, /*onion_response *res,*/ const char *key, const char *value, int flags){
 	//ONION_DEBUG0("Response header: %s: %s",key, value);
+  Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
-	onion_response_write0(sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)/*res*/, key);
-	onion_response_write(sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)/*res*/, ": ",2);
-	onion_response_write0(sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)/*res*/, value);
-	onion_response_write(sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)/*res*/, "\r\n",2);
+	onion_response_write0(instance_sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)/*res*/, key);
+	onion_response_write(instance_sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)/*res*/, ": ",2);
+	onion_response_write0(instance_sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)/*res*/, value);
+	onion_response_write(instance_sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)/*res*/, "\r\n",2);
 }
 
 #define CONNECTION_CLOSE 			"Connection: Close\r\n"
@@ -410,56 +410,57 @@ static void write_header(Session *sesn_ptr, /*onion_response *res,*/ const char 
  *
  * @returns 0 if should procced to normal data write, or OR_SKIP_CONTENT if should not write content.
  */
-int onion_response_write_headers(Session *sesn_ptr, onion_response *res){
-	if (!res->request){
+int onion_response_write_headers(InstanceHolderForSession *instance_sesn_ptr, onion_response *res) {
+	if (!res->request) {
 		syslog(LOG_DEBUG, "Bad formed response. Need a request at creation. Will not write headers.");
+
 		return -1;
 	}
 
-	res->flags|=OR_HEADER_SENT; // I Set at the begining so I can do normal writing.
-	res->request->flags|=OR_HEADER_SENT;
-	char chunked=0;
+	res->flags |= OR_HEADER_SENT; // I Set at the begining so I can do normal writing.
+	res->request->flags |= OR_HEADER_SENT;
+	char chunked = 0;
 
-	if (res->request->flags&OR_HTTP11){
-		onion_response_printf(sesn_ptr, res, "HTTP/1.1 %d %s\r\n",res->code, onion_response_code_description(res->code));
+	if (res->request->flags&OR_HTTP11) {
+		onion_response_printf(instance_sesn_ptr, res, "HTTP/1.1 %d %s\r\n",res->code, onion_response_code_description(res->code));
 #ifdef __UF_FULLDEBUG
 		syslog(LOG_DEBUG, "Response header: HTTP/1.1 %d %s",res->code, onion_response_code_description(res->code));
 #endif
 
 		if (!(res->flags&OR_LENGTH_SET)  && onion_request_keep_alive(res->request)){
-			onion_response_write(sesn_ptr, res, CONNECTION_CHUNK_ENCODING, sizeof(CONNECTION_CHUNK_ENCODING)-1);
-			chunked=1;
+			onion_response_write(instance_sesn_ptr, res, CONNECTION_CHUNK_ENCODING, sizeof(CONNECTION_CHUNK_ENCODING)-1);
+			chunked = 1;
 		}
 	} else	{
-		onion_response_printf(sesn_ptr, res, "HTTP/1.0 %d %s\r\n",res->code, onion_response_code_description(res->code));
+		onion_response_printf(instance_sesn_ptr, res, "HTTP/1.0 %d %s\r\n",res->code, onion_response_code_description(res->code));
 		if (res->flags&OR_LENGTH_SET) // On HTTP/1.0, i need to state it. On 1.1 it is default.
-			onion_response_write(sesn_ptr, res, CONNECTION_KEEP_ALIVE, sizeof(CONNECTION_KEEP_ALIVE)-1);
+			onion_response_write(instance_sesn_ptr, res, CONNECTION_KEEP_ALIVE, sizeof(CONNECTION_KEEP_ALIVE)-1);
 	}
 
 	if (!(res->flags&OR_LENGTH_SET) && !chunked && !(res->flags&OR_CONNECTION_UPGRADE))
-		onion_response_write(sesn_ptr, res, CONNECTION_CLOSE, sizeof(CONNECTION_CLOSE)-1);
+		onion_response_write(instance_sesn_ptr, res, CONNECTION_CLOSE, sizeof(CONNECTION_CLOSE)-1);
 
 	if (res->flags&OR_CONNECTION_UPGRADE)
-		onion_response_write(sesn_ptr, res, CONNECTION_UPGRADE, sizeof(CONNECTION_UPGRADE)-1);
+		onion_response_write(instance_sesn_ptr, res, CONNECTION_UPGRADE, sizeof(CONNECTION_UPGRADE)-1);
 
-	onion_dict_preorder(res->headers, write_header, sesn_ptr);//res);
+	onion_dict_preorder(res->headers, write_header, instance_sesn_ptr);//res);
 
 	if (res->request->session_id && (onion_dict_count(res->request->session)>0)) // I have session with something, tell user
-		onion_response_printf(sesn_ptr, res, "Set-Cookie: sessionid=%s; httponly; Path=/\n", res->request->session_id);
+		onion_response_printf(instance_sesn_ptr, res, "Set-Cookie: sessionid=%s; httponly; Path=/\n", res->request->session_id);
 
-	onion_response_write(sesn_ptr, res,"\r\n",2);
+	onion_response_write(instance_sesn_ptr, res,"\r\n",2);
 
 	//syslog(LOG_DEBUG, "Headers written");
 	res->sent_bytes=-res->buffer_pos; // the header size is not counted here. It will add again so start negative.
 
-	if ((res->request->flags&OR_METHODS)==OR_HEAD){
-		onion_response_flush(sesn_ptr, res);
-		res->flags|=OR_SKIP_CONTENT;
+	if ((res->request->flags&OR_METHODS) == OR_HEAD){
+		onion_response_flush(instance_sesn_ptr, res);
+		res->flags |= OR_SKIP_CONTENT;
 		return OR_SKIP_CONTENT;
 	}
 	if (chunked){
-		onion_response_flush(sesn_ptr, res);
-		res->flags|=OR_CHUNKED;
+		onion_response_flush(instance_sesn_ptr, res);
+		res->flags |= OR_CHUNKED;
 	}
 
 	return 0;
@@ -482,18 +483,23 @@ int onion_response_write_headers(Session *sesn_ptr, onion_response *res){
  *
  * @returns The bytes written, normally just length. On error returns OCS_CLOSE_CONNECTION.
  */
-ssize_t onion_response_write(Session *sesn_ptr, onion_response *res, const char *data, size_t length)
+ssize_t
+onion_response_write(InstanceHolderForSession *instance_sesn_ptr, onion_response *res, const char *data, size_t length)
 {
 	if (res->flags&OR_SKIP_CONTENT) {
-		if (!(res->flags&OR_HEADER_SENT)){ // Automatic header write
-			onion_response_write_headers(sesn_ptr, res);
+		if (!(res->flags&OR_HEADER_SENT)) { // Automatic header write
+			onion_response_write_headers(instance_sesn_ptr, res);
 		}
-		syslog(LOG_DEBUG, "%s (cid:'%lu'): Skipping content as we are in HEAD mode", __func__, SESSION_ID(sesn_ptr));
+
+#ifdef __UF_TESTING
+		syslog(LOG_DEBUG, "%s {pid:'%lu'}: Skipping content as we are in HEAD mode", __func__, pthread_self());
+#endif
+
 		return OCS_CLOSE_CONNECTION;
 	}
 
 	if (length == 0) {
-		onion_response_flush(sesn_ptr, res);
+		onion_response_flush(instance_sesn_ptr, res);
 		return 0;
 	}
 
@@ -506,11 +512,15 @@ ssize_t onion_response_write(Session *sesn_ptr, onion_response *res, const char 
 	//we are over capacity
 	while (res->buffer_pos + l > sizeof(res->buffer)) {
 		int wb = sizeof(res->buffer) - res->buffer_pos; //get available capacity in the buf, could be less than length
-		syslog(LOG_DEBUG, "%s (cid:'%lu'): BUFFER OVER CAPACITY: buffer position: '%lu'. AMOUNT TO BE COPIED: '%d' ", __func__, SESSION_ID(sesn_ptr), res->buffer_pos, wb);
+
+#ifdef __UF_TESTING
+		syslog(LOG_DEBUG, "%s {pid:'%lu'}: BUFFER OVER CAPACITY: buffer position: '%lu'. AMOUNT TO BE COPIED: '%d' ", __func__, pthread_self(), res->buffer_pos, wb);
+#endif
+
 		memcpy(&res->buffer[res->buffer_pos], data, wb);//copy exactly to calculated capacity
 
 		res->buffer_pos = sizeof(res->buffer);//
-		if (onion_response_flush(sesn_ptr, res) < 0)
+		if (onion_response_flush(instance_sesn_ptr, res) < 0)
 			return w;//could be zeero
 
 		l -= wb;//if 0 , we wrtitten the full lot, we have some left over due to have reached buffer capacity
@@ -540,28 +550,29 @@ ssize_t onion_response_write(Session *sesn_ptr, onion_response *res, const char 
  * 	0 blokcing
  * 	+1 on success
  */
-int onion_response_flush(Session *sesn_ptr, onion_response *res)
+int onion_response_flush (InstanceHolderForSession *instance_sesn_ptr, onion_response *res)
 {
-	res->sent_bytes+=res->buffer_pos;
-	res->sent_bytes_total+=res->buffer_pos;
+	res->sent_bytes += res->buffer_pos;
+	res->sent_bytes_total += res->buffer_pos;
 
-	if(res->buffer_pos==0) // Not used.
+	if(res->buffer_pos == 0) // Not used.
 		return 0;
 
-	if (!(res->flags&OR_HEADER_SENT))
-	{ // Automatic header write
+	if (!(res->flags&OR_HEADER_SENT)) { // Automatic header write
 
 #ifdef __UF_FULLDEBUG
 		syslog(LOG_DEBUG, "%s (pid:'%lu', cid:'%lu'): Doing fast header hack: store current buffer, send current headers. Resend buffer.", __func__, SESSION_PID(sesn_ptr), SESSION_ID(sesn_ptr));
 #endif
 
 		char tmpb[sizeof(res->buffer)];
-		int tmpp=res->buffer_pos;
+		int tmpp = res->buffer_pos;
 		memcpy(tmpb, res->buffer, res->buffer_pos);
-		res->buffer_pos=0;
+		res->buffer_pos = 0;
 
-		onion_response_write_headers(sesn_ptr, res);
-		onion_response_write( sesn_ptr, res, tmpb, tmpp );
+		Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
+
+		onion_response_write_headers(instance_sesn_ptr, res);
+		onion_response_write(instance_sesn_ptr, res, tmpb, tmpp );
 
 		return 1;//return 0;
 	}
@@ -573,36 +584,35 @@ int onion_response_flush(Session *sesn_ptr, onion_response *res)
 	syslog(LOG_DEBUG, "Flushing: %ld bytes", res->buffer_pos);
 #endif
 
-	onion_request *req=res->request;
+	onion_request *req = res->request;
 
 	//AA- use write function
 	//ssize_t (*write)(onion_request *, const char *data, size_t len);
 	//write=req->connection.listen_point->write;
 
 	ssize_t w;
-	off_t pos=0;
+	off_t pos = 0;
 	//ONION_DEBUG0("Write %d bytes",res->buffer_pos);
-	if (res->flags&OR_CHUNKED)
-	{
+	if (res->flags&OR_CHUNKED) {
 		char tmp[16];
 		snprintf(tmp,sizeof(tmp),"%X\r\n",(unsigned int)res->buffer_pos);
 		//if ( (w=write(req, tmp, strlen(tmp)))<=0){
-		if ( (w=HttpSendMessage (sesn_ptr, tmp, strlen(tmp)))<0)
-		{ //not '<0' as opposed to '<=0'
+		if ((w = HttpSendMessage(instance_sesn_ptr, tmp, strlen(tmp))) < 0) { //not '<0' as opposed to '<=0'
 			syslog(LOG_DEBUG, "%s: Error writing chunk encoding length. Aborting write.", __func__);
+
 			return OCS_CLOSE_CONNECTION;
 		}
 		syslog(LOG_DEBUG, "%s: Write %ld-%ld bytes", __func__, res->buffer_pos,w);
 	}
 
-	if ((w=HttpSendMessage (sesn_ptr, &res->buffer[pos], res->buffer_pos))<0)
-	{ //not '<0' as opposed to '<=0'
+	if ((w = HttpSendMessage(instance_sesn_ptr, &res->buffer[pos], res->buffer_pos)) < 0) { //not '<0' as opposed to '<=0'
 		syslog(LOG_DEBUG, "%s: Error writing chunk encoding length. Aborting write.", __func__);
+
 		return OCS_CLOSE_CONNECTION;
 	}
 
 	//AA+ necessary to to prevent duplicate output of the same buffer
-	res->buffer_pos=0;
+	res->buffer_pos = 0;
 
 #if 0
 	//while ( (w=write(req, &res->buffer[pos], res->buffer_pos)) != res->buffer_pos){
@@ -642,11 +652,10 @@ int onion_response_flush(Session *sesn_ptr, onion_response *res)
 	return 1;//
 }
 
-
 /// Writes a 0-ended string to the response.
 /// @ingroup response
-ssize_t onion_response_write0(Session *sesn_ptr, onion_response *res, const char *data){
-	return onion_response_write(sesn_ptr, res, data, strlen(data));
+ssize_t onion_response_write0(InstanceHolderForSession *instance_sesn_ptr, onion_response *res, const char *data){
+	return onion_response_write(instance_sesn_ptr, res, data, strlen(data));
 }
 
 /**
@@ -655,27 +664,26 @@ ssize_t onion_response_write0(Session *sesn_ptr, onion_response *res, const char
  *
  * The encoding mens that <code><html> whould become &lt;html&gt;</code>
  */
-ssize_t onion_response_write_html_safe(Session *sesn_ptr, onion_response *res, const char *data){
+ssize_t onion_response_write_html_safe(InstanceHolderForSession *instance_sesn_ptr, onion_response *res, const char *data){
 	char *tmp=onion_html_quote(data);
 	if (tmp){
-		int r=onion_response_write0(sesn_ptr, res, tmp);
+		int r=onion_response_write0(instance_sesn_ptr, res, tmp);
 		free(tmp);
 		return r;
 	}
 	else
-		return onion_response_write0(sesn_ptr, res, data);
+		return onion_response_write0(instance_sesn_ptr, res, data);
 }
-
 
 /**
  * @short Writes some data to the response. Using sprintf format strings.
  * @memberof onion_response_t
  * @ingroup response
  */
-ssize_t onion_response_printf(Session *sesn_ptr, onion_response *res, const char *fmt, ...){
+ssize_t onion_response_printf(InstanceHolderForSession *instance_sesn_ptr, onion_response *res, const char *fmt, ...){
 	va_list ap;
 	va_start(ap, fmt);
-	ssize_t ret=onion_response_vprintf(sesn_ptr, res, fmt, ap);
+	ssize_t ret=onion_response_vprintf(instance_sesn_ptr, res, fmt, ap);
 	va_end(ap);
 	return ret;
 }
@@ -687,7 +695,7 @@ ssize_t onion_response_printf(Session *sesn_ptr, onion_response *res, const char
  * @param args va_list of arguments
  * @memberof onion_response_t
  */
-ssize_t onion_response_vprintf(Session *sesn_ptr, onion_response *res, const char *fmt, va_list args)
+ssize_t onion_response_vprintf(InstanceHolderForSession *instance_sesn_ptr, onion_response *res, const char *fmt, va_list args)
 {
 	char temp[512];
 	va_list argz;
@@ -700,7 +708,7 @@ ssize_t onion_response_vprintf(Session *sesn_ptr, onion_response *res, const cha
 		return -1;
 	}
 	else if (l<sizeof(temp)) {
-		return onion_response_write(sesn_ptr, res, temp, l);
+		return onion_response_write(instance_sesn_ptr, res, temp, l);
 	}
 	else {
 		ssize_t s;
@@ -712,14 +720,61 @@ ssize_t onion_response_vprintf(Session *sesn_ptr, onion_response *res, const cha
 			return -1;
 		}
 		vsnprintf(buf, l+1, fmt, args);
-		s = onion_response_write (sesn_ptr, res, buf, l);
+		s = onion_response_write (instance_sesn_ptr, res, buf, l);
 		free (buf);
 		return s;
 	}
 }
 
+/**
+ * @short Shortcut for fast responses, like errors, with extra headers
+ * @ingroup shortcuts
+ *
+ * Prepares a fast response. You pass only the request, the text and the code, and it do the full response
+ * object and sends the data.
+ *
+ * On this version you also pass a NULL terminated list of headers, in key, value pairs.
+ */
+onion_connection_status onion_shortcut_response_extra_headers(InstanceHolderForSession *instance_sesn_ptr, const char *response, int code, onion_request *req, onion_response *res, ...) {
+  unsigned int l = strlen(response);
+  const char *key, *value;
 
+  onion_response_set_length(res, l);
+  onion_response_set_code(res, code);
 
+  va_list ap;
+  va_start(ap, res);
+  while ((key = va_arg(ap, const char *))) {
+    value = va_arg(ap, const char *);
+    if (key && value)
+      onion_response_set_header(res, key, value);
+    else
+      break;
+  }
+  va_end(ap);
+
+  onion_response_write_headers(instance_sesn_ptr, res);
+
+  onion_response_write(instance_sesn_ptr, res, response, l);
+  return OCS_PROCESSED;
+}
+
+/**
+ * @short Shortcut to ease a redirect.
+ * @ingroup shortcuts
+ *
+ * It can be used directly as a handler, or be called from a handler.
+ *
+ * The browser message is fixed; if need more flexibility, create your own redirector.
+ */
+onion_connection_status onion_shortcut_redirect(InstanceHolderForSession *instance_sesn_ptr, const char *newurl) {
+  Session *sesn_ptr         = SessionOffInstanceHolder(instance_sesn_ptr);
+  onion_response 	*res      = SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr);
+  onion_request   *req      = SESSION_HTTPSESN_REQUEST_PTR(sesn_ptr);
+  return onion_shortcut_response_extra_headers(instance_sesn_ptr, "<h1>302 - Found</h1>",
+                                               HTTP_REDIRECT, req, res,
+                                               "Location", newurl, NULL);
+}
 
 /**
  * @short Returns a const char * string with the code description.

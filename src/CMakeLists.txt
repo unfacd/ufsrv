@@ -16,9 +16,13 @@ target_include_directories(${EXEC_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_include_directories(${EXEC_NAME} PRIVATE /opt/include)
 target_include_directories(${EXEC_NAME} PRIVATE /opt/mysql/include)
 target_include_directories(${EXEC_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/hiredis/include)
-
-#add_library(boo SHARED IMPORTED)
-#set_target_properties(boo PROPERTIES IMPORTED_LOCATION "/path/to/boo/library")
+target_include_directories(${EXEC_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/uflib/include)
+target_include_directories(${EXEC_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ufsrv_core/include)
+target_include_directories(${EXEC_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ufsrvrest/include)
+target_include_directories(${EXEC_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ufsrvwebsock/include)
+target_include_directories(${EXEC_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/http_rest)
+target_include_directories(${EXEC_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/recycler)
+target_include_directories(${EXEC_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/zkgroup_utils)
 
 #system libraries
 find_package(Threads REQUIRED)
@@ -39,7 +43,9 @@ add_library(crypto STATIC IMPORTED include/config_nonpublic.h)
 set_target_properties(crypto PROPERTIES IMPORTED_LOCATION "/opt/lib/libcrypto.a")
 add_library(mysqlclient SHARED IMPORTED)
 set_target_properties(mysqlclient PROPERTIES IMPORTED_LOCATION "/opt/lib/libmysqlclient.so")
+add_library(zkgroup SHARED IMPORTED)
+set_target_properties(zkgroup PROPERTIES IMPORTED_LOCATION "/opt/lib/libzkgroup.so")
 
-set ( PROJECT_LINK_LIBS utf8proc lua ${CMAKE_THREAD_LIBS_INIT} nsl json-c curl ssl crypto resolv m mysqlclient dl systemd bsd)
+set (PROJECT_LINK_LIBS utf8proc lua ${CMAKE_THREAD_LIBS_INIT} nsl json-c curl ssl crypto resolv m mysqlclient zkgroup dl systemd bsd)
 
-target_link_libraries(${EXEC_NAME} LINK_PUBLIC lzf hiredis curve25519 ${PROJECT_LINK_LIBS})
+target_link_libraries(${EXEC_NAME} LINK_PUBLIC ufsrvrest ufsrvwebsock ufsrv_core uflib protobuf-c http_rest zkgroup_utils recycler lzf hiredis curve25519 k12 ${PROJECT_LINK_LIBS})

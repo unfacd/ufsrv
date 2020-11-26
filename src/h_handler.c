@@ -21,10 +21,6 @@
 	<http://www.apache.org/licenses/LICENSE-2.0>.
 	*/
 
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
-
 #include <main.h>
 
 #ifdef __DEBUG__
@@ -33,10 +29,11 @@
 #endif
 #endif
 
-#include "include/h_handler.h"
+#include "h_handler.h"
 #include <url.h>
 #include <response.h>
 #include <request.h>
+#include <recycler/recycler.h>
 
 /// @defgroup handler Handler. Creates and manages the user handlers so that onion can call them when required.
 
@@ -51,11 +48,12 @@
  *
  * @returns If can not, returns OCS_NOT_PROCESSED (0), else the onion_connection_status. (normally OCS_PROCESSED)
  */
-onion_connection_status onion_handler_handle(Session *sesn_ptr, onion_handler *handler, onion_request *request, onion_response *response){
+onion_connection_status onion_handler_handle(InstanceHolderForSession *instance_sesn_ptr, onion_handler *handler, onion_request *request, onion_response *response){
 	onion_connection_status res;
+
+
 	while (handler){
-		if (handler->handler)
-		{
+		if (handler->handler) {
 #ifdef __DEBUG0__
 //			char **bs=backtrace_symbols((void * const *)&handler->handler, 1);
 //			ONION_DEBUG0("Calling handler: %s",bs[0]);
@@ -64,19 +62,18 @@ onion_connection_status onion_handler_handle(Session *sesn_ptr, onion_handler *h
 //			   routine, not our onion_low_free ! */
 //			onion_low_free(bs); /* Can't be onion_low_free.... */
 #endif
-			res=handler->handler(sesn_ptr, handler->priv_data, request, response);//callback function
+			res = handler->handler(instance_sesn_ptr, handler->priv_data, request, response);//callback function
 
 #if __FULL_DEBUG
 			syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): HANDLER RETURNED: '%d'", __func__, pthread_self(), SESSION_ID(sesn_ptr), res);
 #endif
 
-			if (res)
-			{
+			if (res) {
 				// write pending data.
 				if (!(response->flags&OR_HEADER_SENT) && response->buffer_pos<sizeof(response->buffer))
 					onion_response_set_length(response, response->buffer_pos);
 
-				onion_response_flush(sesn_ptr, response);
+				onion_response_flush(instance_sesn_ptr, response);
 
 				/*if (res==OCS_WEBSOCKET){
 					if (request->websocket)
@@ -89,7 +86,7 @@ onion_connection_status onion_handler_handle(Session *sesn_ptr, onion_handler *h
 				return res;
 			}
 		}
-		handler=handler->next;
+		handler = handler->next;
 	}
 	return OCS_NOT_PROCESSED;
 }
@@ -174,7 +171,7 @@ onion_url *onion_root_url(void)
 	}*/
 
 	//ONION_DEBUG("New root url handler");
-	onion_url *url=onion_url_new();
+	onion_url *url = onion_url_new();
 	//ms->root_handler=(onion_handler*)url;
 	return url;
 }
@@ -183,8 +180,9 @@ onion_url *onion_root_url(void)
 #define ERROR_403 "<h1>403 - Forbidden</h1>"
 #define ERROR_404 "<h1>404 - Not found</h1>"
 #define ERROR_501 "<h1>501 - Not implemented</h1>"
+
 //AA+ ported across
-int onion_default_error(Session *sesn_ptr, void *handler, onion_request *req, onion_response *res){
+int onion_default_error(InstanceHolderForSession *instance_sesn_ptr, void *handler, onion_request *req, onion_response *res){
 	const char *msg;
 	int l;
 	int code;
@@ -211,13 +209,13 @@ int onion_default_error(Session *sesn_ptr, void *handler, onion_request *req, on
 			break;
 	}
 
-	syslog(LOG_DEBUG, "%s: (pid:'%lu', cid:'%lu')Internally managed error: %s, code %d.", __func__, pthread_self(), SESSION_ID(sesn_ptr), msg, code);
+	syslog(LOG_DEBUG, "%s: (pid:'%lu', o:'%p')Internally managed error: %s, code %d.", __func__, pthread_self(), SessionOffInstanceHolder(instance_sesn_ptr), msg, code);
 
 	onion_response_set_code(res,code);
 	onion_response_set_length(res, l);
-	onion_response_write_headers(sesn_ptr, res);
+	onion_response_write_headers(instance_sesn_ptr, res);
 
-	onion_response_write(sesn_ptr, res,msg,l);
+	onion_response_write(instance_sesn_ptr, res,msg,l);
 
 	return OCS_PROCESSED;
 }

@@ -21,32 +21,32 @@
 
 #include <main.h>
 #include <hashtable.h>
-#include <instance_type.h>
+#include <recycler/instance_type.h>
 #include <utils_crypto.h>
 #include <utils_str.h>
 #include <fence.h>
-#include <fence_utils.h>
-#include <fence_state.h>
+#include <ufsrv_core/fence/fence_utils.h>
+#include <ufsrv_core/fence/fence_state.h>
 #include <fence_proto.h>
-#include <fence_permission.h>
-#include <scheduled_jobs.h>
+#include <ufsrv_core/fence/fence_permission.h>
+#include <uflib/scheduled_jobs/scheduled_jobs.h>
 #include <attachments.h>
 #include <fence_broadcast.h>
 #include <http_request_context_type.h>
-#include <location.h>
-#include <persistance.h>
+#include <ufsrv_core/location/location.h>
+#include <ufsrv_core/cache_backend/persistance.h>
 #include <misc.h>
 #include <net.h>
-#include <instances_list.h>
+#include <recycler/instances_list.h>
 #include <nportredird.h>
-#include <protocol_websocket.h>
-#include <protocol_websocket_session.h>
+#include <ufsrvwebsock/include/protocol_websocket.h>
+#include <ufsrvwebsock/include/protocol_websocket_session.h>
 #include <sessions_delegator_type.h>
-#include <recycler.h>
-#include <user_backend.h>
+#include <recycler/recycler.h>
+#include <ufsrv_core/user/user_backend.h>
 #include <thread_utils.h>
 #include <command_controllers.h>
-#include <UfsrvMessageQueue.pb-c.h>
+#include <ufsrv_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
 #include <ufsrvuid.h>
 #include <include/fence.h>
 
@@ -127,8 +127,9 @@ static inline UFSRVResult *_CheckForDuplicateUsername (Session *sesn_ptr, Fence 
  	if (try_flag) {//The calling thread acquires the read lock if a writer does not hold the lock and there are no writers blocked on the lock.
  		lock_state = pthread_rwlock_tryrdlock(&(f_ptr->fence_events.rwlock));
  		if (lock_state == 0) {
+#ifdef __UF_FULLDEBUG
  			syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', ctx:'%p, try:'1', func:'%s'): SUCCESS: TRY-READ lock for Fence events acquired...",__func__, pthread_self(), f_ptr, IS_PRESENT(thread_ctx_ptr)?thread_ctx_ptr:0, func);
-
+#endif
  			goto return_locked;
  		} else {
  			char *err_str = thread_error(errno);
@@ -138,7 +139,9 @@ static inline UFSRVResult *_CheckForDuplicateUsername (Session *sesn_ptr, Fence 
  	} else {
  		lock_state = pthread_rwlock_rdlock(&(f_ptr->fence_events.rwlock));
  		if (lock_state == 0) {
+#ifdef __UF_FULLDEBUG
 			syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', ctx:'%p', func:'%s'): SUCCESS: READ lock for Fence events acquired...", __func__, pthread_self(), f_ptr, IS_PRESENT(thread_ctx_ptr)?thread_ctx_ptr:0, func);
+#endif
 			goto return_locked;
 		} else {
  			char *err_str = thread_error(errno);
@@ -155,7 +158,7 @@ static inline UFSRVResult *_CheckForDuplicateUsername (Session *sesn_ptr, Fence 
 	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_LOCKED)
 
 	return_already_locked_by_this_thread:
-	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_LOCKED_THIS_THREAD)
+	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_LOCKED_BY_THIS_THREAD)
 
  }
 
@@ -175,8 +178,9 @@ FenceEventsLockRWCtx (ThreadContext *thread_ctx_ptr, Fence *f_ptr, int try_flag,
 	if (try_flag) {
 		lock_state = pthread_rwlock_trywrlock(&(f_ptr->fence_events.rwlock));
 		if (lock_state == 0) {
-      if (strcmp("CheckOrphanedFences", __func__) != 0)
-			  syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', ctx:'%p', try:'1', func:'%s'): SUCCESS: TRY-WRITE/READ lock for Fence events acquired...", __func__, pthread_self(), f_ptr, IS_PRESENT(thread_ctx_ptr)?thread_ctx_ptr:0, func);
+#ifdef __UF_FULLDEBUG
+      syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', ctx:'%p', try:'1', func:'%s'): SUCCESS: TRY-WRITE/READ lock for Fence events acquired...", __func__, pthread_self(), f_ptr, IS_PRESENT(thread_ctx_ptr)?thread_ctx_ptr:0, func);
+#endif
 			goto return_locked;
 		} else {
 			char *err_str = thread_error(errno);
@@ -186,8 +190,9 @@ FenceEventsLockRWCtx (ThreadContext *thread_ctx_ptr, Fence *f_ptr, int try_flag,
 	} else {
 		lock_state = pthread_rwlock_wrlock(&(f_ptr->fence_events.rwlock));
 		if (lock_state == 0) {
-      if (strcmp("CheckOrphanedFences", __func__) != 0)
-			  syslog (LOG_DEBUG, "%s (pid:'%lu', o:'%p', ctx:'%p', func:'%s'): SUCCESS: WRITE/READ lock for Fence events acquired...",__func__, pthread_self(), f_ptr, IS_PRESENT(thread_ctx_ptr)?thread_ctx_ptr:0, func);
+#ifdef __UF_FULLDEBUG
+      syslog (LOG_DEBUG, "%s (pid:'%lu', o:'%p', ctx:'%p', func:'%s'): SUCCESS: WRITE/READ lock for Fence events acquired...",__func__, pthread_self(), f_ptr, IS_PRESENT(thread_ctx_ptr)?thread_ctx_ptr:0, func);
+#endif
 			goto return_locked;
 		} else {
 			char *err_str = thread_error(errno);
@@ -204,7 +209,7 @@ FenceEventsLockRWCtx (ThreadContext *thread_ctx_ptr, Fence *f_ptr, int try_flag,
 	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_LOCKED)
 
 	return_already_locked_by_this_thread:
-	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_LOCKED_THIS_THREAD)
+	_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_LOCKED_BY_THIS_THREAD)
 
 }
 
@@ -213,8 +218,9 @@ FenceEventsUnLockCtx (ThreadContext *thread_ctx_ptr, Fence *f_ptr, UFSRVResult *
 {
 	int lock_state = pthread_rwlock_unlock(&(f_ptr->fence_events.rwlock));
 	if (lock_state == 0) {
-    if (strcmp("CheckOrphanedFences", __func__) != 0)
-		  syslog(LOG_DEBUG, "%s: (pid:'%lu', o:'%p', ctx:'%p'): SUCCESS: RELEASED WRITE/READ lock for Fence events...", __func__, pthread_self(), f_ptr, IS_PRESENT(thread_ctx_ptr)?thread_ctx_ptr:0);
+#ifdef __UF_FULLDEBUG
+    syslog(LOG_DEBUG, "%s: (pid:'%lu', o:'%p', ctx:'%p'): SUCCESS: RELEASED WRITE/READ lock for Fence events...", __func__, pthread_self(), f_ptr, IS_PRESENT(thread_ctx_ptr)?thread_ctx_ptr:0);
+#endif
 		if (IS_PRESENT(thread_ctx_ptr)) RemoveFromLockedObjectsStore (thread_ctx_ptr->ht_ptr, (void *)f_ptr);
 		_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_LOCKED)
 	} else {
@@ -333,7 +339,7 @@ IsUserAllowedToChangeFence (Session *sesn_ptr, unsigned long fid, const char *cn
 	if (fid > 0) {
 		FindFenceById (sesn_ptr, fid,	fence_call_flags_final);
     instance_f_ptr = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr);
-		lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+		lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 	} else if	(IS_STR_LOADED(cname)) {
 		FindFenceByCanonicalName (sesn_ptr, cname, &lock_already_owned, fence_call_flags_final);
     instance_f_ptr = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr);
@@ -344,7 +350,7 @@ IsUserAllowedToChangeFence (Session *sesn_ptr, unsigned long fid, const char *cn
 		syslog (LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', uname:'%s', fid:'%lu'}: FenceStateSync COMMAND IGNORED: COULD NOT LOCATE FENCE", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), SESSION_USERNAME(sesn_ptr), fid);
 #endif
 
-		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_DOESNT_EXIST);
+		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_DOESNT_EXIST)
 	}
 
 	f_ptr = FenceOffInstanceHolder(instance_f_ptr);
@@ -460,14 +466,12 @@ UpdateFenceAvatarAssignment (Session *sesn_ptr, Fence *f_ptr, AttachmentRecord *
 	}
 
 	AttachmentDescriptor attachment_descriptor_out = {0};
-	if (IS_PRESENT(GetAttachmentDescriptorEphemeral(sesn_ptr, record_ptr->id, false, &attachment_descriptor_out)))
-	{
+	if (IS_PRESENT(GetAttachmentDescriptorEphemeral(sesn_ptr, record_ptr->id, false, &attachment_descriptor_out))) {
 		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu', blocb_id:'%s'}: ERROR: ATTACHMENT ID ALREADY EXISTS", __func__, pthread_self(), sesn_ptr,  SESSION_ID(sesn_ptr), f_ptr, FENCE_ID(f_ptr),  record_ptr->id);
 		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_IDENTICAL_RESOURCE);
 	}
 
-	if (AttachmentDescriptorGetFromProto(sesn_ptr, record_ptr, 0/*eid*/, &attachment_descriptor_out, true/*encode_key*/))
-	{
+	if (AttachmentDescriptorGetFromProto(sesn_ptr, record_ptr, 0/*eid*/, &attachment_descriptor_out, true/*encode_key*/)) {
 		DbAttachmentStore (sesn_ptr, &attachment_descriptor_out, FENCE_ID(f_ptr), 1);//ufsrv instance doesn't currently support lru-caching attachments
 
 		//this should be removed, because at fence creation time there is no fence cache record yet
@@ -694,7 +698,7 @@ IsUserAllowedToChangeFenceName (Session *sesn_ptr, FenceStateDescriptor *fence_s
 		if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR))	goto exit_lock_error;
 	}
 
-	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 	if ((strcasecmp(fname_new, FENCE_DNAME(FENCESTATE_FENCE(fence_state_ptr))) == 0))	goto exit_fname_identical;
 
@@ -702,9 +706,8 @@ IsUserAllowedToChangeFenceName (Session *sesn_ptr, FenceStateDescriptor *fence_s
 
 	if (unlikely(SESSION_RESULT_TYPE_ERROR(sesn_ptr)))	goto exit_naming_error;
 
-	FenceEvent *fence_event_ptr = RegisterFenceEvent (sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_DNAME,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
-	if (IS_PRESENT(fence_event_ptr))
-	{
+	FenceEvent *fence_event_ptr = RegisterFenceEvent(sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_DNAME,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
+	if (IS_PRESENT(fence_event_ptr)) {
 #define REDIS_COMMAND_ARGV_SIZE 	6 //first 2 are for command and arg then for each attr/value pair
 #define REDIS_COMMAND_ATTR_SIZE 	2
 #define REDIS_COMMAND_VALUE_SIZE 	2
@@ -739,6 +742,8 @@ IsUserAllowedToChangeFenceName (Session *sesn_ptr, FenceStateDescriptor *fence_s
 		exit_success:
 		//update memory store. note the 'false' flag -> 'cname_new' ownership transferred, fname_new will be duplicated
 		UpdateFenceNameAssignment (sesn_ptr, FENCESTATE_INSTANCE_HOLDER(fence_state_ptr), fname_new, cname_new, false, CALLFLAGS_EMPTY);
+
+    DbBackendInsertUfsrvEvent ((UfsrvEvent *)fence_event_ptr);
 
 		//TODO: we my need to have a flag on this in case we dont want to broadcast
 		InterBroadcastFenceDnameMessage (sesn_ptr, (ClientContextData *)FENCESTATE_FENCE(fence_state_ptr), fence_event_ptr, COMMAND_ARGS__UPDATED);
@@ -802,7 +807,7 @@ IsUserAllowedToChangeFenceAvatar (Session *sesn_ptr, FenceStateDescriptor *fence
 		if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR))	goto exit_lock_error;
 	}
 
-	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 	CheckAvatarForValidityFromProto (sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), data_msg_ptr);
 
@@ -812,37 +817,35 @@ IsUserAllowedToChangeFenceAvatar (Session *sesn_ptr, FenceStateDescriptor *fence
 
 	if (IS_PRESENT(GetAttachmentDescriptorEphemeral(sesn_ptr, attachment_ptr->ufid, false, &attachment_descriptor_out))) goto exit_already_exists_error;
 
-	if (TEMPAttachmentDescriptorGetFromProto(sesn_ptr, attachment_ptr, 0/*eid*/, &attachment_descriptor_out, true/*encode_key*/))
-	{
-		DbAttachmentStore (sesn_ptr, &attachment_descriptor_out, FENCE_ID(FENCESTATE_FENCE(fence_state_ptr)), 1);//ufsrv instance doesn't currently support lru-caching attachments
+	if (TEMPAttachmentDescriptorGetFromProto(sesn_ptr, attachment_ptr, 0/*eid*/, &attachment_descriptor_out, true/*encode_key*/)) {
+		DbAttachmentStore(sesn_ptr, &attachment_descriptor_out, FENCE_ID(FENCESTATE_FENCE(fence_state_ptr)), 1);//ufsrv instance doesn't currently support lru-caching attachments
 	}
 	else goto exit_data_error;
 
-	FenceEvent *fence_event_ptr=RegisterFenceEvent (sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_AVATAR,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
-	if (IS_PRESENT(fence_event_ptr))
-	{
+	FenceEvent *fence_event_ptr = RegisterFenceEvent(sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_AVATAR,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
+	if (IS_PRESENT(fence_event_ptr)) {
 		CacheBackendSetFenceAttribute(sesn_ptr, FENCE_ID(FENCESTATE_FENCE(fence_state_ptr)), "avatar", attachment_descriptor_out.id);
 
 		if (unlikely(SESSION_RESULT_TYPE_ERROR(sesn_ptr)))	goto exit_backend_update_error;
 
+    DbBackendInsertUfsrvEvent ((UfsrvEvent *)fence_event_ptr);
+
 		exit_success:
 		//update memory store
-		if(IS_STR_LOADED(FENCE_AVATAR(FENCESTATE_FENCE(fence_state_ptr))))	free	(FENCE_AVATAR(FENCESTATE_FENCE(fence_state_ptr)));
-		FENCE_AVATAR(FENCESTATE_FENCE(fence_state_ptr))=strdup(attachment_descriptor_out.id);
+		if (IS_STR_LOADED(FENCE_AVATAR(FENCESTATE_FENCE(fence_state_ptr))))	free(FENCE_AVATAR(FENCESTATE_FENCE(fence_state_ptr)));
+		FENCE_AVATAR(FENCESTATE_FENCE(fence_state_ptr)) = strdup(attachment_descriptor_out.id);
 
 		InterBroadcastFenceAvatarMessage (sesn_ptr,
 																			&((ContextDataPair){(ClientContextData *)FENCESTATE_FENCE(fence_state_ptr), (ClientContextData *)&attachment_descriptor_out}),
 																			fence_event_ptr, COMMAND_ARGS__UPDATED);
 
-		if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE)
-		{
+		if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE) {
 			if (!(fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED))	if (!fence_lock_already_owned) FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fence_state_ptr), SESSION_RESULT_PTR(sesn_ptr));
 		}
 
 		//TODO: LOST LOCK OWNERSHIP
-		_RETURN_RESULT_SESN(sesn_ptr, fence_event_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED);
-	}
-	else	goto event_generation_error;
+		_RETURN_RESULT_SESN(sesn_ptr, fence_event_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED)
+	} else	goto event_generation_error;
 
 
 	exit_backend_update_error:
@@ -871,15 +874,14 @@ IsUserAllowedToChangeFenceAvatar (Session *sesn_ptr, FenceStateDescriptor *fence
 	goto exit_unlock;
 
 	exit_unlock:
-	if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE)
-	{
+	if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE) {
 		if (!(fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED))	if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fence_state_ptr), SESSION_RESULT_PTR(sesn_ptr));
 	}
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 	exit_lock_error:
 	rescode=SESSION_RESULT_CODE(sesn_ptr);
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 }
 
@@ -894,18 +896,16 @@ IsUserAllowedToChangeFenceMessageExpiry (Session *sesn_ptr, FenceStateDescriptor
 {
 	unsigned 							rescode;
 
-	if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE)
-	{
+	if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE) {
 		FenceEventsLockRWCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fence_state_ptr), _LOCK_TRY_FLAG_FALSE, SESSION_RESULT_PTR(sesn_ptr), __func__);
 		if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR))	goto exit_lock_error;
 	}
 
-	bool fence_lock_already_owned=(SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
-	FenceEvent *fence_event_ptr=RegisterFenceEvent (sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_EXPIRY,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
-	if (IS_PRESENT(fence_event_ptr))
-	{
-		char msg_expiry[sizeof(UINT64_LONGEST_STR)+2]={0};
+	FenceEvent *fence_event_ptr = RegisterFenceEvent(sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_EXPIRY,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
+	if (IS_PRESENT(fence_event_ptr)) {
+		char msg_expiry[sizeof(UINT64_LONGEST_STR)+2] = {0};
 		ultoa(msg_expiry_in_seconds, msg_expiry, 10);
 
 		CacheBackendSetFenceAttribute(sesn_ptr, FENCE_ID(FENCESTATE_FENCE(fence_state_ptr)), "expiry", msg_expiry);
@@ -914,19 +914,18 @@ IsUserAllowedToChangeFenceMessageExpiry (Session *sesn_ptr, FenceStateDescriptor
 
 		exit_success:
 		//update memory store
-		FENCE_MSG_EXPIRY(FENCESTATE_FENCE(fence_state_ptr))=msg_expiry_in_seconds;
-
+		FENCE_MSG_EXPIRY(FENCESTATE_FENCE(fence_state_ptr)) = msg_expiry_in_seconds;
+    DbBackendInsertUfsrvEvent ((UfsrvEvent *)fence_event_ptr);
 		InterBroadcastFenceMsgExpiry (sesn_ptr,
 																	&((ContextDataPair){(ClientContextData *)fence_state_ptr, (ClientContextData *)NULL}),
 																	fence_event_ptr, COMMAND_ARGS__UPDATED);
 
-		if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE)
-		{
+		if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE) {
 			if (!(fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED))	if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fence_state_ptr), SESSION_RESULT_PTR(sesn_ptr));
 		}
 
 		//TODO: LOST LOCK OWNERSHIP
-		_RETURN_RESULT_SESN(sesn_ptr, fence_event_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED);
+		_RETURN_RESULT_SESN(sesn_ptr, fence_event_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED)
 	}
 	else	goto event_generation_error;
 
@@ -951,11 +950,11 @@ IsUserAllowedToChangeFenceMessageExpiry (Session *sesn_ptr, FenceStateDescriptor
 	{
 		if (!(fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED))	if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(fence_state_ptr), SESSION_RESULT_PTR(sesn_ptr));
 	}
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 	exit_lock_error:
 	rescode=SESSION_RESULT_CODE(sesn_ptr);
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 }
 
@@ -973,12 +972,14 @@ IsUserAllowedToChangeFenceMessageExpiry (Session *sesn_ptr, FenceStateDescriptor
  * 	@call_flag FENCE_CALLFLAG_ROAMING_GEOFENCE: Operation as a result or roaming changes. Inviter is ufsrvsystem user
  */
 UFSRVResult *
-IsUserAllowedGeoFenceInvite(Session *sesn_ptr, Session *sesn_ptr_inviter, unsigned long fence_call_flags)
+IsUserAllowedGeoFenceInvite(InstanceHolderForSession *instance_sesn_ptr, Session *sesn_ptr_inviter, unsigned long fence_call_flags)
 {
 	bool 				fence_already_locked			=	false;
 	Fence				*f_ptr										= NULL;
 	InstanceHolderForFence *instance_f_ptr    = NULL;
 	UFSRVResult *res_ptr									=	NULL;
+
+	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
 	////create Intra fences as necessary
 	_CheckIntraBaseFencesAndAdd(sesn_ptr, &(sesn_ptr->sservice.user.user_details.user_location), 0);
@@ -992,13 +993,13 @@ IsUserAllowedGeoFenceInvite(Session *sesn_ptr, Session *sesn_ptr_inviter, unsign
 	if ((instance_f_ptr = FindBaseFenceByCanonicalName(sesn_ptr, canonical_fence_name, &fence_already_locked, FENCE_CALLFLAG_KEEP_FENCE_LOCKED))) {
 		if ((fence_call_flags&FENCE_CALLFLAG_ROAMING_GEOFENCE))	SessionTransferAccessContext (sesn_ptr, sesn_ptr_inviter, 0);
 		f_ptr = FenceOffInstanceHolder(instance_f_ptr);
-		res_ptr = AddMemberToInvitedFenceList (InstanceHolderFromClientContext(sesn_ptr), instance_f_ptr, sesn_ptr_inviter, FENCE_CALLFLAG_WRITEBACK_DATA_TO_BACKEND);
+		res_ptr = AddMemberToInvitedFenceList (instance_sesn_ptr, instance_f_ptr, sesn_ptr_inviter, FENCE_CALLFLAG_WRITEBACK_DATA_TO_BACKEND);
 		if (_RESULT_TYPE_SUCCESS(res_ptr)) {
 			unsigned long invited_eids[1];
 			CollectionDescriptor invited_eids_collection = {(collection_t **)invited_eids, 1};
 			invited_eids[0] = (uintptr_t)_RESULT_USERDATA(res_ptr);
 
-			res_ptr = MarshalFenceInvitation(sesn_ptr, f_ptr, &((WebSocketMessage){{0}}), NULL, &invited_eids_collection, NULL, 0);
+			res_ptr = MarshalFenceInvitation(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, instance_f_ptr, &((WebSocketMessage){{0}}), NULL, &invited_eids_collection, NULL, 0);
 
 			if ((fence_call_flags&FENCE_CALLFLAG_ROAMING_GEOFENCE))	SessionResetTransferAccessContext (sesn_ptr_inviter);
 
@@ -1012,7 +1013,7 @@ IsUserAllowedGeoFenceInvite(Session *sesn_ptr, Session *sesn_ptr_inviter, unsign
 	}
 
 	exit_error:
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 
 }
 
@@ -1030,9 +1031,11 @@ IsUserAllowedGeoFenceInvite(Session *sesn_ptr, Session *sesn_ptr_inviter, unsign
  * 	@returns FenceStatedescriptor * where user was joined, or already in
  */
 UFSRVResult *
-IsUserAllowedToJoinGeoFence (Session *sesn_ptr, LocationDescription *ld_ptr)
+IsUserAllowedToJoinGeoFence (InstanceHolderForSession *instance_sesn_ptr, LocationDescription *ld_ptr)
 {
 	unsigned count_of_new_base_fences = 0;
+
+	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
 	////create Intra fences as necessary
 	count_of_new_base_fences = _CheckIntraBaseFencesAndAdd(sesn_ptr, ld_ptr, 0);
@@ -1055,12 +1058,12 @@ IsUserAllowedToJoinGeoFence (Session *sesn_ptr, LocationDescription *ld_ptr)
 	if ((instance_f_ptr = FindBaseFenceByCanonicalName(sesn_ptr, canonical_fence_name, &fence_already_locked, FENCE_CALLFLAG_KEEP_FENCE_LOCKED))) {
 		f_ptr = (Fence *)GetInstance(instance_f_ptr);
 
-		UFSRVResult *res_ptr = _ProcessUserAllowedToJoinFence(InstanceHolderFromClientContext(sesn_ptr), instance_f_ptr, FENCE_CALLFLAG_JOIN);
+		UFSRVResult *res_ptr = _ProcessUserAllowedToJoinFence(instance_sesn_ptr, instance_f_ptr, FENCE_CALLFLAG_JOIN);
 
 		//in case of logical error, we take care of unlocking
 		if (_RESULT_TYPE_ERROR(res_ptr) && _RESULT_CODE_EQUAL(res_ptr, RESCODE_PROG_NULL_POINTER))	goto exit_no_result;
 
-		HandleJoinFence (sesn_ptr, (InstanceHolderForFenceStateDescriptor *)_RESULT_USERDATA(res_ptr), NULL, JT_GEO_BASED, res_ptr);
+		HandleJoinFence (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, (InstanceHolderForFenceStateDescriptor *)_RESULT_USERDATA(res_ptr), &(WebSocketMessage){.type=WEB_SOCKET_MESSAGE__TYPE__REQUEST, .request=NULL}, NULL, JT_GEO_BASED, res_ptr);
 		if (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_USER_FENCE_ALREADYIN) || SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_USER_FENCE_JOINED)) {
       instance_fstate_ptr = (InstanceHolder *) SESSION_RESULT_USERDATA(sesn_ptr);
       f_ptr = FENCESTATE_FENCE(((FenceStateDescriptor *)GetInstance(instance_fstate_ptr)));
@@ -1119,7 +1122,7 @@ IsUserAllowedToJoinFenceById(InstanceHolderForSession *instance_sesn_ptr, const 
 		else 	{SESSION_RETURN_RESULT(sesn_ptr, NULL, RESULT_TYPE_ERR, SESSION_RESULT_CODE(sesn_ptr))}
 	}
 
-  bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+  bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
   f_ptr = FenceOffInstanceHolder(instance_f_ptr);
 
 	//>>> Fence RW LOCKED
@@ -1149,10 +1152,9 @@ IsUserAllowedToChangeFenceMaxMembers (Session *sesn_ptr, FenceStateDescriptor *f
 {
 	unsigned 							rescode;
 
-	FenceEvent *fence_event_ptr=RegisterFenceEvent (sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_MAXMEMBERS,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
-	if (IS_PRESENT(fence_event_ptr))
-	{
-		char maxmembers_setting[sizeof(UINT64_LONGEST_STR)+2]={0};
+	FenceEvent *fence_event_ptr = RegisterFenceEvent(sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_MAXMEMBERS,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
+	if (IS_PRESENT(fence_event_ptr)) {
+		char maxmembers_setting[sizeof(UINT64_LONGEST_STR)+2] = {0};
 		ultoa(maxmembers, maxmembers_setting, 10);
 
 		CacheBackendSetFenceAttribute(sesn_ptr, FENCE_ID(FENCESTATE_FENCE(fence_state_ptr)), "maxusers", maxmembers_setting);
@@ -1160,13 +1162,13 @@ IsUserAllowedToChangeFenceMaxMembers (Session *sesn_ptr, FenceStateDescriptor *f
 		if (unlikely(SESSION_RESULT_TYPE_ERROR(sesn_ptr)))	goto exit_backend_update_error;
 
 		exit_success:
-		FENCE_MAX_MEMBERS(FENCESTATE_FENCE(fence_state_ptr))=maxmembers;
-
+		FENCE_MAX_MEMBERS(FENCESTATE_FENCE(fence_state_ptr)) = maxmembers;
+    DbBackendInsertUfsrvEvent ((UfsrvEvent *)fence_event_ptr);
 		InterBroadcastFenceMaxMembers (sesn_ptr,
 																	&((ContextDataPair){(ClientContextData *)fence_state_ptr, (ClientContextData *)NULL}),
 																	fence_event_ptr, COMMAND_ARGS__UPDATED);
 
-		_RETURN_RESULT_SESN(sesn_ptr, fence_event_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED);
+		_RETURN_RESULT_SESN(sesn_ptr, fence_event_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED)
 	}
 	else	goto event_generation_error;
 
@@ -1179,7 +1181,7 @@ IsUserAllowedToChangeFenceMaxMembers (Session *sesn_ptr, FenceStateDescriptor *f
 	goto exit_error;
 
 	exit_error:
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 }
 
@@ -1192,10 +1194,9 @@ IsUserAllowedToChangeFenceDeliveryMode (Session *sesn_ptr, FenceStateDescriptor 
 		goto exit_same_delivery_mode;
 	}
 
-	FenceEvent *fence_event_ptr=RegisterFenceEvent (sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_DELIVERY_MODE,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
-	if (IS_PRESENT(fence_event_ptr))
-	{
-		char attributes_setting[sizeof(UINT64_LONGEST_STR)+2]={0};
+	FenceEvent *fence_event_ptr = RegisterFenceEvent(sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), EVENT_TYPE_FENCE_DELIVERY_MODE,  NULL, 0/*LOCK_FLAG*/, fence_event_ptr_out);
+	if (IS_PRESENT(fence_event_ptr)) {
+		char attributes_setting[sizeof(UINT64_LONGEST_STR)+2] = {0};
 		uint64_t attributes = FENCE_ATTRIBUTES(FENCESTATE_FENCE(fence_state_ptr));
 		SetFenceDeliveryModeFromProto (&attributes, (FenceRecord__DeliveryMode) delivery_mode);
 
@@ -1206,18 +1207,19 @@ IsUserAllowedToChangeFenceDeliveryMode (Session *sesn_ptr, FenceStateDescriptor 
 		if (unlikely(SESSION_RESULT_TYPE_ERROR(sesn_ptr)))	goto exit_backend_update_error;
 
 		exit_success:
+    DbBackendInsertUfsrvEvent ((UfsrvEvent *)fence_event_ptr);
 		UpdateFenceDeliveryModeAssignment (sesn_ptr, FENCESTATE_FENCE(fence_state_ptr), delivery_mode, CALLFLAGS_EMPTY);
 
 		InterBroadcastFenceDeliveryMode(sesn_ptr,
 																	 &((ContextDataPair){(ClientContextData *)fence_state_ptr, (ClientContextData *)NULL}),
 																	 fence_event_ptr, COMMAND_ARGS__UPDATED);
 
-		_RETURN_RESULT_SESN(sesn_ptr, fence_event_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED);
+		_RETURN_RESULT_SESN(sesn_ptr, fence_event_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_RESOURCE_UPDATED)
 	}
 	else	goto event_generation_error;
 
 	exit_same_delivery_mode:
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_IDENTICAL_RESOURCE);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_IDENTICAL_RESOURCE)
 
 	exit_backend_update_error:
 	rescode=SESSION_RESULT_CODE(sesn_ptr);
@@ -1228,7 +1230,7 @@ IsUserAllowedToChangeFenceDeliveryMode (Session *sesn_ptr, FenceStateDescriptor 
 	goto exit_error;
 
 	exit_error:
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
 
 }
 
@@ -1242,33 +1244,34 @@ IsUserAllowedToChangeFenceDeliveryMode (Session *sesn_ptr, FenceStateDescriptor 
  * 	@returns FenceStateDescriptor *, but can also return Fence *. see context below
  */
 UFSRVResult *
-HandleJoinFence (Session *sesn_ptr, InstanceHolderForFenceStateDescriptor *instance_fstate_ptr, DataMessage *data_msg_ptr_received, EnumFenceJoinType join_type, UFSRVResult *res_ptr)
+HandleJoinFence (InstanceContextForSession *ctx_ptr, InstanceHolderForFenceStateDescriptor *instance_fstate_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, EnumFenceJoinType join_type, UFSRVResult *res_ptr)
 {
 	//>>>>>>>>f_ptr MAY BE LOCKED depending on return value on success only <<<<<<<<<<<
 	FenceStateDescriptor *fstate_ptr = (FenceStateDescriptor *)GetInstance(instance_fstate_ptr);
 	Fence *f_ptr = FENCESTATE_FENCE(fstate_ptr);
+	Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
 	switch (res_ptr->result_code)
 	{
 		case RESCODE_USER_FENCE_FULL:
-			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_FULL);
+			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_FULL)
 
 			//invite only + user not on invite list
 		case RESCODE_FENCE_INVITATION_LIST:
-			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_ERR, RESCODE_FENCE_INVITATION_LIST);
+			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_ERR, RESCODE_FENCE_INVITATION_LIST)
 
 		case RESCODE_USER_FENCE_WRITEOFF:
-			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_WRITEOFF);
+			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_WRITEOFF)
 
 		case RESCODE_USER_FENCE_LOCATION:
-			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_LOCATION);
+			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_LOCATION)
 
 		case RESCODE_USER_FENCE_KEY:
-			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_KEY);
+			_RETURN_RESULT_SESN(sesn_ptr, f_ptr, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_KEY)
 
 		case RESCODE_USER_FENCE_CANJOIN:
 			//TODO: fence_state_ptr is actually the Fence * here... check return
-			_RETURN_RESULT_SESN(sesn_ptr, (Fence *)res_ptr->result_user_data, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_CANJOIN);
+			_RETURN_RESULT_SESN(sesn_ptr, (Fence *)res_ptr->result_user_data, RESULT_TYPE_NOOP, RESCODE_USER_FENCE_CANJOIN)
 
 		case RESCODE_USER_FENCE_ALREADYIN:
 				//this could be because the fence's SessionList was pre-loaded from  the backend. We just reannounce that to members
@@ -1279,7 +1282,7 @@ HandleJoinFence (Session *sesn_ptr, InstanceHolderForFenceStateDescriptor *insta
 #endif
 
 				//TODO: given the potential for state being out for sync for others, we should send fence state synch to the whole fence, not just this user
-				MarshalFenceStateSync (sesn_ptr, fstate_ptr, NULL, CALLFLAGS_EMPTY);
+				MarshalFenceStateSync (ctx_ptr, fstate_ptr, wsm_ptr_received, NULL, CALLFLAGS_EMPTY);
 
 				_RETURN_RESULT_SESN(sesn_ptr, instance_fstate_ptr, RESULT_TYPE_ERR, RESCODE_USER_FENCE_ALREADYIN)
 
@@ -1294,12 +1297,12 @@ HandleJoinFence (Session *sesn_ptr, InstanceHolderForFenceStateDescriptor *insta
 				//Fence *f_ptr_processed=(Fence *)_RESULT_USERDATA(res_ptr);
 				UFSRVResult res = {.result_user_data=f_ptr, .result_code=res_ptr->result_code, .result_type=res_ptr->result_type};
 
-				if (join_type == JT_GEO_BASED)						MarshalGeoFenceJoinToUser (sesn_ptr, NULL, fstate_ptr,   &((WebSocketMessage){0}), 0);
-				else if (join_type == JT_USER_INITIATED)	MarshalFenceJoinToUser (sesn_ptr, fstate_ptr, &((WebSocketMessage){.type=WEB_SOCKET_MESSAGE__TYPE__RESPONSE}),  data_msg_ptr_received);
-				else if (join_type == JT_INVITED)					MarshalFenceJoinInvitedToUser (sesn_ptr, fstate_ptr, &((WebSocketMessage){0}),  data_msg_ptr_received);
-				MarshalFenceStateSyncForJoin (sesn_ptr, sesn_ptr, f_ptr, 0);
+				if (join_type == JT_GEO_BASED)						MarshalGeoFenceJoinToUser (ctx_ptr, NULL, fstate_ptr,   &((WebSocketMessage){0}), 0);
+				else if (join_type == JT_USER_INITIATED)	MarshalFenceJoinToUser (ctx_ptr, fstate_ptr, &((WebSocketMessage){.type=WEB_SOCKET_MESSAGE__TYPE__RESPONSE}),  data_msg_ptr_received);
+				else if (join_type == JT_INVITED)					MarshalFenceJoinInvitedToUser (ctx_ptr, fstate_ptr, &((WebSocketMessage){0}),  data_msg_ptr_received);
+				MarshalFenceStateSyncForJoin (ctx_ptr, sesn_ptr, FENCESTATE_INSTANCE_HOLDER(fstate_ptr), 0);
 
-				_RETURN_RESULT_SESN(sesn_ptr, instance_fstate_ptr, RESULT_TYPE_SUCCESS, RESCODE_USER_FENCE_JOINED);
+				_RETURN_RESULT_SESN(sesn_ptr, instance_fstate_ptr, RESULT_TYPE_SUCCESS, RESCODE_USER_FENCE_JOINED)
 			} else {
 				//TODO: unsupported condition
 				//fence should not need unlocking under error condition
@@ -1316,7 +1319,7 @@ HandleJoinFence (Session *sesn_ptr, InstanceHolderForFenceStateDescriptor *insta
 			syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu'):  INVALID RESCODE JOIN REQUEST...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), f_ptr, FENCE_ID(f_ptr));
 	}
 
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 
 }
 
@@ -1835,35 +1838,27 @@ static inline void	_UpdateLocationIfDifferent (FenceLocationDescription *locatio
 static inline void
 _UpdateLocationIfDifferent (FenceLocationDescription *location_ptr_target, FenceLocationDescription *location_ptr_source)
 {
-	if (IS_STR_LOADED(location_ptr_target->display_banner_name))
-	{
-		if (!(strcasecmp(location_ptr_target->display_banner_name, location_ptr_source->display_banner_name)==0))
-		{
+	if (IS_STR_LOADED(location_ptr_target->display_banner_name)) {
+		if (!(strcasecmp(location_ptr_target->display_banner_name, location_ptr_source->display_banner_name) == 0)) {
 			free (location_ptr_target->display_banner_name);
-			location_ptr_target->display_banner_name=strdup (location_ptr_source->display_banner_name);
+			location_ptr_target->display_banner_name = strdup(location_ptr_source->display_banner_name);
 		}
 	}
-	else location_ptr_target->display_banner_name=strdup (location_ptr_source->display_banner_name);
+	else location_ptr_target->display_banner_name = strdup(location_ptr_source->display_banner_name);
 
-	if (IS_STR_LOADED(location_ptr_target->canonical_name))
-	{
-		if (!(strcasecmp(location_ptr_target->canonical_name, location_ptr_source->canonical_name)==0))
-		{
+	if (IS_STR_LOADED(location_ptr_target->canonical_name)) {
+		if (!(strcasecmp(location_ptr_target->canonical_name, location_ptr_source->canonical_name) == 0)) {
 			free (location_ptr_target->canonical_name);
-			location_ptr_target->canonical_name=strdup (location_ptr_source->canonical_name);
+			location_ptr_target->canonical_name = strdup(location_ptr_source->canonical_name);
 		}
-	}
-	else location_ptr_target->canonical_name=strdup (location_ptr_source->canonical_name);
+	} else location_ptr_target->canonical_name = strdup (location_ptr_source->canonical_name);
 
-	if (IS_STR_LOADED(location_ptr_target->base_location))
-	{
-		if (!(strcasecmp(location_ptr_target->base_location, location_ptr_source->base_location)==0))
-		{
+	if (IS_STR_LOADED(location_ptr_target->base_location)) {
+		if (!(strcasecmp(location_ptr_target->base_location, location_ptr_source->base_location) == 0)) {
 			free (location_ptr_target->base_location);
-			location_ptr_target->base_location=strdup (location_ptr_source->base_location);
+			location_ptr_target->base_location = strdup(location_ptr_source->base_location);
 		}
-	}
-	else location_ptr_target->base_location=strdup (location_ptr_source->base_location);
+	} else location_ptr_target->base_location = strdup(location_ptr_source->base_location);
 
 }
 
@@ -1881,21 +1876,21 @@ _UpdateLocationIfDifferent (FenceLocationDescription *location_ptr_target, Fence
 static unsigned
 _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_ptr, unsigned long add_flag)
 {
-	__unused bool *fence_already_locked			= false;
+	bool  fence_already_locked			= false;
 	unsigned int				counter			= 0;
 	HttpRequestContext	*http_ptr		=	GetHttpRequestContext(sesn_ptr);
-	redisReply					*redis_ptr	= NULL;
 
 	if (IS_STR_LOADED(ld_ptr->country)) {
 		char *cn_country	= NULL;
-		Fence *f_ptr		= NULL;
+		Fence *f_ptr		  = NULL;
     InstanceHolder *instance_holder_ptr;
 
 		asprintf(&cn_country, "%s:::0:", ld_ptr->country);
 
 		//country
-		if (!(instance_holder_ptr = FindBaseFenceByCanonicalName(sesn_ptr, cn_country, NULL, FENCE_CALLFLAG_SEARCH_BACKEND))) {//search backend
-			instance_holder_ptr = RecyclerGet(FencePoolTypeNumber(), (ContextData *)sesn_ptr, FENCE_CALLFLAG_BASEFENCE|FENCE_CALLFLAG_GENERATE_ID);
+    instance_holder_ptr = FindBaseFenceByCanonicalName(sesn_ptr, cn_country, &fence_already_locked, FENCE_CALLFLAG_SEARCH_BACKEND|FENCE_CALLFLAG_KEEP_FENCE_LOCKED);
+		if (IS_EMPTY(instance_holder_ptr)) {
+			instance_holder_ptr = RecyclerGet(FencePoolTypeNumber(), (ContextData *)sesn_ptr, FENCE_CALLFLAG_BASEFENCE|FENCE_CALLFLAG_GENERATE_ID|FENCE_CALLFLAG_LOCK_FENCE);
 			if (unlikely(IS_EMPTY(instance_holder_ptr))) {
 				syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', name:'%s'}: ERROR: COULD NOT GET FENCE TYPE INSTANCE...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), cn_country);
 				free (cn_country);
@@ -1903,6 +1898,7 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 				return 0;
 			}
 
+			//fence locked
 			f_ptr = FenceOffInstanceHolder(instance_holder_ptr);
 
 			counter++;
@@ -1916,7 +1912,7 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 				exit_error_country:
 				_DestructFenceLocationDescription(&(f_ptr->fence_location));
 				free(cn_country);
-				RecyclerPut(FencePoolTypeNumber(), instance_holder_ptr, (ContextData *)NULL, CALLFLAGS_EMPTY);
+				RecyclerPut(FencePoolTypeNumber(), instance_holder_ptr, (ContextData *)NULL, FENCE_CALLFLAG_UNLOCK_FENCE);
 				return 0;
 			}
 
@@ -1925,18 +1921,22 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 			UpdateBackendFenceData (sesn_ptr, f_ptr, NULL, EVENT_TYPE_FENCE_CREATED, &((FenceEvent){}));
 		}
 
+		//fence locked
 		free (cn_country); cn_country = NULL;
 		f_ptr = FenceOffInstanceHolder(instance_holder_ptr);
-		SESSION_BASEFENCE_LOCAL(sesn_ptr) = f_ptr->fence_id;//gets overwritten successively down to the most specific
+		SESSION_BASEFENCE_LOCAL(sesn_ptr) = FENCE_ID(f_ptr);//gets overwritten successively down to the most specific
+    if (!fence_already_locked)  FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
+    fence_already_locked = false;
 
-		if (IS_STR_LOADED(ld_ptr->admin_area)) {
-		//country:admin_area
+    //......................................................................................
+		if (IS_STR_LOADED(ld_ptr->admin_area)) { //'country:admin_area'
 			char *cn_country_admin_area = NULL;
 
 			asprintf(&cn_country_admin_area, "%s:%s::0:", ld_ptr->country, ld_ptr->admin_area);
 
-			if (!(instance_holder_ptr = FindBaseFenceByCanonicalName(sesn_ptr, cn_country_admin_area, NULL, FENCE_CALLFLAG_SEARCH_BACKEND))) {
-        instance_holder_ptr = RecyclerGet(FencePoolTypeNumber(), (ContextData *)sesn_ptr, FENCE_CALLFLAG_BASEFENCE|FENCE_CALLFLAG_GENERATE_ID);
+      instance_holder_ptr = FindBaseFenceByCanonicalName(sesn_ptr, cn_country_admin_area, &fence_already_locked, FENCE_CALLFLAG_SEARCH_BACKEND|FENCE_CALLFLAG_KEEP_FENCE_LOCKED);
+			if (IS_EMPTY(instance_holder_ptr)) {
+        instance_holder_ptr = RecyclerGet(FencePoolTypeNumber(), (ContextData *)sesn_ptr, FENCE_CALLFLAG_BASEFENCE|FENCE_CALLFLAG_GENERATE_ID|FENCE_CALLFLAG_LOCK_FENCE);
 				if (unlikely(IS_EMPTY(instance_holder_ptr))) {
 					syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', name:'%s'}: ERROR: COULD NOT GET FENCE TYPE INSTANCE...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), cn_country_admin_area);
 					free (cn_country_admin_area);
@@ -1956,7 +1956,8 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 					exit_error_country_admina_area:
 					_DestructFenceLocationDescription(&(f_ptr->fence_location));
 					free(cn_country_admin_area);
-					RecyclerPut(FencePoolTypeNumber(), instance_holder_ptr, (ContextData *)NULL, CALLFLAGS_EMPTY);
+					RecyclerPut(FencePoolTypeNumber(), instance_holder_ptr, (ContextData *)NULL, FENCE_CALLFLAG_UNLOCK_FENCE);
+
 					return 0;
 				}
 
@@ -1971,16 +1972,20 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 
 			free(cn_country_admin_area); cn_country_admin_area = NULL;
 			f_ptr = FenceOffInstanceHolder(instance_holder_ptr);
-			SESSION_BASEFENCE_LOCAL(sesn_ptr) = f_ptr->fence_id;
+			SESSION_BASEFENCE_LOCAL(sesn_ptr) = FENCE_ID(f_ptr);
+      if (!fence_already_locked)  FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
+      fence_already_locked = false;
 
+      //................................................................................................
 			if (IS_STR_LOADED(ld_ptr->locality)) {//ideal case: all components defined
 			//country:admin_area:locality
 				char *cn_country_admin_area_locality = NULL;
 
 				asprintf(&cn_country_admin_area_locality, "%s:%s:%s:0:", ld_ptr->country, ld_ptr->admin_area, ld_ptr->locality);
 
-				if (!(instance_holder_ptr = FindBaseFenceByCanonicalName(sesn_ptr, cn_country_admin_area_locality, NULL, FENCE_CALLFLAG_SEARCH_BACKEND))) {
-					instance_holder_ptr = RecyclerGet(FencePoolTypeNumber(), (ContextData *)sesn_ptr, FENCE_CALLFLAG_BASEFENCE|FENCE_CALLFLAG_GENERATE_ID);
+        instance_holder_ptr = FindBaseFenceByCanonicalName(sesn_ptr, cn_country_admin_area_locality, &fence_already_locked, FENCE_CALLFLAG_SEARCH_BACKEND|FENCE_CALLFLAG_KEEP_FENCE_LOCKED);
+				if (IS_EMPTY(instance_holder_ptr)) {
+					instance_holder_ptr = RecyclerGet(FencePoolTypeNumber(), (ContextData *)sesn_ptr, FENCE_CALLFLAG_BASEFENCE|FENCE_CALLFLAG_GENERATE_ID|FENCE_CALLFLAG_LOCK_FENCE);
 					if (unlikely(IS_EMPTY(instance_holder_ptr))) {
 						syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', name:'%s'}: ERROR: COULD NOT GET FENCE TYPE INSTANCE...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), cn_country_admin_area_locality);
 						free (cn_country_admin_area_locality);
@@ -1988,6 +1993,7 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 						return 0;
 					}
 
+					//fence locked
           f_ptr = FenceOffInstanceHolder(instance_holder_ptr);
 
 					_UpdateLocationIfDifferent (&f_ptr->fence_location,
@@ -2000,7 +2006,7 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 						exit_error_country_admina_area_local:
 						_DestructFenceLocationDescription(&(f_ptr->fence_location));
 						free(cn_country_admin_area_locality);
-						RecyclerPut(FencePoolTypeNumber(), instance_holder_ptr, (ContextData *)NULL, CALLFLAGS_EMPTY);
+						RecyclerPut(FencePoolTypeNumber(), instance_holder_ptr, (ContextData *)NULL, CALLFLAGS_EMPTY|FENCE_CALLFLAG_UNLOCK_FENCE);
 
 						return 0;
 					}
@@ -2015,8 +2021,12 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 					free(cn_country_admin_area_locality); cn_country_admin_area_locality = NULL;
 				}
 
+				//fence locked
 				f_ptr = FenceOffInstanceHolder(instance_holder_ptr);
 				SESSION_BASEFENCE_LOCAL(sesn_ptr) = FENCE_ID(f_ptr);
+
+        if (!fence_already_locked)  FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
+        fence_already_locked = false;
 			} else {
 			  //country:admin_area:NO_locality
 			//circular logic this is covered in the parent case
@@ -2029,8 +2039,9 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 
 				asprintf(&cn_s, "%s::%s:0:", ld_ptr->country, ld_ptr->locality);//note display name collision with above
 
-				if (!(instance_holder_ptr = FindBaseFenceByCanonicalName(sesn_ptr, cn_s, NULL, FENCE_CALLFLAG_SEARCH_BACKEND))) {
-					instance_holder_ptr = RecyclerGet(FencePoolTypeNumber(), (ContextData *)sesn_ptr, FENCE_CALLFLAG_BASEFENCE|FENCE_CALLFLAG_GENERATE_ID);
+        instance_holder_ptr = FindBaseFenceByCanonicalName(sesn_ptr, cn_s, &fence_already_locked, FENCE_CALLFLAG_SEARCH_BACKEND|FENCE_CALLFLAG_KEEP_FENCE_LOCKED);
+				if (IS_EMPTY(instance_holder_ptr)) {
+					instance_holder_ptr = RecyclerGet(FencePoolTypeNumber(), (ContextData *)sesn_ptr, FENCE_CALLFLAG_BASEFENCE|FENCE_CALLFLAG_GENERATE_ID|FENCE_CALLFLAG_LOCK_FENCE);
 					if (unlikely(IS_EMPTY(instance_holder_ptr))) {
 						syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', name:'%s'}: ERROR: COULD NOT GET FENCE TYPE INSTANCE...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), cn_s);
 						free (cn_s);
@@ -2038,6 +2049,7 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 						return 0;
 					}
 
+					//fence locked
           f_ptr = FenceOffInstanceHolder(instance_holder_ptr);
 
 					_UpdateLocationIfDifferent (&f_ptr->fence_location,
@@ -2051,7 +2063,8 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 						exit_error_cn_s:
 						_DestructFenceLocationDescription(&(f_ptr->fence_location));
 						free(cn_s);
-						RecyclerPut(FencePoolTypeNumber(), instance_holder_ptr, (ContextData *)NULL, CALLFLAGS_EMPTY);
+						RecyclerPut(FencePoolTypeNumber(), instance_holder_ptr, (ContextData *)NULL, FENCE_CALLFLAG_UNLOCK_FENCE);
+
 						return 0;
 					}
 
@@ -2062,22 +2075,22 @@ _CheckIntraBaseFencesAndAdd (Session *sesn_ptr, const LocationDescription *ld_pt
 					UpdateBackendFenceData (sesn_ptr, f_ptr, NULL, EVENT_TYPE_FENCE_CREATED, &((FenceEvent){}));
 
 					counter++;
-
 				}
 
 				free(cn_s); cn_s = NULL;
 				f_ptr = FenceOffInstanceHolder(instance_holder_ptr);
 				SESSION_BASEFENCE_LOCAL(sesn_ptr) = FENCE_ID(f_ptr);
+
+        if (!fence_already_locked)  FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
+        fence_already_locked = false;
 			} else {
 				//country_NO_admin_area:NO_locality
 				//circular logic back top most case
 				//char *cn_s=asprintf("%s::", ld_ptr->country);
 			}
 		}
-	}//no country no go
-	else
+	} else {//no country no go
 	//if (ld_ptr->admin_area&&strlen(ld_ptr->admin_area)>0)//no country no go
-	{
 		//dont allow for "nocountry:admin:locality type"
 		syslog(LOG_ERR, "%s {pid:'%lu', o:'%p', cid:'%lu'}: WILL NOT create a BaseFence for NoCountryDefined", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr));
 
@@ -2136,7 +2149,7 @@ CreateUserFenceAndLinkToUser (InstanceHolderForSession *instance_sesn_ptr, const
 	}
 
 	//not useful? just come out of recycler...
-	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 	_PopulateFenceData (f_ptr, sesn_ptr, NULL, fence_banner, userfence_canonical_name_in, true);
 
@@ -2349,6 +2362,10 @@ AddToFenceInvitedListFromProtoRecord (InstanceHolderForSession *instance_sesn_pt
 
 		bool lock_already_owned = false;
 		GetSessionForThisUserByUserId(sesn_ptr, userid_invited, &lock_already_owned, sesn_call_flags);
+		if (SESSION_RESULT_TYPE_ERROR(sesn_ptr)) {
+		  continue;
+		}
+
 		InstanceHolderForSession *instance_sesn_ptr_invited = (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr);
     sesn_ptr_invited = SessionOffInstanceHolder(instance_sesn_ptr_invited);
 
@@ -2363,30 +2380,30 @@ AddToFenceInvitedListFromProtoRecord (InstanceHolderForSession *instance_sesn_pt
 
 			InstanceHolderForFenceStateDescriptor *instance_fstate_ptr = RecyclerGet(FenceStateDescriptorPoolTypeNumber(), (ContextData *)instance_f_ptr, CALLFLAGS_EMPTY);
 			if (unlikely(IS_EMPTY(instance_fstate_ptr))) {
-				if (IS_PRESENT(sesn_ptr_invited))	if (!lock_already_owned)	SessionUnLockCtx (THREAD_CONTEXT_PTR, sesn_ptr_invited, __func__);
+				if (IS_PRESENT(sesn_ptr_invited))	if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_invited, __func__);
 				continue;
 			}
 
       FenceStateDescriptor *fence_descriptor = FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr);
 
 			FENCESTATE_INSTANCE_HOLDER(fence_descriptor)  =	instance_f_ptr;
-			fence_descriptor->when_invited      =	time(NULL);
-			memcpy (fence_descriptor->invited_by.data, SESSION_UFSRVUID(sesn_ptr), CONFIG_MAX_UFSRV_ID_SZ);
+			memcpy(fence_descriptor->invited_by.data, SESSION_UFSRVUID(sesn_ptr), CONFIG_MAX_UFSRV_ID_SZ);
 
-			FenceEvent *fe_ev = UpdateBackendFenceInvitedData (sesn_ptr, sesn_ptr_invited, fence_descriptor, EVENT_TYPE_FENCE_USER_INVITED, &fence_event);
+			FenceEvent *fe_ev = UpdateBackendFenceInvitedData(sesn_ptr, sesn_ptr_invited, fence_descriptor, EVENT_TYPE_FENCE_USER_INVITED, &fence_event);
 			if (IS_PRESENT(fe_ev)) {
 				AddThisToList (SESSION_INVITED_FENCE_LIST_PTR(sesn_ptr_invited), instance_fstate_ptr);
 				FenceIncrementReference(fence_descriptor->instance_holder_fence, 1);
 
-				AddThisToList (&f_ptr->fence_user_sessions_invited_list, CLIENT_CTX_DATA(instance_sesn_ptr_invited));
-				SessionIncrementReference (instance_sesn_ptr_invited, 1);
+				AddThisToList(&f_ptr->fence_user_sessions_invited_list, CLIENT_CTX_DATA(instance_sesn_ptr_invited));
+				SessionIncrementReference(instance_sesn_ptr_invited, 1);
 
 				//note the use of array index 'i'. failed events will have eid as '0', but overall we maintain index consistency between array and invitation list provided by user
 				((unsigned long *)invited_events_collection_ptr->collection)[i] = fe_ev->eid;
+        fence_descriptor->when_invited = fe_ev->when;
 				processed++;
 			} else {
 				syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fid:'%lu', uid_invited:'%lu'}: ERROR: COULD NOT RETRIEVE FENCE EVENT FOR INVITED USER", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), FENCE_ID(f_ptr), SESSION_USERID(sesn_ptr_invited));
-				FenceStateDescriptorReturnToRecycler (instance_fstate_ptr, NULL, 0);
+				FenceStateDescriptorReturnToRecycler(instance_fstate_ptr, NULL, 0);
 				//TODO: what do we do with the generated event? should mark it as failed
 			}
 		} else if (IS_PRESENT(unprocessed_uids_collection_ptr))	{
@@ -2395,7 +2412,7 @@ AddToFenceInvitedListFromProtoRecord (InstanceHolderForSession *instance_sesn_pt
 			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fid:'%lu', uid_invited:'%lu'}: ERROR: USER ALREADY ON LIST: COULD NOT ADD USER TO INVITE LIST", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), FENCE_ID(f_ptr), userid_invited);
 		}
 
-		if (sesn_ptr_invited != NULL)	if (!lock_already_owned)	SessionUnLockCtx (THREAD_CONTEXT_PTR, sesn_ptr_invited, __func__);
+		if (sesn_ptr_invited != NULL)	if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_invited, __func__);
 	}//for
 
 	invited_events_collection_ptr->collection_sz = processed;//caller will check if processed less than provided list
@@ -2596,7 +2613,7 @@ RemoveUserFromAllFences (InstanceHolderForSession *instance_sesn_ptr_target, uns
 				continue;
 			}
 
-			bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr_target, RESCODE_PROG_LOCKED_THIS_THREAD));
+			bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr_target, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 			if (F_ATTR_IS_SET(f_ptr->attrs, F_ATTR_BASEFENCE)) {
 #ifdef __UF_FULLDEBUG
@@ -2847,9 +2864,11 @@ _RemoveUserFromBaseFence (InstanceHolderForSession *instance_sesn_ptr, Fence *f_
 				//for remote sessions the above flag prohibits generations of fence event. We also
 				//prohibit netwrk broadcast for the same reason below.
 				//this function require connected session to intercat with backends and remote sessions dont have that
-				FenceEvent *fe_ptr = RegisterFenceEvent (sesn_ptr, f_ptr, EVENT_TYPE_FENCE_USER_PARTED,  NULL, 0/*LOCK_FLAG*/, &fence_event);
+				FenceEvent *fe_ptr = RegisterFenceEvent(sesn_ptr, f_ptr, EVENT_TYPE_FENCE_USER_PARTED,  NULL, 0/*LOCK_FLAG*/, &fence_event);
 
 				if (unlikely(IS_EMPTY(fe_ptr)))	return NULL;
+
+        DbBackendInsertUfsrvEvent ((UfsrvEvent *)fe_ptr);
 			}
 #if 0
 			//is the user owns the user fence
@@ -2933,10 +2952,10 @@ RemoveUserFromInvitedList(InstanceHolderForSession *instance_sesn_ptr, FenceStat
 		}
 
 		if (fence_call_flags&FENCE_CALLFLAG_WRITEBACK_DATA_TO_BACKEND) {
-			UpdateBackendFenceInvitedData (NULL/*sesn_ptr_inviter*/, sesn_ptr/*invited*/, fence_state_descriptor, fe_ptr_out->event_type, fe_ptr_out);
+			UpdateBackendFenceInvitedData(NULL/*inviter*/, sesn_ptr/*invited*/, fence_state_descriptor, fe_ptr_out->event_type, fe_ptr_out);
 		}
 
-		FenceDecrementReference (fence_state_joined->instance_holder_fence, 1);
+		FenceDecrementReference(fence_state_joined->instance_holder_fence, 1);
 		RecyclerPut(FenceStateDescriptorPoolTypeNumber(), (RecyclerClientData *)instance_fstate_ptr, (ContextData *)NULL, CALLFLAGS_EMPTY);
 		rc++;
 
@@ -2955,7 +2974,7 @@ RemoveUserFromInvitedList(InstanceHolderForSession *instance_sesn_ptr, FenceStat
  * 	@returns: number of unsuccessful processed users, otherwise success is 0
  */
 size_t
-NetworkRemoveUsersFromInviteList (Session *sesn_ptr_carrier, InstanceHolderForFence *instance_f_ptr)
+NetworkRemoveUsersFromInviteList (InstanceContextForSession *ctx_ptr_carrier, InstanceHolderForFence *instance_f_ptr)
 {
 	size_t 		dangling_users_counter = 0;
 	ListEntry *eptr;
@@ -2972,9 +2991,9 @@ NetworkRemoveUsersFromInviteList (Session *sesn_ptr_carrier, InstanceHolderForFe
 				continue;
 			}
 
-			bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+			bool lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 			FenceEvent 	fence_event = {0};	fence_event.event_type=EVENT_TYPE_FENCE_USER_UNINVITED;
-			SessionTransferAccessContext(sesn_ptr_carrier, sesn_ptr_invited, false);
+			SessionTransferAccessContext(ctx_ptr_carrier->sesn_ptr, sesn_ptr_invited, false);
       RemoveUserFromInvitedList((InstanceHolderForSession *) eptr->whatever, &((FenceStateDescriptor) {.instance_holder_fence=instance_f_ptr}), &fence_event, FENCE_CALLFLAG_WRITEBACK_DATA_TO_BACKEND);
 
 			if (!lock_already_owned)	{
@@ -2982,7 +3001,7 @@ NetworkRemoveUsersFromInviteList (Session *sesn_ptr_carrier, InstanceHolderForFe
 			}
 
 			//dont lock sesn_ptr_invited, as it gets locked downstream at marshaling
-			MarshalFenceUnInvitedToUser (sesn_ptr_carrier, sesn_ptr_invited, f_ptr, &fence_event, SESSION_CALLFLAGS_EMPTY);
+			MarshalFenceUnInvitedToUser(ctx_ptr_carrier, &(InstanceContextForSession){(InstanceHolderForSession *) eptr->whatever, sesn_ptr_invited}, f_ptr, &fence_event, SESSION_CALLFLAGS_EMPTY);
 		}
 	}
 
@@ -3036,11 +3055,11 @@ _DestructUserFence (Session *sesn_ptr, InstanceContextForFence *instance_ctx_ptr
 
 		if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR)) return;
 
-		fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+		fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 	}
 
 #ifdef __UF_TESTING
-	syslog(LOG_DEBUG, "%s: {bid:'%lu' fcname: '%s'} has (user_count='%d') Sessions...", __func__, instance_ctx_ptr->f_ptr->fence_id, instance_ctx_ptr->f_ptr->fence_location.canonical_name, instance_ctx_ptr->f_ptr->fence_user_sessions_list.nEntries);
+	syslog(LOG_DEBUG, "%s: {pid:'%lu', fo:'%p', bid:'%lu', fcname: '%s'} has (user_count='%d') Sessions...", __func__, pthread_self(), instance_ctx_ptr->f_ptr, instance_ctx_ptr->f_ptr->fence_id, instance_ctx_ptr->f_ptr->fence_location.canonical_name, instance_ctx_ptr->f_ptr->fence_user_sessions_list.nEntries);
 #endif
 
 	ListEntry *eptr = NULL;
@@ -3063,7 +3082,7 @@ _DestructUserFence (Session *sesn_ptr, InstanceContextForFence *instance_ctx_ptr
 				}
 			}
 
-			lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+			lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 			_RemoveUserFromUserFenceAndUnlinkUser(instance_ctx_ptr->f_ptr, (InstanceHolderForSession *)eptr->whatever, dangling_session_status);
 
@@ -3340,11 +3359,11 @@ _CrossCheckInvitedListsForUser (InstanceHolderForSession *instance_sesn_ptr)
 
       FenceEventsLockRWCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(rouge_fences[idx]), _LOCK_TRY_FLAG_FALSE, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), __func__);
 
-      if (THREAD_CONTEXT_UFSRV_RESULT_TYPE_ERR(THREAD_CONTEXT)) continue;
+      if (THREAD_CONTEXT_UFSRV_RESULT_TYPE_ERR) continue;
 
       syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p, o:'%p', fo:'%p', fid:'%lu'}: ERROR: DATA INTEGRITY: FENCE ON INVITE LIST, BUT USER ALREADY JOINED ", __func__, pthread_self(), THREAD_CONTEXT_PTR, sesn_ptr, rouge_fences[idx], FENCE_ID(FENCESTATE_FENCE(rouge_fences[idx])));
 
-      fence_lock_already_owned = THREAD_CONTEXT_UFSRV_RESULT_CODE_EQUAL(ufsrv_thread_context, RESCODE_PROG_LOCKED_THIS_THREAD);
+      fence_lock_already_owned = THREAD_CONTEXT_UFSRV_RESULT_CODE_EQUAL(ufsrv_thread_context, RESCODE_PROG_LOCKED_BY_THIS_THREAD);
       RemoveUserFromInvitedList(instance_sesn_ptr, rouge_fences[idx], &fence_event, FENCE_CALLFLAG_WRITEBACK_DATA_TO_BACKEND);
       if (!fence_lock_already_owned)  FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FENCESTATE_FENCE(rouge_fences[idx]), THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
     }
@@ -3502,7 +3521,7 @@ JsonFormatFenceForDbBackend(Session *sesn_ptr_carrier, Fence *f_ptr, enum Digest
 
 		if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_ERR))	return NULL;
 
-		fence_lock_already_owned=(_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD));
+		fence_lock_already_owned=(_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 	}
 
 	struct json_object *jobj=json_object_new_object();
@@ -3512,7 +3531,7 @@ JsonFormatFenceForDbBackend(Session *sesn_ptr_carrier, Fence *f_ptr, enum Digest
 	if (FENCE_OWNER_UID(f_ptr)!=1) {
 		UfsrvUid *uid_ptr = GetUfsrvUid(sesn_ptr_carrier, FENCE_OWNER_UID(f_ptr), &uid, true, NULL);
 		if (IS_PRESENT(uid_ptr)) {
-			UfsrvUidConvertToString(uid_ptr, uid_encoded);
+      UfsrvUidConvertSerialise(uid_ptr, uid_encoded);
 			json_object_object_add(jobj, "owner_ufsrvid", json_object_new_string(uid_encoded));
 		}
 	} else {
@@ -3610,14 +3629,13 @@ _JsonFormatFenceTypeSpecs (const Fence *f_ptr, json_object *jobj)
 struct json_object *
 JsonFormatSessionFenceList (Session *sesn_ptr, enum DigestMode digest_mode)
 {
-
   if (SESSION_FENCE_LIST_SIZE(sesn_ptr) == 0) {
    syslog(LOG_DEBUG, "%s {pid:'%lu' o:'%p', cid:'%lu'}: COULD NOT MAKE FENCE LIST FOR SESSION: No Fences found in Session", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr));
 
    return NULL;
   }
 
-  bool fence_lock_already_owned=false;
+  bool fence_lock_already_owned = false;
   Fence 				*f_ptr	= NULL;
   ListEntry		*eptr		= NULL;
   json_object	*jarray	= NULL;
@@ -3637,7 +3655,7 @@ JsonFormatSessionFenceList (Session *sesn_ptr, enum DigestMode digest_mode)
 
 		 if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR))	continue;
 
-		 fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+		 fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 		jobj = json_object_new_object();
 		json_object_object_add (jobj,"userCount",	json_object_new_int(FENCE_USERS_COUNT(f_ptr)));
@@ -3648,7 +3666,7 @@ JsonFormatSessionFenceList (Session *sesn_ptr, enum DigestMode digest_mode)
 		if (FENCE_OWNER_UID(f_ptr) != 1) {
 			UfsrvUid *uid_ptr = GetUfsrvUid(sesn_ptr, FENCE_OWNER_UID(f_ptr), &uid, true, NULL);
 			if (IS_PRESENT(uid_ptr)) {
-				UfsrvUidConvertToString(uid_ptr, uid_encoded);
+        UfsrvUidConvertSerialise(uid_ptr, uid_encoded);
 				json_object_object_add(jobj, "owner_ufsrvuid", json_object_new_string(uid_encoded));
 			}
 		} else {
@@ -3681,6 +3699,9 @@ JsonFormatSessionFenceList (Session *sesn_ptr, enum DigestMode digest_mode)
 		//todo: disable this, as fence statesync contains protobuf representation of this data
     struct json_object *jobj_array_prefs = JsonFormatFenceUserPreferences (sesn_ptr, fence_state_descriptor);
     if (IS_PRESENT(jobj_array_prefs)) json_object_object_add (jobj, "fence_preferences", jobj_array_prefs);
+
+     struct json_object *jobj_array_fence_permissions = JsonFormatFencePermissions (sesn_ptr, f_ptr);
+     if (IS_PRESENT(jobj_array_prefs)) json_object_object_add (jobj, "fence_permissions", jobj_array_fence_permissions);
 
 		if (digest_mode == DIGESTMODE_BRIEF) goto record_ready;
 
@@ -3743,7 +3764,7 @@ JsonFormatSessionInvitedFenceList (Session *sesn_ptr, enum DigestMode digest_mod
 
 		 if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR))	continue;
 
-		 fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+		 fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 		//TODO: We can probably get away without locking f we dont include userCount, fname, fcname
 		jobj=json_object_new_object();
@@ -3753,7 +3774,7 @@ JsonFormatSessionInvitedFenceList (Session *sesn_ptr, enum DigestMode digest_mod
 		if (IS_STR_LOADED(FENCE_CNAME(f_ptr)))				json_object_object_add (jobj,"fcname", 				json_object_new_string(FENCE_CNAME(f_ptr)));
 
 		memset (invited_by, '\0', CONFIG_MAX_UFSRV_ID_ENCODED_SZ+1);
-    UfsrvUidConvertToString (&(fstate_ptr->invited_by), invited_by);
+     UfsrvUidConvertSerialise(&(fstate_ptr->invited_by), invited_by);
 
     json_object_object_add (jobj,"invited_by",		json_object_new_string(invited_by));
 		json_object_object_add (jobj,"invited_when",	json_object_new_int64(fstate_ptr->when_invited));
@@ -3834,7 +3855,8 @@ _ConstructRawUsersListForFence (Session *sesn_ptr, Fence *f_ptr, List *fence_use
 
 }
 
-Session *GetSessionForFenceOwner (Session *sesn_ptr, Fence *f_ptr)
+InstanceHolderForSession *
+GetSessionForFenceOwner (Session *sesn_ptr, Fence *f_ptr)
 {
   if (unlikely(FENCE_USERS_COUNT(f_ptr) == 0)) {
     return NULL;
@@ -3846,7 +3868,7 @@ Session *GetSessionForFenceOwner (Session *sesn_ptr, Fence *f_ptr)
                                      CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION);
   GetSessionForThisUserByUserId(sesn_ptr, FENCE_OWNER_UID(f_ptr), NULL, sesn_call_flags);
 
-  if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))  return SessionOffInstanceHolder((InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr));
+  if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))  return (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr);
 
   return NULL;
 }
@@ -3877,7 +3899,7 @@ GetRawMemberUsersListForFence  (Session *sesn_ptr, InstanceHolderForFence *insta
 		if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR))	return NULL;
 	}
 
-	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 	FenceRawSessionList *raw_sesn_list_ptr = NULL;
 
@@ -3887,8 +3909,8 @@ GetRawMemberUsersListForFence  (Session *sesn_ptr, InstanceHolderForFence *insta
 	if (unlikely(FENCE_USERS_COUNT(f_ptr) == 0))	{raw_sesn_list_ptr->sessions = NULL;	raw_sesn_list_ptr->sessions_sz = 0; goto exit_unlock;}
 
 	//won't load from cache backend unless F_ATTR_DIRTY || F_ATTR_SESSNLIST_LAZY set
-	GetMembersListCacheRecordForFence(sesn_ptr, instance_f_ptr, 0, UNSPECIFIED_FENCE_LISTTYPE, UNSPECIFIED_FENCE_LISTTYPE, FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE);
-	if (SESSION_RESULT_TYPE_ERROR(sesn_ptr)) {
+	GetMembersListCacheRecordForFence(sesn_ptr, instance_f_ptr, UNSPECIFIED_UID, UNSPECIFIED_FENCE_LISTTYPE, UNSPECIFIED_FENCE_LISTTYPE, FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE);
+	if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR)) {
 #ifdef __UF_TESTING
 		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', fo:'%p', bid:'%lu', fence_members_sz:'%d'}: ERROR: COULD NOT LOAD FENCE'S USERS LIST", __func__, pthread_self(), sesn_ptr, f_ptr, FENCE_ID(f_ptr), FENCE_USERS_COUNT(f_ptr));
 #endif
@@ -3913,7 +3935,7 @@ GetRawMemberUsersListForFence  (Session *sesn_ptr, InstanceHolderForFence *insta
 	_ConstructRawUsersListForFence (sesn_ptr, f_ptr, &(f_ptr->fence_user_sessions_list), fence_call_flags, raw_sesn_list_ptr);
 
 	exit_unlock:
-	if ((fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE) && !(fence_lock_already_owned)) {
+	if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE && !fence_lock_already_owned) {
 		FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 	}
 
@@ -3925,7 +3947,7 @@ GetRawMemberUsersListForFence  (Session *sesn_ptr, InstanceHolderForFence *insta
 
 	exit_error:
 	if (IS_EMPTY(raw_sesn_list_ptr_in))	free(raw_sesn_list_ptr);
-	if ((fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE) && !(fence_lock_already_owned)) {
+	if (fence_call_flags&FENCE_CALLFLAG_LOCK_FENCE && !fence_lock_already_owned) {
 		FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 	}
 
@@ -3959,7 +3981,7 @@ GetRawInvitedUsersListForFence  (Session *sesn_ptr, InstanceHolderForFence *inst
 		if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR))	return NULL;
 	}
 
-	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+	bool fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 	FenceRawSessionList *raw_sesn_list_ptr = NULL;
 
@@ -4032,7 +4054,7 @@ DestructFenceRawSessionList (FenceRawSessionList *raw_sesn_list_ptr, bool self_d
 // START START CACHE RECORD AND USERLIST FOR FENCE \\\\\
 
 static inline void _CacheRecordPopulateFence (Fence *f_ptr, redisReply *redis_ptr);
-static inline UFSRVResult *_CacheBackendGetCacheRecordForFence (Session *sesn_ptr, unsigned long fence_id, UFSRVResult *res_ptr);
+static inline UFSRVResult *_CacheBackendGetCacheRecordForFence (unsigned long fence_id);
 
 /**
  * 	@brief: Pupulate fence's fields from raw cache record
@@ -4066,49 +4088,53 @@ _CacheRecordPopulateFence (Fence *f_ptr, redisReply *redis_ptr)
  * 	@dynamic_memory redisReply *: EXPORTS
  */
 static inline UFSRVResult *
-_CacheBackendGetCacheRecordForFence (Session *sesn_ptr, unsigned long fence_id, UFSRVResult *res_ptr)
+_CacheBackendGetCacheRecordForFence (unsigned long fence_id)
 {
 	int rescode	=	RESCODE_BACKEND_DATA;
 	PersistanceBackend 	*pers_ptr;
 	redisReply					*redis_ptr;
 
-	pers_ptr=sesn_ptr->fence_cachebackend;
-	if (IS_EMPTY((redis_ptr=(*pers_ptr->send_command)(sesn_ptr, SESSION_FENCE_CACHEBACKEND(sesn_ptr), REDIS_CMD_FENCE_RECORD_GET_ALL, fence_id))))	{rescode=RESCODE_BACKEND_CONNECTION;	goto return_connection_error;}
+	pers_ptr = THREAD_CONTEXT_FENCE_CACHEBACKEND;//sesn_ptr->fence_cachebackend;
+	if (IS_EMPTY((redis_ptr = (*pers_ptr->send_command)(NULL, pers_ptr, REDIS_CMD_FENCE_RECORD_GET_ALL, fence_id))))	{rescode = RESCODE_BACKEND_CONNECTION;	goto return_connection_error;}
 
-	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_reply_error;
-	if (redis_ptr->type==REDIS_REPLY_NIL)		goto return_nil_error;
+	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_reply_error;
+	if (redis_ptr->type == REDIS_REPLY_NIL)		goto return_nil_error;
 	if (!(redis_ptr->element[0]->str))			goto return_empty_set; //HMGET command will still return empty array
 
 	 return_success:
-	 _RETURN_RESULT_SESN(sesn_ptr, redis_ptr, RESULT_TYPE_SUCCESS, rescode);
+//	 _RETURN_RESULT_SESN(sesn_ptr, redis_ptr, RESULT_TYPE_SUCCESS, rescode);
+	 THREAD_CONTEXT_RETURN_RESULT_SUCCESS(redis_ptr, rescode);
 
 	 return_empty_set:
-	 rescode=RESCODE_BACKEND_DATA_EMPTYSET;
-	 syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fid;'%lu'}: ERROR: EMPTY SET.",  __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), fence_id);
+	 rescode = RESCODE_BACKEND_DATA_EMPTYSET;
+	 syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p', fid;'%lu'}: ERROR: EMPTY SET.",  __func__, pthread_self(), THREAD_CONTEXT_PTR, fence_id);
 	 goto return_error;
 
 	 return_nil_error:
-	 syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fid;'%lu'}: ERROR: NIL SET",  __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), fence_id);
+	 syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p', fid;'%lu'}: ERROR: NIL SET",  __func__, pthread_self(), THREAD_CONTEXT_PTR, fence_id);
 	 goto return_error;
 
 	 return_reply_error:
-	 rescode=RESCODE_BACKEND_COMMAND;
-	 syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fid:'%lu', error:'%s'}: ERROR: COMMAND ERROR.", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), fence_id, redis_ptr->str);
+	 rescode = RESCODE_BACKEND_COMMAND;
+	 syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p', fid:'%lu', error:'%s'}: ERROR: COMMAND ERROR.", __func__, pthread_self(), THREAD_CONTEXT_PTR, fence_id, redis_ptr->str);
 	 goto return_error;
 
 	 return_error:
 	 freeReplyObject(redis_ptr);
-	 _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
+//	 _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
+  THREAD_CONTEXT_RETURN_RESULT_SUCCESS(NULL, rescode);
 
 	 return_connection_error:
-	 syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu'}: ERROR RESPONSE for fence_id '%lu'", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), fence_id);
-	 _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
-
+	 syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p'}: ERROR RESPONSE for fence_id '%lu'", __func__, pthread_self(), THREAD_CONTEXT_PTR, fence_id);
+//	 _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode)
+  THREAD_CONTEXT_RETURN_RESULT_SUCCESS(NULL, rescode);
 }
 
 /**
- *	@brief:
- *	 given a fence_id, retrieve the corresponding record from backend. has the entry locally if required.
+ *	@brief Retrieve and build a Fence object from its cache backend record.
+ *	@param sesn_ptr_this can be NULL if no lock is installed on Fence
+ *	@param uid user id to look up when loading fence lists, typically the requesting session. Only when FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER is passed.
+ *	empty value set to '0'.
  *  @returns InstanceHolderForFence
  *	@call_flag FENCE_CALLFLAG_HASH_FENCE_LOCALLY:
  *	@call_flag FENCE_CALLFLAG_KEEP_FENCE_LOCKED: only honored if HASH_LOCALLY is set
@@ -4120,21 +4146,18 @@ _CacheBackendGetCacheRecordForFence (Session *sesn_ptr, unsigned long fence_id, 
  *	Fence RW events. If FENCE_CALLFLAG_KEEP_FENCE_LOCKED  we let the calling environment to unlock the fence.
  *	@unlocks f_ptr: if hash local and FENCE_CALLFLAG_KEEP_FENCE_LOCKED is NOT set
  *
- *	@worker: sesnworker
+ *	@worker: sesn_worker
  *
  */
 UFSRVResult *//CALL_FLAG_HASH_SESSION_LOCALLY
-GetCacheRecordForFence (Session *sesn_ptr_this, EnumFenceCollectionType list_type_context, unsigned long fence_id, bool *fence_lock_state, unsigned long call_flags)
+GetCacheRecordForFence (Session *sesn_ptr_this, EnumFenceCollectionType list_type_context, unsigned long fence_id, unsigned long uid, bool *fence_lock_state, unsigned long call_flags)
 {
 	Fence 							*f_ptr = NULL;
 	InstanceHolderForFence  *instance_f_ptr = NULL;
-	UFSRVResult *res_ptr		=	&(sesn_ptr_this->sservice.result);
 
-	_CacheBackendGetCacheRecordForFence (sesn_ptr_this, fence_id, res_ptr);
-
-	if (_RESULT_TYPE_ERROR(res_ptr))	goto return_error_null;
-
-	redisReply 	*redis_ptr	=	(redisReply *)_RESULT_USERDATA(res_ptr);
+	_CacheBackendGetCacheRecordForFence(fence_id);
+	if (!THREAD_CONTEXT_UFSRV_RESULT_IS_SUCCESS_WITH_BACKEND_DATA)	goto return_error_null;
+	redisReply 	*redis_ptr	=	(redisReply *)THREAD_CONTEXT_UFSRV_RESULT_USERDATA;
 
 	unsigned fence_attrs = strtoul(redis_ptr->element[REDIS_KEY_FENCE_TYPE]->str, NULL, 10);
 	if (F_ATTR_IS_SET(fence_attrs, F_ATTR_BASEFENCE)) {
@@ -4147,15 +4170,15 @@ GetCacheRecordForFence (Session *sesn_ptr_this, EnumFenceCollectionType list_typ
 
 	f_ptr = FenceOffInstanceHolder(instance_f_ptr);
 
-	//Do it early as there is no point in loading the fece for the user if he is not on its list
+	//Do it early as there is no point in loading the fence for the user if he is not on its list
 
 	bool fence_lock_already_owned = false;
 
 	if (call_flags&FENCE_CALLFLAG_HASH_FENCE_LOCALLY) {
-		FenceEventsLockRWCtx(THREAD_CONTEXT_PTR, f_ptr, _LOCK_TRY_FLAG_FALSE, SESSION_RESULT_PTR(sesn_ptr_this), __func__);
-		if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr_this, RESULT_TYPE_ERR))	goto return_error;
+		FenceEventsLockRWCtx(THREAD_CONTEXT_PTR, f_ptr, _LOCK_TRY_FLAG_FALSE, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), __func__);
+		if (THREAD_CONTEXT_UFSRV_RESULT_TYPE_ERR)	goto return_error;
 
-		fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr_this, RESCODE_PROG_LOCKED_THIS_THREAD));
+		fence_lock_already_owned = (THREAD_CONTEXT_UFSRV_RESULT_CODE_EQUAL(THREAD_CONTEXT, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
 		_CacheRecordPopulateFence(f_ptr, redis_ptr);
 
@@ -4174,24 +4197,24 @@ GetCacheRecordForFence (Session *sesn_ptr_this, EnumFenceCollectionType list_typ
 		 F_ATTR_SET(f_ptr->attrs, F_ATTR_DIRTY);
 
 		 if (call_flags&FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER) {
-			 GetMembersListCacheRecordForFence 	(sesn_ptr_this, instance_f_ptr, SESSION_USERID(sesn_ptr_this), MEMBER_FENCES, list_type_context, FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE|FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER);
+			 GetMembersListCacheRecordForFence(sesn_ptr_this, instance_f_ptr, uid, MEMBER_FENCES, list_type_context, FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE|FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER);
 		 } else {
-			 GetMembersListCacheRecordForFence 	(sesn_ptr_this, instance_f_ptr, 0, MEMBER_FENCES, list_type_context, FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE);
+			 GetMembersListCacheRecordForFence(sesn_ptr_this, instance_f_ptr, UNSPECIFIED_UID, MEMBER_FENCES, list_type_context, FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE);
 		 }
 
-		 if (SESSION_RESULT_TYPE_ERROR(sesn_ptr_this) ||
-				 (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr_this) && SESSION_RESULT_CODE_EQUAL(sesn_ptr_this, RESCODE_BACKEND_DATA_EMPTYSET))) {
-			 if ((call_flags&FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER) && (list_type_context == MEMBER_FENCES))	goto return_error;
-		 }
+     if (SESSION_RESULT_TYPE_ERROR(sesn_ptr_this) ||
+         (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr_this) && SESSION_RESULT_CODE_EQUAL(sesn_ptr_this, RESCODE_BACKEND_DATA_EMPTYSET))) {
+       if ((call_flags&FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER) && (list_type_context == MEMBER_FENCES))	goto return_error;
+     }
 
 		 unsigned long fence_call_flags_invited = FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE;
 
 		 F_ATTR_SET(f_ptr->attrs, F_ATTR_DIRTY);
 		 if (call_flags&FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER) {
 			 fence_call_flags_invited |= FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER;
-			 GetInvitedMembersListCacheRecordForFence (sesn_ptr_this,  instance_f_ptr, SESSION_USERID(sesn_ptr_this), INVITED_FENCES, list_type_context, fence_call_flags_invited);
+			 GetInvitedMembersListCacheRecordForFence(sesn_ptr_this,  instance_f_ptr, uid, INVITED_FENCES, list_type_context, fence_call_flags_invited);
 		 } else {
-			 GetInvitedMembersListCacheRecordForFence (sesn_ptr_this,  instance_f_ptr, 0, INVITED_FENCES, list_type_context, fence_call_flags_invited);
+			 GetInvitedMembersListCacheRecordForFence(sesn_ptr_this,  instance_f_ptr, 0, INVITED_FENCES, list_type_context, fence_call_flags_invited);
 		 }
 
 		 if (SESSION_RESULT_TYPE_ERROR(sesn_ptr_this) ||
@@ -4210,7 +4233,7 @@ GetCacheRecordForFence (Session *sesn_ptr_this, EnumFenceCollectionType list_typ
 	 if (call_flags&FENCE_CALLFLAG_HASH_FENCE_LOCALLY) {
 		 if (!(call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED)) {//not transferring lock ownership
 			 if (!fence_lock_already_owned) {
-         FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr_this));
+         FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
        }
 
 			 if (IS_PRESENT(fence_lock_state))	*fence_lock_state = fence_lock_already_owned;
@@ -4230,7 +4253,7 @@ GetCacheRecordForFence (Session *sesn_ptr_this, EnumFenceCollectionType list_typ
 	goto return_error_null;
 
 	return_error_unlock:
-	if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr_this));
+	if (!fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
 	FenceReturnToRecycler(instance_f_ptr, NULL, CALLFLAGS_EMPTY);
 	freeReplyObject(redis_ptr);
 
@@ -4671,52 +4694,38 @@ CacheBackendGetFenceAttribute (Session *sesn_ptr, unsigned long fence_id, const 
  * 	@dynamic_memroy: EXPORTS redis_ptr
  */
 UFSRVResult *
-CacheBackendGetUserIdsCacheRecordForFence (Session *sesn_ptr_carrier,  unsigned long fid)
+CacheBackendGetUserIdsCacheRecordForFence (unsigned long fid)
 {
-	PersistanceBackend	*pers_ptr=sesn_ptr_carrier->persistance_backend;;
+	PersistanceBackend	*pers_ptr = THREAD_CONTEXT_PERSISTANCE_CACHEBACKEND(THREAD_CONTEXT);
 
 	redisReply *redis_ptr;
 
-#if 1
-		//returns list of signular, non-tokenised <userids>
-		if (!(redis_ptr=(*pers_ptr->send_command)(sesn_ptr_carrier, REDIS_CMD_FENCE_USERS_LIST_GET, fid)))
-		{
-			 syslog(LOG_DEBUG, "%s (pid:'%lu) ERROR RESPONSE for bid:'%lu': ZRANGE MEMBER_USERS_FOR_FENCE:%lu", __func__, pthread_self(), fid, fid);
+  if (!(redis_ptr = (*pers_ptr->send_command)(NO_SESSION, REDIS_CMD_FENCE_USERS_LIST_GET, fid))) {
+     syslog(LOG_DEBUG, "%s (pid:'%lu) ERROR RESPONSE for bid:'%lu': ZRANGE MEMBER_USERS_FOR_FENCE:%lu", __func__, pthread_self(), fid, fid);
 
-			 _RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_CONNECTION);
-		}
+     THREAD_CONTEXT_RETURN_RESULT_ERROR(NULL, RESCODE_BACKEND_CONNECTION)
+  }
 
-		 if (redis_ptr->type==REDIS_REPLY_ERROR)
-		 {
-			 syslog(LOG_DEBUG, "%s (pid:'%lu'): ERROR: REDIS RESULTSET for RESPONSE for fid:'%lu'. Error: '%s'",  __func__, pthread_self(), fid, redis_ptr->str);
+   if (redis_ptr->type == REDIS_REPLY_ERROR) {
+     syslog(LOG_DEBUG, "%s (pid:'%lu'): ERROR: REDIS RESULT SET for RESPONSE for fid:'%lu'. Error: '%s'",  __func__, pthread_self(), fid, redis_ptr->str);
 
-			 goto return_error;
-		 }
-		 if (redis_ptr->type==REDIS_REPLY_NIL)
-		 {
-			 syslog(LOG_DEBUG, "%s (pid:'%lu'): ERROR: EMPTY SET FOR fid:'%lu'",  __func__, pthread_self(), fid);
-			 goto return_error;
-		 }
+     goto return_error;
+   }
+   if (redis_ptr->type == REDIS_REPLY_NIL) {
+     syslog(LOG_DEBUG, "%s (pid:'%lu'): ERROR: EMPTY SET FOR fid:'%lu'",  __func__, pthread_self(), fid);
+     goto return_error;
+   }
 
-
-		 if (redis_ptr->elements>0)
-		 {
-			 _RETURN_RESULT_SESN(sesn_ptr_carrier, redis_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
-		 }
-		 else
-		 {
-#ifdef __UF_FULLDEBUG
-			 syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p, fid:'%lu'): NOTICE: EMPTY SET FOR FENCE",  __func__, pthread_self(), sesn_ptr_carrier, fid);
-#endif
-
-			 freeReplyObject(redis_ptr);
-			 _RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA_EMPTYSET);
-		 }
-#endif
+   if (redis_ptr->elements > 0) {
+     THREAD_CONTEXT_RETURN_RESULT_SUCCESS(redis_ptr, RESCODE_BACKEND_DATA)
+   } else {
+     freeReplyObject(redis_ptr);
+     THREAD_CONTEXT_RETURN_RESULT_SUCCESS(NULL, RESCODE_BACKEND_DATA_EMPTYSET)
+   }
 
 	 return_error:
 	 freeReplyObject(redis_ptr);
-	_RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_DATA);
+  THREAD_CONTEXT_RETURN_RESULT_ERROR(NULL, RESCODE_BACKEND_DATA)
 
 }
 
@@ -4726,18 +4735,15 @@ CacheBackendGetUserIdsCacheRecordForFence (Session *sesn_ptr_carrier,  unsigned 
 bool
 IsUserIdInCacheRecordForFence (Session *sesn_ptr,  unsigned long fid)
 {
-	CacheBackendGetUserIdsCacheRecordForFence (sesn_ptr,  fid);
-	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr) && !(SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_BACKEND_DATA_EMPTYSET)))
-	{
-		bool				return_value=false;
-		redisReply *redis_ptr=(redisReply 	*)SESSION_RESULT_USERDATA(sesn_ptr);
+	CacheBackendGetUserIdsCacheRecordForFence(fid);
+	if (THREAD_CONTEXT_UFSRV_RESULT_IS_SUCCESS_WITH_BACKEND_DATA) {
+		bool				return_value = false;
+		redisReply *redis_ptr = (redisReply 	*)THREAD_CONTEXT_UFSRV_RESULT_USERDATA;
 
-		for (size_t i=0; i < redis_ptr->elements; ++i)
-		{
+		for (size_t i=0; i < redis_ptr->elements; ++i) {
 			unsigned long 	user_id		= strtoul(redis_ptr->element[i]->str, NULL, 10);
-			if (user_id==SESSION_USERID(sesn_ptr))
-			{
-				return_value=true;
+			if (user_id == SESSION_USERID(sesn_ptr)) {
+				return_value = true;
 				break;
 			}
 		}
@@ -4775,7 +4781,7 @@ RepairFenceMembershipForUser (InstanceHolderForSession *instance_sesn_ptr, Insta
 		unsigned long uid_inviter = 0;
 
 		//session's memory store did not contain reference to fence: refer back to CacheBack end for Session and retrieve list of fence ids this user is memer of
-		is_not_impaired = IsFenceIdInCacheRecordForUser (sesn_ptr,  SESSION_USERID(sesn_ptr), FENCE_ID(f_ptr), &uid_inviter);
+		is_not_impaired = IsFenceIdInCacheRecordForUser(SESSION_USERID(sesn_ptr), FENCE_ID(f_ptr), &uid_inviter);
 		if (is_not_impaired) {
 			InstanceHolder *instance_holder_ptr = RecyclerGet(FenceStateDescriptorPoolTypeNumber(), (ContextData *)instance_f_ptr, CALLFLAGS_EMPTY);
 			if (unlikely(IS_EMPTY(instance_holder_ptr))) goto return_allocation_error;
@@ -4809,7 +4815,6 @@ RepairFenceMembershipForUser (InstanceHolderForSession *instance_sesn_ptr, Insta
  * 	@WARNING: Fence MAY NOT BE POPULATED DONT ASSUME ANYTHING ABOUT FENEC DATA EXCEPT ID AND WHETHET DIRT FLAG IS SET
  * 	TODO: refactor so the session creation happens here
  *
- *	@param sesn_ptr_carrier: This is just a carrier session for access context
  *	@param userid_loaded_for: where fence is being loaded for a specific user and if flag FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER is present: abort loading if fence user list doess dnot contain user
  *	@param list_type_context: context information indicating which fence list type the provided fence was loaded from, for example this fence
  *	could have been originally referenced in users invited tyle fence list. This helps with ABORTING callflag
@@ -4829,35 +4834,33 @@ RepairFenceMembershipForUser (InstanceHolderForSession *instance_sesn_ptr, Insta
  * 	@worker_thread: session worker, ufsrv worker
  */
 UFSRVResult *
-GetMembersListCacheRecordForFence (Session *sesn_ptr_carrier,  InstanceHolderForFence *instance_f_ptr, unsigned long userid_loaded_for, EnumFenceCollectionType list_type_target, EnumFenceCollectionType list_type_context, unsigned long fence_call_flags)
+GetMembersListCacheRecordForFence (Session *sesn_ptr_target,  InstanceHolderForFence *instance_f_ptr, unsigned long userid_loaded_for, EnumFenceCollectionType list_type_target, EnumFenceCollectionType list_type_context, unsigned long fence_call_flags)
 {
   Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
 
 	//we need at least one of these to be set to proceed...
 	if (!(F_ATTR_IS_SET(f_ptr->attrs, F_ATTR_DIRTY)) && !(F_ATTR_IS_SET(f_ptr->attrs, F_ATTR_SESSNLIST_LAZY))) {
 #ifdef __UF_TESTING
-		 syslog(LOG_DEBUG, "%s (pid:'%lu, o:'%p', fo:'%p', fid:'%lu') NOT FETCHING SESSION LIST FOR FENCE (lazy:'%d', dirty:'%d')", __func__, pthread_self(), sesn_ptr_carrier, f_ptr, FENCE_ID(f_ptr), F_ATTR_IS_SET(f_ptr->attrs, F_ATTR_SESSNLIST_LAZY), F_ATTR_IS_SET(f_ptr->attrs, F_ATTR_DIRTY));
+		 syslog(LOG_DEBUG, "%s (pid:'%lu, th_ctx:'%p', fo:'%p', fid:'%lu') NOT FETCHING SESSION LIST FOR FENCE (lazy:'%d', dirty:'%d')", __func__, pthread_self(), THREAD_CONTEXT_PTR, f_ptr, FENCE_ID(f_ptr), F_ATTR_IS_SET(f_ptr->attrs, F_ATTR_SESSNLIST_LAZY), F_ATTR_IS_SET(f_ptr->attrs, F_ATTR_DIRTY));
 #endif
 
-		_RETURN_RESULT_SESN(sesn_ptr_carrier, f_ptr, RESULT_TYPE_SUCCESS, RESCODE_FENCE_LIST_SELFLOADED)
+		_RETURN_RESULT_SESN(sesn_ptr_target, f_ptr, RESULT_TYPE_SUCCESS, RESCODE_FENCE_LIST_SELFLOADED)
 	}
 
-	PersistanceBackend	*pers_ptr = sesn_ptr_carrier->persistance_backend;
-
 	redisReply 	*redis_ptr;
-	UFSRVResult *res_ptr		=	CacheBackendGetUserIdsCacheRecordForFence (sesn_ptr_carrier, FENCE_ID(f_ptr));//TODO: this backend loading is heavy handed
+	CacheBackendGetUserIdsCacheRecordForFence(FENCE_ID(f_ptr));//TODO: this backend loading is heavy handed
 
-	if (_RESULT_TYPE_SUCCESS(res_ptr)) {
-		if (SESSION_RESULT_CODE_EQUAL(sesn_ptr_carrier, RESCODE_BACKEND_DATA_EMPTYSET))	return res_ptr;
+	if (THREAD_CONTEXT_UFSRV_RESULT_TYPE_SUCCESS) {
+		if (THREAD_CONTEXT_UFSRV_RESULT_CODE_EQUAL(THREAD_CONTEXT, RESCODE_BACKEND_DATA_EMPTYSET))	_RETURN_RESULT_SESN(sesn_ptr_target, NULL, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA_EMPTYSET)
 
-		redis_ptr = (redisReply 	*)SESSION_RESULT_USERDATA(sesn_ptr_carrier);
-	} else	_RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_DATA)
+		redis_ptr = (redisReply 	*)THREAD_CONTEXT_UFSRV_RESULT_USERDATA;
+	} else	_RETURN_RESULT_SESN(sesn_ptr_target, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_DATA)
 
 	{
 	 //>> we now have a list of UID's
 
 #ifdef __UF_TESTING
-	   syslog(LOG_DEBUG, "%s {pid:'%lu, o:'%p', fo:'%p', fid:'%lu'}: RESULT: Fence contains (%lu) users in it", __func__, pthread_self(), sesn_ptr_carrier, f_ptr, FENCE_ID(f_ptr), redis_ptr->elements);
+	   syslog(LOG_DEBUG, "%s {pid:'%lu, th_ctx:'%p', fo:'%p', fid:'%lu'}: RESULT: Fence contains (%lu) users in it", __func__, pthread_self(), THREAD_CONTEXT_PTR, f_ptr, FENCE_ID(f_ptr), redis_ptr->elements);
 #endif
 
 	   bool 					userid_found						=	false;
@@ -4871,36 +4874,35 @@ GetMembersListCacheRecordForFence (Session *sesn_ptr_carrier,  InstanceHolderFor
 			 if (fence_call_flags&FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER) if (userids_preprocessed[i] == userid_loaded_for)	userid_found = true;
 		 }
 
-		 //where user wasnt found we want to continue process if the fence for which we are processing the user list was being loaded into
+		 //where user was'nt found we want to continue process if the fence for which we are processing the user list was being loaded into
 		 //the missing user; ie there is a referential problem: if I was loading the invited fences list for user and this fence was referenced
 		 //that list we should see the user referenced here
 		 if (!userid_found && (fence_call_flags&FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER) && (list_type_target == list_type_context)) {
-			 syslog(LOG_DEBUG, "%s {pid:'%lu, o:'%p', fo:'%p', fid:'%lu', userid_loadedfor:'%lu'}: ERROR: REFERENTIAL ERROR: FENCE MEMBERS LIST DOESNNT REFER TO USER BEING LOADED FOR", __func__, pthread_self(), sesn_ptr_carrier, f_ptr, FENCE_ID(f_ptr), userid_loaded_for);
+			 syslog(LOG_DEBUG, "%s {pid:'%lu, th_ctx:'%p', fo:'%p', fid:'%lu', userid_loadedfor:'%lu'}: ERROR: REFERENTIAL ERROR: FENCE MEMBERS LIST DOESNNT REFER TO USER BEING LOADED FOR", __func__, pthread_self(), THREAD_CONTEXT_PTR, f_ptr, FENCE_ID(f_ptr), userid_loaded_for);
 			 freeReplyObject(redis_ptr);
 
-			 _RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_FENCE_MEMBERSHIP)
+			 _RETURN_RESULT_SESN(sesn_ptr_target, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_FENCE_MEMBERSHIP)
 		 }
 
 	   size_t				i, success_counter = 0;
 	   redisReply		*redis_ptr_session_records[userids_preprocessed_sz];
-	   UFSRVResult	res;
 
 	   for (i=0; i < userids_preprocessed_sz; ++i)	redis_ptr_session_records[i] = NULL;
 
 	   //retrieve the raw user cache record for each uid and index it into list
 	   for (i=0; i < userids_preprocessed_sz; ++i) {
 		   unsigned long 	user_id		=  	userids_preprocessed[i];
-		   	 	 	 	 	 	 	 	res_ptr		= CacheBackendGetRawSessionRecord(sesn_ptr_carrier, user_id, 0, &res);
+		   CacheBackendGetRawSessionRecord(user_id, CALLFLAGS_EMPTY, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
 
-		   if (_RESULT_TYPE_SUCCESS(res_ptr)) {
-			   redisReply *redis_ptr_user = ((redisReply *)res_ptr->result_user_data);
+		   if (THREAD_CONTEXT_UFSRV_RESULT_TYPE_SUCCESS) {
+			   redisReply *redis_ptr_user = (redisReply *)THREAD_CONTEXT_UFSRV_RESULT_USERDATA;
 			   *(redis_ptr_session_records + success_counter++) = redis_ptr_user;
 		   } else {
 			   //TODO: this a stale UID which must be cleansed. First check in the DbBackend if the user has uninstalled. perhaps log it in a list for out of band processing?
-			   syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu', uid:'%lu'): ERROR: FOUND POTENTIALLY STALE UID --> TODO: IMPELMENT CLEANSING", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), f_ptr, FENCE_ID(f_ptr), user_id);
+			   syslog(LOG_DEBUG, "%s (pid:'%lu', th_ctx:'%p', fo:'%p', fid:'%lu', uid:'%lu'): ERROR: FOUND POTENTIALLY STALE UID --> TODO: IMPELMENT CLEANSING", __func__, pthread_self(), THREAD_CONTEXT_PTR, f_ptr, FENCE_ID(f_ptr), user_id);
 
-			   //TODO: implement fully.. currently an anchor point
-			   ClearBackendCacheForSessionlessInvalidUserId (sesn_ptr_carrier, user_id, 0, 0);
+			   //TODO: implement fully.. currently an anchor point and must check the db backend
+			   ClearBackendCacheForSessionlessInvalidUserId(user_id, CALLFLAGS_EMPTY, CALLFLAGS_EMPTY);
 		   }
 	   }
 
@@ -4909,37 +4911,36 @@ GetMembersListCacheRecordForFence (Session *sesn_ptr_carrier,  InstanceHolderFor
 	  	 __unused size_t users_removed = 0;
        //filter out user's who don't reference this Fence in their Fence list...
        CollectionDescriptor collection_users				={.collection=(collection_t **)redis_ptr_session_records, success_counter};
-       users_removed = _CleanUpFaultyUserEntriesForFence (sesn_ptr_carrier, f_ptr, userid_loaded_for, &collection_users,  MEMBER_FENCES);
+       users_removed = _CleanUpFaultyUserEntriesForFence(sesn_ptr_target, f_ptr, userid_loaded_for, &collection_users,  MEMBER_FENCES);
 
 		   if (fence_call_flags&FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE) {
 		  	 //IMPORTANT: THIS DOES NOT LOAD FENCE LIST FOR SESSION; instead LAZY flag will be set
-		  	 CollectionDescriptorPair collection_pair				={.first={(collection_t **)redis_ptr_session_records, success_counter},
-		  			 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	.second={0}};
-		  	 _InstateUsersListCacheRecordsForFence(sesn_ptr_carrier, &(f_ptr->fence_user_sessions_list), MEMBER_FENCES, instance_f_ptr,  &collection_pair, CALL_FLAG_REMOTE_SESSION);
+		  	 CollectionDescriptorPair collection_pair				={.first={(collection_t **)redis_ptr_session_records, success_counter}, .second={0}};
+		  	 _InstateUsersListCacheRecordsForFence(sesn_ptr_target, &(f_ptr->fence_user_sessions_list), MEMBER_FENCES, instance_f_ptr,  &collection_pair, CALL_FLAG_REMOTE_SESSION);
 
 			   //we are not writing back fence data or broadcasting users/sessions in this list
 		   }
 	   }
 
 	   if (success_counter < userids_preprocessed_sz) {
-		   syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', fo:'%p'): ERROR: Received '%lu' elements: BUT ONLY PROCESED '%lu' WITH SUCCESS...",
-				   __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), f_ptr, redis_ptr->elements, success_counter);
+		   syslog(LOG_DEBUG, "%s (pid:'%lu', th_ctx:'%p', fo:'%p'): ERROR: Received '%lu' elements: BUT ONLY PROCESED '%lu' WITH SUCCESS...", __func__, pthread_self(), THREAD_CONTEXT_PTR, f_ptr, redis_ptr->elements, success_counter);
 	   }
 
 	   good_finish:
 	   for (i=0; i < success_counter; ++i)	 if (IS_PRESENT(redis_ptr_session_records[i]))	freeReplyObject(redis_ptr_session_records[i]);
+
 	   freeReplyObject(redis_ptr);
 
-	   _RETURN_RESULT_SESN(sesn_ptr_carrier, f_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
+	   _RETURN_RESULT_SESN(sesn_ptr_target, f_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA)
 	}//redis block
 
 	return_error:
 	freeReplyObject(redis_ptr);
-	_RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_DATA);
+	_RETURN_RESULT_SESN(sesn_ptr_target, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_DATA)
 
 	return_error_unlock:
 	freeReplyObject(redis_ptr);
-	_RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_DATA);
+	_RETURN_RESULT_SESN(sesn_ptr_target, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_DATA)
 
 }
 
@@ -5017,10 +5018,6 @@ GetInvitedMembersListCacheRecordForFence (Session *sesn_ptr,  InstanceHolderForF
 				continue;
 			 }
 
-#ifdef __UF_FULLDEBUG
-			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', fid:'%lu', uid_list:'%lu', uname_list:'%s'): Extracted fields...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), FENCE_ID(f_ptr),  uids_unames_preprocessed[i].uid,  uids_unames_preprocessed[i].uname);
-#endif
-
 			 if (fence_call_flags&FENCE_CALLFLAG_ABORT_RECORD_IF_USER_NOT_MEMBER) if (uids_unames_preprocessed[i].uid==userid_loaded_for)	userid_found=true;
 		 }
 
@@ -5031,7 +5028,7 @@ GetInvitedMembersListCacheRecordForFence (Session *sesn_ptr,  InstanceHolderForF
 			 syslog(LOG_DEBUG, "%s {pid:'%lu, o:'%p', fo:'%p', fid:'%lu', userid_loadedfor:'%lu'}: ERROR: REFERENTIAL ERROR: FENCE MEMBERS LIST DOESNNT REFER TO USER BEING LOADED FOR", __func__, pthread_self(), sesn_ptr, f_ptr, FENCE_ID(f_ptr), userid_loaded_for);
 			 freeReplyObject(redis_ptr);
 
-			 _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_FENCE_MEMBERSHIP);
+			 _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_FENCE_MEMBERSHIP)
 		 }
 
 		 //retrieve the raw user cache record for each uid and index it into list
@@ -5041,26 +5038,22 @@ GetInvitedMembersListCacheRecordForFence (Session *sesn_ptr,  InstanceHolderForF
 		 PairOfUserIdUserName			*uids_unames_processed[userids_preprocessed_sz];//filtered out list based on successfully fetched user records
 		 redisReply								*redis_ptr_session_records[userids_preprocessed_sz];
 
-		 UFSRVResult	res;
-
 		 memset (uids_unames_processed, 0, sizeof(uids_unames_processed));
 		 memset (redis_ptr_session_records, 0, sizeof(redis_ptr_session_records));
 
-#if 1
 		 for (size_t i=0; i < userids_preprocessed_sz; ++i) {
 			 unsigned long 	user_id		= uids_unames_preprocessed[i].uid;
-			 UFSRVResult 		*res_ptr	= CacheBackendGetRawSessionRecord(sesn_ptr, user_id, 0, &res);
+			 CacheBackendGetRawSessionRecord(user_id, CALLFLAGS_EMPTY, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
 
-			 if (_RESULT_TYPE_SUCCESS(res_ptr)) {
-				 redisReply *redis_ptr_user = ((redisReply *)res_ptr->result_user_data);
-				 *(uids_unames_processed+success_counter) = &uids_unames_preprocessed[i];
+			 if (THREAD_CONTEXT_UFSRV_RESULT_TYPE_SUCCESS) {
+				 redisReply *redis_ptr_user = (redisReply *)THREAD_CONTEXT_UFSRV_RESULT_USERDATA;
+				 *(uids_unames_processed + success_counter) = &uids_unames_preprocessed[i];
 				 *(redis_ptr_session_records + success_counter++) = redis_ptr_user;
 			 } else {
 				 //TODO: this a stale UID which must cleanse. perhaps log it in a list for out of band processing?
 				 syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu', uid:'%lu'): ERROR: FOUND POTENTIALLY STALE UID --> TODO: IMPELMENT CLEANSING", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), f_ptr, FENCE_ID(f_ptr), user_id);
 			 }
 		 }
-#endif
 
 		 //we now have a list of user record each entry represented by raw redisReply *
 		 if (success_counter) {
@@ -5121,7 +5114,7 @@ GetInvitedMembersListCacheRecordForFence (Session *sesn_ptr,  InstanceHolderForF
  *	@worker: session worker, ufsrv worker
  */
 inline static Fence *
-_InstateUsersListCacheRecordsForFence (Session *sesn_ptr_carrier, List *fence_user_list_ptr, EnumFenceCollectionType user_fence_list_type, InstanceHolderForFence *instance_f_ptr, CollectionDescriptorPair *collection_pair_ptr, unsigned call_flags)
+_InstateUsersListCacheRecordsForFence (Session *sesn_ptr_target, List *fence_user_list_ptr, EnumFenceCollectionType user_fence_list_type, InstanceHolderForFence *instance_f_ptr, CollectionDescriptorPair *collection_pair_ptr, unsigned call_flags)
 {
 	size_t i = 0;
 
@@ -5138,7 +5131,7 @@ _InstateUsersListCacheRecordsForFence (Session *sesn_ptr_carrier, List *fence_us
 	for (; i<list_count; i++)	processed_users[i] = NULL;
 
 #ifdef __UF_TESTING
-	syslog(LOG_DEBUG, "%s: {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu'}: Attaching '%lu' Users to Fence", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), f_ptr, FENCE_ID(f_ptr), list_count);
+	syslog(LOG_DEBUG, "%s: {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu'}: Attaching '%lu' Users to Fence", __func__, pthread_self(), sesn_ptr_target, SESSION_ID(sesn_ptr_target), f_ptr, FENCE_ID(f_ptr), list_count);
 #endif
 
 	instan_flags |= call_flags&CALL_FLAG_REMOTE_SESSION?CALL_FLAG_REMOTE_SESSION:0;
@@ -5148,7 +5141,7 @@ _InstateUsersListCacheRecordsForFence (Session *sesn_ptr_carrier, List *fence_us
 		redisReply *redis_ptr = *(redis_ptr_session_records + i);
 
 		if (IS_EMPTY(redis_ptr)) {
-			syslog(LOG_DEBUG, "%s: {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu'}: ERROR: User at index '%lu' is NULL: RECIEVED '%lu' elements to attach to FENCE", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), f_ptr, FENCE_ID(f_ptr), i, list_count);
+			syslog(LOG_DEBUG, "%s: {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu'}: ERROR: User at index '%lu' is NULL: RECIEVED '%lu' elements to attach to FENCE", __func__, pthread_self(), sesn_ptr_target, SESSION_ID(sesn_ptr_target), f_ptr, FENCE_ID(f_ptr), i, list_count);
 
 			processed_users[i] = NULL;
 			continue;
@@ -5161,38 +5154,38 @@ _InstateUsersListCacheRecordsForFence (Session *sesn_ptr_carrier, List *fence_us
 																		(UfsrvUid *)redis_ptr->element[REDIS_KEY_USER_UID]->str:NULL;
 //			const char *uid_invalid		=(!IS_EMPTY(redis_ptr->element[REDIS_KEY_USER_UID]->str))?redis_ptr->element[REDIS_KEY_USER_UID]->str:"";
 
-			syslog(LOG_NOTICE, "%s: {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu', unamed_invalid:'%s', uid_ptr:'%p'}: WARNING: ENTIRE USER CACHEBACKEND RECORD WILL BE BLOWN OFF: User at index '%lu' is NULL: RECIEVED '%lu' elements to attach to FENCE", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), f_ptr, FENCE_ID(f_ptr), username_invalid, uid_ptr, i, list_count);
+			syslog(LOG_NOTICE, "%s: {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu', unamed_invalid:'%s', uid_ptr:'%p'}: WARNING: ENTIRE USER CACHEBACKEND RECORD WILL BE BLOWN OFF: User at index '%lu' is NULL: RECIEVED '%lu' elements to attach to FENCE", __func__, pthread_self(), sesn_ptr_target, SESSION_ID(sesn_ptr_target), f_ptr, FENCE_ID(f_ptr), username_invalid, uid_ptr, i, list_count);
 
-			_ClearInvalidUserId (sesn_ptr_carrier, f_ptr, redis_ptr);
+			_ClearInvalidUserId(sesn_ptr_target, f_ptr, redis_ptr);
 
 			continue;
 		}
 
 		//ensure the user is not in this list twice
-		_CheckForDuplicateUsername(sesn_ptr_carrier, f_ptr, redis_ptr, processed_users, i + 1);
+		_CheckForDuplicateUsername(sesn_ptr_target, f_ptr, redis_ptr, processed_users, i + 1);
 
-		if (unlikely(SESSION_RESULT_TYPE_ERROR(sesn_ptr_carrier))) {
-			redisReply *redis_ptr_invalid = SESSION_RESULT_USERDATA(sesn_ptr_carrier);
+		if (unlikely(SESSION_RESULT_TYPE_ERROR(sesn_ptr_target))) {
+			redisReply *redis_ptr_invalid = SESSION_RESULT_USERDATA(sesn_ptr_target);
 
 			if (!(IS_EMPTY(redis_ptr_invalid))) {
 				UfsrvUid *uid_ptr_invalid	=	(UfsrvUid *)redis_ptr_invalid->element[REDIS_KEY_USER_UID]->str;
 				unsigned long userid_invalid = UfsrvUidGetSequenceId(uid_ptr_invalid);
 
 				//some other dude with invalid userid
-				if (SESSION_USERID(sesn_ptr_carrier) != userid_invalid) {
-					_ClearInvalidUserId (sesn_ptr_carrier, f_ptr, redis_ptr_invalid);
+				if (SESSION_USERID(sesn_ptr_target) != userid_invalid) {
+					_ClearInvalidUserId(sesn_ptr_target, f_ptr, redis_ptr_invalid);
 
 					continue;//process next user
 				} else {
 					//kind of impossible?
-					syslog(LOG_ERR, "%s: (pid:'%lu', o:'%p', cid:'%lu', uid_invalid:'%lu', fid:'%lu', fo:'%p'): SEVERE ERROR: CURRENT CONNECTED USER REPORTED WITH INVALID UID", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), userid_invalid,  FENCE_ID(f_ptr), f_ptr);
+					syslog(LOG_ERR, "%s: (pid:'%lu', o:'%p', cid:'%lu', uid_invalid:'%lu', fid:'%lu', fo:'%p'): SEVERE ERROR: CURRENT CONNECTED USER REPORTED WITH INVALID UID", __func__, pthread_self(), sesn_ptr_target, SESSION_ID(sesn_ptr_target), userid_invalid,  FENCE_ID(f_ptr), f_ptr);
 					return NULL;
 				}
 			}
 
 			if (IS_EMPTY(redis_ptr_invalid)) {
 				//both userids share the same username
-				syslog(LOG_ERR, "%s: (pid:'%lu', o:'%p', cid:'%lu', uid:'%lu', uname:'%s', fid:'%lu', fo:'%p'): SEVERE ERROR: TWO USERIDs SHARE THE SAME USERNAME...", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), SESSION_USERID(sesn_ptr_carrier),  SESSION_USERNAME(sesn_ptr_carrier), FENCE_ID(f_ptr), f_ptr);
+				syslog(LOG_ERR, "%s: (pid:'%lu', o:'%p', cid:'%lu', uid:'%lu', uname:'%s', fid:'%lu', fo:'%p'): SEVERE ERROR: TWO USERIDs SHARE THE SAME USERNAME...", __func__, pthread_self(), sesn_ptr_target, SESSION_ID(sesn_ptr_target), SESSION_USERID(sesn_ptr_target),  SESSION_USERNAME(sesn_ptr_target), FENCE_ID(f_ptr), f_ptr);
 				return NULL;
 			}
 		}
@@ -5201,12 +5194,12 @@ _InstateUsersListCacheRecordsForFence (Session *sesn_ptr_carrier, List *fence_us
 			if (!IS_EMPTY(redis_ptr->element[REDIS_KEY_USER_USER_NAME]->str))	processed_users[i] = redis_ptr;
 			else processed_users[i] = NULL;
 
-			syslog(LOG_DEBUG, "%s: (pid:'%lu', o:'%p', cid:'%lu'): ERROR: ELEMENT at index '%lu' HAS NULL UID OR USERNAME 'bid='%lu'", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), i, FENCE_ID(f_ptr));
+			syslog(LOG_DEBUG, "%s: (pid:'%lu', o:'%p', cid:'%lu'): ERROR: ELEMENT at index '%lu' HAS NULL UID OR USERNAME 'bid='%lu'", __func__, pthread_self(), sesn_ptr_target, SESSION_ID(sesn_ptr_target), i, FENCE_ID(f_ptr));
 
 			continue;
 		}
 
-		if (UfsrvUidIsEqual(&SESSION_UFSRVUIDSTORE(sesn_ptr_carrier), (UfsrvUid *)redis_ptr->element[REDIS_KEY_USER_UID]->str)) {
+		if (UfsrvUidIsEqual(&SESSION_UFSRVUIDSTORE(sesn_ptr_target), (UfsrvUid *)redis_ptr->element[REDIS_KEY_USER_UID]->str)) {
 			//session id sould be the same too as UID:%uid record will have been updated before this call after authentication
 			//OK this is me: this potentially belongs to stale old entry, maybe server crashed and did not updated properly
 			//since we'll be added properly to this fence (not s a remote session) we can ignore this reference
@@ -5238,9 +5231,9 @@ _InstateUsersListCacheRecordsForFence (Session *sesn_ptr_carrier, List *fence_us
 				continue;
 			}
 
-			lock_already_owned = _RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD);
+			lock_already_owned = _RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD);
 		} else {
-      if ((instance_sesn_ptr_remote = CacheBackendInstantiateRawSessionRecord(sesn_ptr_carrier, redis_ptr,
+      if ((instance_sesn_ptr_remote = CacheBackendInstantiateRawSessionRecord(sesn_ptr_target, redis_ptr,
                                                                               instan_flags |
                                                                               CALL_FLAG_LOAD_DB_BACKEND_FOR_SESSION,
                                                                               NULL))) {
@@ -5254,7 +5247,7 @@ _InstateUsersListCacheRecordsForFence (Session *sesn_ptr_carrier, List *fence_us
 			processed_users[i] = redis_ptr;
 		} else {
 			//could be because it is a duplicate local session, because hash will refuse rehahshing that
-			syslog(LOG_DEBUG, "%s: (pid:'%lu', o:'%p', cid:'%lu'): ERROR: COULD NOT INSTANTIATE REMOTE SESSION: 'cid_redis='%s' to Fence: 'bid='%lu'",	__func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), redis_ptr->element[REDIS_KEY_USER_CID]->str, FENCE_ID(f_ptr));
+			syslog(LOG_DEBUG, "%s: (pid:'%lu', o:'%p', cid:'%lu'): ERROR: COULD NOT INSTANTIATE REMOTE SESSION: 'cid_redis='%s' to Fence: 'bid='%lu'",	__func__, pthread_self(), sesn_ptr_target, SESSION_ID(sesn_ptr_target), redis_ptr->element[REDIS_KEY_USER_CID]->str, FENCE_ID(f_ptr));
 
 			processed_users[i] = NULL;
 
@@ -5414,19 +5407,18 @@ _ExtractUserIdUserNameFromListCacheRecord (char *raw_cache_field, PairOfUserIdUs
  */
 UFSRVResult *
 FindFenceByCanonicalName (Session *sesn_ptr_this, const char *fence_canonical_name, bool *fence_lock_state, unsigned long fence_call_flags)
-
 {
 	Fence 							*f_ptr		= NULL;
   InstanceHolderForFence *instance_f_ptr = NULL;
 	PersistanceBackend	*pers_ptr	= NULL;
 
-  instance_f_ptr = (InstanceHolder *)HashLookup(&FenceRegistryCanonicalNameHashTable, (void *)fence_canonical_name, true);
+  instance_f_ptr = (InstanceHolderForFence *)HashLookup(&FenceRegistryCanonicalNameHashTable, (void *)fence_canonical_name, true);
 
 	if (!IS_EMPTY(instance_f_ptr)) {
 	  f_ptr = FenceOffInstanceHolder(instance_f_ptr);
 		if (fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED) {
 			FenceEventsLockRWCtx(THREAD_CONTEXT_PTR, f_ptr, _LOCK_TRY_FLAG_FALSE, SESSION_RESULT_PTR(sesn_ptr_this), __func__);
-			if (likely(IS_PRESENT(fence_lock_state)))	*fence_lock_state = (SESSION_RESULT_CODE_EQUAL(sesn_ptr_this, RESCODE_PROG_LOCKED_THIS_THREAD));
+			if (likely(IS_PRESENT(fence_lock_state)))	*fence_lock_state = (SESSION_RESULT_CODE_EQUAL(sesn_ptr_this, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 		}
 
 		SESSION_RETURN_RESULT(sesn_ptr_this, instance_f_ptr, RESULT_TYPE_SUCCESS, RESCODE_PROG_RESOURCE_CACHED)
@@ -5481,7 +5473,7 @@ FindFenceByCanonicalName (Session *sesn_ptr_this, const char *fence_canonical_na
 
          if (fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED)	fence_call_flags_final |= FENCE_CALLFLAG_KEEP_FENCE_LOCKED;
 
-         GetCacheRecordForFence (sesn_ptr_this, UNSPECIFIED_FENCE_LISTTYPE, strtoul(fence_id_str, NULL, 10), &fence_lock_already_owned, fence_call_flags_final);
+         GetCacheRecordForFence(sesn_ptr_this, UNSPECIFIED_FENCE_LISTTYPE, strtoul(fence_id_str, NULL, 10), UNSPECIFIED_UID, &fence_lock_already_owned, fence_call_flags_final);
 
          instance_f_ptr = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr_this);
 
@@ -5534,7 +5526,7 @@ FindBaseFenceByCanonicalName (Session *sesn_ptr, const char *fence_canonical_nam
 		//but since our client is only interested in type specific fence, we transparently unlock on their behalf, because the retrieval
 		//has essentially failed from their perspective, hence NULL return--they have no way of unlocking a NULL reference!
 		if (((fence_call_flags&FENCE_CALLFLAG_HASH_FENCE_LOCALLY) && (fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED)) || (fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED))
-			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
+			if (!(*fence_already_locked))	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 
 		return NULL;
 	}
@@ -5574,7 +5566,7 @@ FindUserFenceByCanonicalName (Session *sesn_ptr, const char *fence_canonical_nam
 		//but since our client is only interested in type specific fence, we transparently unlock on their behalf, because the retrieval
 		//has essentially failed from their perspective, hence NULL return
 		if (((fence_call_flags&FENCE_CALLFLAG_HASH_FENCE_LOCALLY) && (fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED)) || (fence_call_flags&FENCE_CALLFLAG_KEEP_FENCE_LOCKED))
-			if (!fence_already_locked)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
+			if (!(*fence_already_locked))	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, f_ptr, SESSION_RESULT_PTR(sesn_ptr));
 
 		return NULL;
 	}
@@ -5598,7 +5590,7 @@ FindFenceById (Session *sesn_ptr, const unsigned long fence_id, unsigned long fe
 
 	if (IS_EMPTY(sesn_ptr)) {
 		thread_ctx_ptr  = THREAD_CONTEXT_PTR;
-		res_ptr         = ufsrv_thread_context.res_ptr;
+		res_ptr         = THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT);
 	} else {
 		thread_ctx_ptr = THREAD_CONTEXT_PTR;
 		res_ptr        =  SESSION_RESULT_PTR(sesn_ptr);
@@ -5614,7 +5606,7 @@ FindFenceById (Session *sesn_ptr, const unsigned long fence_id, unsigned long fe
 			else 																												FenceEventsLockRWCtx(thread_ctx_ptr, f_ptr, 0, res_ptr, __func__);
 
 			if (_RESULT_TYPE_EQUAL(res_ptr, RESULT_TYPE_SUCCESS)) {
-				if (_RESULT_CODE_EQUAL(res_ptr, RESCODE_PROG_LOCKED_THIS_THREAD)) res_code=RESCODE_PROG_LOCKED_THIS_THREAD;
+				if (_RESULT_CODE_EQUAL(res_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD)) res_code = RESCODE_PROG_LOCKED_BY_THIS_THREAD;
 			} else	{_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_WONTLOCK)}
 		}
 
@@ -5622,18 +5614,18 @@ FindFenceById (Session *sesn_ptr, const unsigned long fence_id, unsigned long fe
 		_RETURN_RESULT_RES(res_ptr, instance_f_ptr, RESULT_TYPE_SUCCESS, res_code)
 	}
 
-	if ((IS_EMPTY(instance_f_ptr)) && (!(fence_call_flags&FENCE_CALLFLAG_SEARCH_BACKEND))) {_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_DOESNT_EXIST)}
+	if (IS_EMPTY(instance_f_ptr) && !(fence_call_flags&FENCE_CALLFLAG_SEARCH_BACKEND)) {_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_DOESNT_EXIST)}
 
 	//this honours FENCE_CALLFLAG_KEEP_FENCE_LOCKED
 	bool fence_lock_already_owned = false;
-	GetCacheRecordForFence(sesn_ptr, UNSPECIFIED_FENCE_LISTTYPE, fence_id, &fence_lock_already_owned, fence_call_flags);
+	GetCacheRecordForFence(sesn_ptr, UNSPECIFIED_FENCE_LISTTYPE, fence_id, SESSION_USERID(sesn_ptr), &fence_lock_already_owned, fence_call_flags);
 
 	instance_f_ptr = SESSION_RESULT_USERDATA(sesn_ptr);
 
 	if (IS_EMPTY(instance_f_ptr))	{_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_RESOURCE_NULL)}
 
 	return_backend_success:
-	_RETURN_RESULT_RES(res_ptr, instance_f_ptr, RESULT_TYPE_SUCCESS, fence_lock_already_owned?RESCODE_PROG_LOCKED_THIS_THREAD:RESCODE_BACKEND_DATA)
+	_RETURN_RESULT_RES(res_ptr, instance_f_ptr, RESULT_TYPE_SUCCESS, fence_lock_already_owned ? RESCODE_PROG_LOCKED_BY_THIS_THREAD : RESCODE_BACKEND_DATA)
 
 }
 
@@ -5703,7 +5695,7 @@ IsUserMemberOfThisFence (const List *const lst_ptr_sesn, Fence *f_ptr, bool lock
 		FenceEventsLockRDCtx(THREAD_CONTEXT_PTR, f_ptr, _LOCK_TRY_FLAG_FALSE, THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), __func__);
 		if (_RESULT_CODE_EQUAL(ufsrv_thread_context.res_ptr, RESCODE_PROG_WONTLOCK))	return NULL;
 
-		bool lock_already_owned = (_RESULT_CODE_EQUAL(ufsrv_thread_context.res_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+		bool lock_already_owned = (_RESULT_CODE_EQUAL(ufsrv_thread_context.res_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
     instance_fstate_ptr = _FindFenceInUserListByID(lst_ptr_sesn, FENCE_ID(f_ptr));
 
@@ -5711,7 +5703,7 @@ IsUserMemberOfThisFence (const List *const lst_ptr_sesn, Fence *f_ptr, bool lock
 
 		return instance_fstate_ptr;
 	} else {
-    instance_fstate_ptr = _FindFenceInUserListByID(lst_ptr_sesn,FENCE_ID(f_ptr));
+    instance_fstate_ptr = _FindFenceInUserListByID(lst_ptr_sesn, FENCE_ID(f_ptr));
 
 		return instance_fstate_ptr;
 	}
@@ -5875,23 +5867,24 @@ UpdateBackendFenceData (Session *sesn_ptr_target, Fence *f_ptr, void *user_dat, 
 	redisReply 					*redis_ptr					= NULL;
 
 	if (event_type == EVENT_TYPE_FENCE_CREATED) {
-
 		if (IS_EMPTY((fe_ptr = RegisterFenceEvent(sesn_ptr_target, f_ptr, event_type,  NULL, 0/*LOCK_FLAG*/, fe_ptr_out)))) {
 			return NULL;
 		}
 
 		CacheBackendAddFenceRecord (sesn_ptr_target, f_ptr, FENCE_CALLFLAG_EMPTY);
 
+    DbBackendInsertUfsrvEvent ((UfsrvEvent *)fe_ptr);
+
     //Add detailed event entry
     //TODO: this should be more loged to db backend. No value in keepoing this memory resident
-    redis_ptr = (*pers_ptr->send_command)(sesn_ptr_target, REDIS_CMD_FENCE_EVENTS,
-                                                        FENCE_ID(f_ptr), 1UL,
-                                                        1UL, masterptr->serverid,
-                                                        SESSION_ID(sesn_ptr_target), time(NULL),
-                                                        SESSION_ID(sesn_ptr_target), FENCE_ID(f_ptr),
-                                                        event_type, "event");
-
-    if (redis_ptr)	freeReplyObject(redis_ptr);
+//    redis_ptr = (*pers_ptr->send_command)(sesn_ptr_target, REDIS_CMD_FENCE_EVENTS,
+//                                                        FENCE_ID(f_ptr), 1UL,
+//                                                        1UL, masterptr->serverid,
+//                                                        SESSION_ID(sesn_ptr_target), time(NULL),
+//                                                        SESSION_ID(sesn_ptr_target), FENCE_ID(f_ptr),
+//                                                        event_type, "event");
+//
+//    if (redis_ptr)	freeReplyObject(redis_ptr);
 
     //avoid race condition between fence creation and user joining, as both are broadcast at nearly the same time, causing INETER processing race conditions
 		if (false) InterBroadcastFenceMake (sesn_ptr_target, (ClientContextData *)f_ptr, fe_ptr, 0/*enum _CommandArgs*/);
@@ -5919,19 +5912,21 @@ UpdateBackendFenceData (Session *sesn_ptr_target, Fence *f_ptr, void *user_dat, 
 
 		//TODO: store in db backend
 		//HMSET FEV:%lu:%lu sid %lu cid %lu when %lu oid %lu tid %lu evt %d ev %s
-		redis_ptr = (*pers_ptr->send_command)(sesn_ptr_target, REDIS_CMD_FENCE_EVENTS,
-																												FENCE_ID(f_ptr),
-																												fe_ptr->eid,
-																												fe_ptr->eid,
-																												masterptr->serverid,
-																												SESSION_ID(sesn_ptr_target),
-																												time(NULL),
-																												SESSION_ID(sesn_ptr_target),
-																												FENCE_ID(f_ptr),
-																												event_type,
-																												"event");
+//		redis_ptr = (*pers_ptr->send_command)(sesn_ptr_target, REDIS_CMD_FENCE_EVENTS,
+//																												FENCE_ID(f_ptr),
+//																												fe_ptr->eid,
+//																												fe_ptr->eid,
+//																												masterptr->serverid,
+//																												SESSION_ID(sesn_ptr_target),
+//																												time(NULL),
+//																												SESSION_ID(sesn_ptr_target),
+//																												FENCE_ID(f_ptr),
+//																												event_type,
+//																												"event");
+//
+//		if (redis_ptr)	freeReplyObject(redis_ptr);
 
-		if (redis_ptr)	freeReplyObject(redis_ptr);
+    DbBackendInsertUfsrvEvent ((UfsrvEvent *)fe_ptr);
 
 		InterBroadcastFenceJoin (sesn_ptr_target, (ClientContextData *)f_ptr, fe_ptr, 0/*enum _CommandArgs*/);
 
@@ -5963,6 +5958,7 @@ UpdateBackendFenceData (Session *sesn_ptr_target, Fence *f_ptr, void *user_dat, 
 
 		if (IS_PRESENT(redis_ptr)) {
 			freeReplyObject(redis_ptr);
+      DbBackendInsertUfsrvEvent ((UfsrvEvent *)fe_ptr);
 			InterBroadcastFenceReload (sesn_ptr_target, (ClientContextData *)f_ptr, fe_ptr, COMMAND_ARGS__RESYNC);
 
 			return fe_ptr;
@@ -6000,7 +5996,7 @@ UpdateBackendFenceInvitedData (Session *sesn_ptr_inviter, Session *sesn_ptr_invi
 		if (IS_PRESENT(fe_ptr_out))	fe_ptr = fe_ptr_out;
 		else												fe_ptr = calloc (1, sizeof(FenceEvent));
 
-		fe_ptr = RegisterFenceEvent (sesn_ptr, f_ptr, event_type,  NULL, 0/*LOCK_FLAG*/, fe_ptr);
+		fe_ptr = RegisterFenceEvent(sesn_ptr, f_ptr, event_type,  NULL, 0/*LOCK_FLAG*/, fe_ptr);
 
 		if (unlikely(IS_EMPTY(fe_ptr))) {
 			if (IS_EMPTY(fe_ptr_out))	free(fe_ptr);
@@ -6021,12 +6017,12 @@ UpdateBackendFenceInvitedData (Session *sesn_ptr_inviter, Session *sesn_ptr_invi
 
 		(*pers_ptr->send_command_multi)(sesn_ptr, REDIS_CMD_MY_FENCE_INVITED_USERS_ADD, SESSION_USERID(sesn_ptr_inviter), time_now, FENCE_ID(f_ptr), SESSION_USERID(sesn_ptr_invited));
 
-		(*pers_ptr->send_command_multi)(sesn_ptr, REDIS_CMD_FENCE_EVENTS, FENCE_ID(f_ptr), fe_ptr->eid, fe_ptr->eid, masterptr->serverid, SESSION_USERID(sesn_ptr_invited), time_now, SESSION_USERID(sesn_ptr_inviter), FENCE_ID(f_ptr), event_type, "event");
+//		(*pers_ptr->send_command_multi)(sesn_ptr, REDIS_CMD_FENCE_EVENTS, FENCE_ID(f_ptr), fe_ptr->eid, fe_ptr->eid, masterptr->serverid, SESSION_USERID(sesn_ptr_invited), time_now, SESSION_USERID(sesn_ptr_inviter), FENCE_ID(f_ptr), event_type, "event");
 
 		(*pers_ptr->send_command_multi)(sesn_ptr, "EXEC");
 
 		size_t 		i,
-					actually_processed = 6;
+					    actually_processed = 5;
 		redisReply	*replies[actually_processed];
 
 		//TODO: we need error recover for intermediate errors
@@ -6042,6 +6038,8 @@ UpdateBackendFenceInvitedData (Session *sesn_ptr_inviter, Session *sesn_ptr_invi
 			if (!IS_EMPTY(replies[i]))	freeReplyObject(replies[i]);
 		}//for
 
+    DbBackendInsertUfsrvEvent((UfsrvEvent *)fe_ptr);
+
 		fence_join_event_broadcast:
     InterBroadcastFenceInvite(sesn_ptr,
                               (ClientContextData *)(&((ContextDataFenceInvite){sesn_ptr_inviter, sesn_ptr_invited, fstate_ptr})),
@@ -6052,14 +6050,14 @@ UpdateBackendFenceInvitedData (Session *sesn_ptr_inviter, Session *sesn_ptr_invi
 	}
 	else//user being removed from the invite list
 	if (event_type == EVENT_TYPE_FENCE_USER_UNINVITED || event_type == EVENT_TYPE_FENCE_USER_INVITEREJECTED  || EVENT_TYPE_FENCE_USER_LIST_CORRECTED) {
-		sesn_ptr											= sesn_ptr_invited;//note invited
+		sesn_ptr											= sesn_ptr_invited;//note using -> invited
 		pers_ptr											= sesn_ptr->persistance_backend;
 		mq_ptr												= sesn_ptr->msgqueue_backend;
 
 		if (IS_PRESENT(fe_ptr_out))	fe_ptr = fe_ptr_out;
 		else												fe_ptr = calloc(1, sizeof(FenceEvent));
 
-		fe_ptr = RegisterFenceEvent (sesn_ptr, f_ptr, event_type,  NULL, 0/*LOCK_FLAG*/, fe_ptr);
+		fe_ptr = RegisterFenceEvent(sesn_ptr, f_ptr, event_type,  NULL, 0/*LOCK_FLAG*/, fe_ptr);
 
 		if (unlikely(IS_EMPTY(fe_ptr))) {
 			if (IS_EMPTY(fe_ptr_out))	free(fe_ptr);
@@ -6100,6 +6098,8 @@ UpdateBackendFenceInvitedData (Session *sesn_ptr_inviter, Session *sesn_ptr_invi
 
 			if (!IS_EMPTY(replies[i]))	freeReplyObject(replies[i]);
 		}//for
+
+    DbBackendInsertUfsrvEvent ((UfsrvEvent *)fe_ptr);
 
 		fence_uninvite_event_broadcast:
     InterBroadcastFenceInvite(sesn_ptr,
@@ -6163,7 +6163,7 @@ UpdateBackendFenceInvitedData (Session *sesn_ptr_inviter, Session *sesn_ptr_invi
 //-------------- START backend fence instantiation FOR USER ---//
 #if 1
 static UFSRVResult *_GetFencesListCacheRecordForUser (Session *sesn_ptr_this, unsigned long call_flags, UFSRVResult *res_ptr_in);
-static UFSRVResult * _GetFencesListCacheRecordForUserId (Session *sesn_ptr_carrier,  unsigned long uid, unsigned long call_flags, UFSRVResult *res_ptr_in);
+static UFSRVResult * _GetFencesListCacheRecordForUserId (unsigned long uid, unsigned long call_flags, UFSRVResult *res_ptr_in);
 static UFSRVResult *_InstateFencesListCacheRecordForUser (InstanceHolderForSession *instance_sesn_ptr_this, redisReply *redis_ptr_list, EnumFenceCollectionType, unsigned long sesn_call_flags, unsigned long fence_call_flags, UFSRVResult *res_ptr);
 static inline FenceStateDescriptor *_InstateFenceIntoSessionFromCacheRecord (InstanceHolderForSession *instance_sesn_ptr, EnumFenceCollectionType list_type, unsigned long score, unsigned long fence_id, const char *uid_by, unsigned long fence_call_flags);
 static inline FenceStateDescriptor *_InstateFenceForSnapshotSession (InstanceHolderForSession *instance_sesn_ptr, EnumFenceCollectionType list_type, unsigned long fence_id, const char *uid_by);
@@ -6181,11 +6181,11 @@ InstateMembersFenceListForUser (InstanceHolderForSession *instance_sesn_ptr, uns
 	UFSRVResult res;
 	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
-	_GetFencesListCacheRecordForUser (sesn_ptr, SESSION_CALLFLAGS_EMPTY, &res);
-	if (res.result_type == RESULT_TYPE_SUCCESS) {
+	_GetFencesListCacheRecordForUser(sesn_ptr, SESSION_CALLFLAGS_EMPTY, &res);
+	if (res.result_type == RESULT_TYPE_SUCCESS && res.result_code == RESCODE_BACKEND_DATA) {
 		redisReply *redis_ptr = ((redisReply *)(res.result_user_data));
 
-		_InstateFencesListCacheRecordForUser (instance_sesn_ptr, redis_ptr, MEMBER_FENCES, sesn_call_flags, fence_call_flags, &res);
+		_InstateFencesListCacheRecordForUser(instance_sesn_ptr, redis_ptr, MEMBER_FENCES, sesn_call_flags, fence_call_flags, &res);
 		if (res.result_type == RESULT_TYPE_SUCCESS) {
 			freeReplyObject(redis_ptr);
 
@@ -6330,19 +6330,16 @@ GetFenceCollectionForUser (Session *sesn_ptr, CollectionDescriptor *fence_collec
 
 	}
 
-	if ((res.result_type==RESULT_TYPE_SUCCESS) && !(IS_EMPTY(res.result_user_data)))
-	{
-		if (res.result_code==RESCODE_BACKEND_DATA_EMPTYSET)
-		{
-			freeReplyObject((redisReply *)(res.result_user_data));
+	if ((res.result_type == RESULT_TYPE_SUCCESS) && !(IS_EMPTY(res.result_user_data))) {
+		if (res.result_code == RESCODE_BACKEND_DATA_EMPTYSET) {
 			return NULL;//fence_collection_ptr;
 		}
 
-		if 		(!IS_EMPTY(fence_collection_ptr_in))	fence_collection_ptr=fence_collection_ptr_in;
-		else																				fence_collection_ptr=calloc(1, sizeof(CollectionDescriptor));
+		if 		(!IS_EMPTY(fence_collection_ptr_in))	fence_collection_ptr = fence_collection_ptr_in;
+		else																				fence_collection_ptr = calloc(1, sizeof(CollectionDescriptor));
 
-		size_t			i=0,
-								processed=0;
+		size_t			i = 0,
+								processed = 0;
 		char				*bid_str,
 								*uid_inviter;
 		redisReply	*redis_ptr_list	=	((redisReply *)(res.result_user_data));
@@ -6359,18 +6356,14 @@ GetFenceCollectionForUser (Session *sesn_ptr, CollectionDescriptor *fence_collec
 			by_ids									=	(unsigned long *)overflow_collection_ptr->collection;
 		}
 
-		for (; i < redis_ptr_list->elements; ++i)
-		{
+		for (; i < redis_ptr_list->elements; ++i) {
 			//"1804689344:1234"
-			if (IS_STR_LOADED(uid_inviter=strrchr(redis_ptr_list->element[i]->str, ':')))
-			{
+			if (IS_STR_LOADED(uid_inviter=strrchr(redis_ptr_list->element[i]->str, ':'))) {
 				*uid_inviter='\0';	uid_inviter++;
 				fence_ids[processed]=strtoul(redis_ptr_list->element[i]->str, NULL, 10);
 				if (IS_PRESENT(by_ids))	by_ids[processed]=strtoul(uid_inviter, NULL, 10);
 				processed++;
-			}
-			else
-			{
+			} else {
 				syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p',  cid:'%lu'): ERROR: COULD NOT EXTRACT BID UID value from redis set '%s': ignoring...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), redis_ptr_list->element[i]->str);
 				continue;
 			}
@@ -6398,15 +6391,13 @@ GetFenceCollectionForUser (Session *sesn_ptr, CollectionDescriptor *fence_collec
 #endif
 		}//for
 
-		fence_collection_ptr->collection_sz=processed;
-		if (IS_PRESENT(by_ids))	overflow_collection_ptr->collection_sz=processed;
+		fence_collection_ptr->collection_sz = processed;
+		if (IS_PRESENT(by_ids))	overflow_collection_ptr->collection_sz = processed;
 
 		freeReplyObject(redis_ptr_list);
 
 		return fence_collection_ptr;
-	}
-	else
-	{
+	} else {
 		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p'}: ERROR: COULD NOT RETRIEVE RAW FENCE LIST...", __func__, pthread_self(), sesn_ptr);
 	}
 
@@ -6414,59 +6405,51 @@ GetFenceCollectionForUser (Session *sesn_ptr, CollectionDescriptor *fence_collec
 }
 
 /**
- *	@brief: Scan the returned raw fenceids in users raw Session ChaceRecord  for the matching fid
+ *	@brief: Scan the returned raw fenceids in users raw Session CacheRecord  for the matching fid
  *	@para uid_inviter: returnthe inviter value if present
  *	@locks: none
  *	@locked sesn_ptr_carrier: could be locked if belongs to a real user
  *	@unlocks: none
  */
 bool
-IsFenceIdInCacheRecordForUser (Session *sesn_ptr_carrier,  unsigned long uid, unsigned long fid, unsigned long *uid_inviter)
+IsFenceIdInCacheRecordForUser (unsigned long uid, unsigned long fid, unsigned long *uid_inviter)
 {
-	bool				return_value=false;
+	bool				return_value = false;
 	redisReply *redis_ptr		=	NULL;
 
-	_GetFencesListCacheRecordForUserId (sesn_ptr_carrier,  uid, FENCE_CALLFLAG_EMPTY, NULL);
+	_GetFencesListCacheRecordForUserId(uid, FENCE_CALLFLAG_EMPTY, NULL);
 
-	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr_carrier))
-	{
-		redis_ptr = (redisReply *)SESSION_RESULT_USERDATA(sesn_ptr_carrier);
+	if (THREAD_CONTEXT_UFSRV_RESULT_TYPE_SUCCESS) {
+		redis_ptr = (redisReply *)THREAD_CONTEXT_UFSRV_RESULT_USERDATA;
 
-		if (!(SESSION_RESULT_CODE_EQUAL(sesn_ptr_carrier, RESCODE_BACKEND_DATA_EMPTYSET)))
-	  {
-			size_t i=0;
+		if (THREAD_CONTEXT_UFSRV_RESULT_CODE_EQUAL(THREAD_CONTEXT, RESCODE_BACKEND_DATA)) {
+			size_t i = 0;
 			unsigned long fid_processed;
 			char *uid_inviter_processed;
 
-			for (; i < redis_ptr->elements; ++i)
-			{
+			for (; i < redis_ptr->elements; ++i) {
 				//"1804689344:1234"
-				if (IS_STR_LOADED(uid_inviter_processed=strrchr(redis_ptr->element[i]->str, ':')))
-				{
+				if (IS_STR_LOADED(uid_inviter_processed=strrchr(redis_ptr->element[i]->str, ':'))) {
 					*uid_inviter_processed = '\0';	uid_inviter_processed++;
 					fid_processed = strtoul(redis_ptr->element[i]->str, NULL, 10);
-					if (fid == fid_processed)
-					{
+					if (fid == fid_processed) {
 						return_value = true;
 						if (IS_PRESENT(uid_inviter))	*uid_inviter = strtoul(uid_inviter_processed, NULL, 10);
 						goto return_success;
 					}
-				}
-				else
-				{
-					syslog(LOG_DEBUG, "%s (pid:'%lu', o_c:'%p',  cid_c:'%lu', uid:'%lu', bid:'%lu'): ERROR: COULD NOT EXTRACT BID UID value from redis set(%s): ignoring...", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), uid, fid, redis_ptr->element[i]->str);
+				} else {
+					syslog(LOG_DEBUG, "%s (pid:'%lu', th_ctx:'%p', uid:'%lu', bid:'%lu'): ERROR: COULD NOT EXTRACT BID UID value from redis set(%s): ignoring...", __func__, pthread_self(), THREAD_CONTEXT_PTR, uid, fid, redis_ptr->element[i]->str);
 				}
 			}
 	  }
 
-		//RESCODE_BACKEND_DATA_EMPTYSET is returned we still have to deallocate redis_ptr
 		goto return_success;
 	 }
 
 	return false;
 
 	return_success:
-	freeReplyObject(redis_ptr);
+	if (IS_PRESENT(redis_ptr))  freeReplyObject(redis_ptr);
 	return return_value;
 
 }
@@ -6494,49 +6477,48 @@ IsFenceIdInCacheRecordForUser (Session *sesn_ptr_carrier,  unsigned long uid, un
 static UFSRVResult *
 _GetFencesListCacheRecordForUser (Session *sesn_ptr,  unsigned long call_flags, UFSRVResult *res_ptr_in)
 {
-	return _GetFencesListCacheRecordForUserId (sesn_ptr,  SESSION_USERID(sesn_ptr), call_flags, res_ptr_in);
+	return _GetFencesListCacheRecordForUserId(SESSION_USERID(sesn_ptr), call_flags, res_ptr_in);
 
 }
 
 static UFSRVResult *
-_GetFencesListCacheRecordForUserId (Session *sesn_ptr_carrier,  unsigned long uid, unsigned long call_flags, UFSRVResult *res_ptr_in)
+_GetFencesListCacheRecordForUserId (unsigned long uid, unsigned long call_flags, UFSRVResult *res_ptr_in)
 {
-	PersistanceBackend	*pers_ptr = sesn_ptr_carrier->persistance_backend;
+	PersistanceBackend	*pers_ptr = THREAD_CONTEXT_PERSISTANCE_CACHEBACKEND(THREAD_CONTEXT);
 	redisReply					*redis_ptr;
 	UFSRVResult					*res_ptr;
 
-	if (!res_ptr_in)	res_ptr = &(sesn_ptr_carrier->sservice.result);
+	if (!res_ptr_in)	res_ptr = THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT);
 	else							res_ptr = res_ptr_in;
 
-	if (!(redis_ptr = (*pers_ptr->send_command)(sesn_ptr_carrier, REDIS_CMD_USER_FENCE_LIST_GET_ALL, uid)))
-	{
+	if (!(redis_ptr = (*pers_ptr->send_command)(NO_SESSION, REDIS_CMD_USER_FENCE_LIST_GET_ALL, uid))) {
 		syslog(LOG_DEBUG, "%s: ERROR COULD NOT GET REDIS RESPONSE for CID '%lu'", __func__, uid);
 		_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_BACKENDERR, RESCODE_BACKEND_CONNECTION)
 	}
 
-	if (redis_ptr->type == REDIS_REPLY_ERROR)
-	{
+	if (redis_ptr->type == REDIS_REPLY_ERROR) {
 	   syslog(LOG_DEBUG, "%s: REDIS_REPLY_ERROR COULD NOT GET REDIS RESPONSE for CID '%lu'", __func__, uid);
 
 	   freeReplyObject(redis_ptr);
 
-	   _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_BACKENDERR, RESCODE_BACKEND_DATA)
+	   _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_BACKEND_DATA)
 	}
 
-	if ((redis_ptr->type == REDIS_REPLY_NIL) || (redis_ptr->elements == 0))
-	{
+	if (redis_ptr->type == REDIS_REPLY_NIL || redis_ptr->elements == 0) {
 #ifdef __UF_TESTING
-	   syslog(LOG_DEBUG, "%s {pid:'%lu', o_c:'%p', uid:'%lu'}: COULD NOT RETRIEVE RECORD: EMPTY SET",  __func__, pthread_self(), sesn_ptr_carrier, uid);
+	   syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p', uid:'%lu'}: COULD NOT RETRIEVE RECORD: EMPTY SET",  __func__, pthread_self(), THREAD_CONTEXT_PTR, uid);
 #endif
 
-	   _RETURN_RESULT_RES(res_ptr, redis_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA_EMPTYSET);
+    freeReplyObject(redis_ptr);
+
+	   _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA_EMPTYSET)
 	}
 
 #ifdef __UF_TESTING
 	syslog(LOG_DEBUG, "%s (pid:'%lu'): UID '%lu': FOUND '%lu' fences", __func__, pthread_self(), uid, redis_ptr->elements);
 #endif
 
-	_RETURN_RESULT_RES(res_ptr, redis_ptr,  RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
+	_RETURN_RESULT_RES(res_ptr, redis_ptr,  RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA)
 
 }
 
@@ -6716,7 +6698,7 @@ _BuildFenceListWithScores (InstanceHolderForSession *instance_sesn_ptr, redisRep
 	unsigned long		fence_id,
 									score;
 	char 						*uid_by;
-	char 						*raw_records[redis_ptr_list->elements/2]; memset (raw_records, 0, sizeof(raw_records)); // elements/2 because list contain scores as well as useful payload
+	char 						*raw_records[redis_ptr_list->elements / 2]; memset (raw_records, 0, sizeof(raw_records)); // elements/2 because list contain scores as well as useful payload
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
 	for (size_t i=0; i < redis_ptr_list->elements; i+=2) {
@@ -6751,6 +6733,7 @@ _BuildFenceListWithScores (InstanceHolderForSession *instance_sesn_ptr, redisRep
 /**
  *      @brief: This is very specific clean up function used to resolve referencial user-fence integrity issues as seen from the
  *      Fences side; ie: the Fence's members List contained a reference to a user who did not reference that fence on its Fence List.
+ *      @param sesn_ptr Current session under processing
  *      @param collection_ptr: collection of userids
  *
  *      @param raw_records_collection: The collection may contain less items than indicated by resultset_sz. Always check for payload.
@@ -6761,7 +6744,7 @@ _BuildFenceListWithScores (InstanceHolderForSession *instance_sesn_ptr, redisRep
  *
  */
 static inline size_t
-_CleanUpFaultyUserEntriesForFence (Session *sesn_ptr_carrier, Fence *f_ptr, unsigned long userid_loaded_for, CollectionDescriptor *collection_ptr,  EnumFenceCollectionType list_type)
+_CleanUpFaultyUserEntriesForFence (Session *sesn_ptr, Fence *f_ptr, unsigned long userid_loaded_for, CollectionDescriptor *collection_ptr,  EnumFenceCollectionType list_type)
 {
 	size_t 	removed_users_sz = 0;
 
@@ -6771,17 +6754,17 @@ _CleanUpFaultyUserEntriesForFence (Session *sesn_ptr_carrier, Fence *f_ptr, unsi
 				redisReply *redis_ptr_user = (redisReply *)collection_ptr->collection[i];
 				unsigned long uid = UfsrvUidGetSequenceId((UfsrvUid *)redis_ptr_user->element[REDIS_KEY_USER_UID]->str);
 
-				if (!IsFenceIdInCacheRecordForUser (sesn_ptr_carrier,  uid, FENCE_ID(f_ptr), NULL)) {
+				if (!IsFenceIdInCacheRecordForUser(uid, FENCE_ID(f_ptr), NULL)) {
 					//user doesn't have fence in its List of fences: so we remove this user from the Fences Members list
 					redisReply 					*redis_ptr;
-					PersistanceBackend 	*pers_ptr						= sesn_ptr_carrier->persistance_backend;
+					PersistanceBackend 	*pers_ptr						= THREAD_CONTEXT_PERSISTANCE_CACHEBACKEND(THREAD_CONTEXT);
 
-					if (unlikely(IS_EMPTY(UpdateBackendFenceData(sesn_ptr_carrier, f_ptr, (void *)uid, EVENT_TYPE_FENCE_MEMBERSHIP_REPAIRED, &((FenceEvent){})))))
+					if (unlikely(IS_EMPTY(UpdateBackendFenceData(sesn_ptr, f_ptr, (void *)uid, EVENT_TYPE_FENCE_MEMBERSHIP_REPAIRED, &((FenceEvent){})))))
 										continue;
 
 						//TODO: inter broadcast invalidate event (should happen in UpdateBackendFenceData())
 
-						syslog (LOG_NOTICE, "%s (pid:'%lu', o_c:'%p', cid_c:'%lu', uid:'%lu, fid:'%lu'): FOUND USER THAT DID NOT REFERENCE FENCE IN ITS LIST: DELETEING...", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), uid, FENCE_ID(f_ptr));
+						syslog (LOG_NOTICE, "%s (pid:'%lu', th_ctx:'%p', uid:'%lu, fid:'%lu'): FOUND USER THAT DID NOT REFERENCE FENCE IN ITS LIST: DELETEING...", __func__, pthread_self(), THREAD_CONTEXT_PTR, uid, FENCE_ID(f_ptr));
 
 						Session *sesn_ptr_removed;
 						InstanceHolderForSession *instance_sesn_ptr_removed;
@@ -6789,9 +6772,10 @@ _CleanUpFaultyUserEntriesForFence (Session *sesn_ptr_carrier, Fence *f_ptr, unsi
 						bool 		lock_already_owned 				= false;
 
 						//update memory store for both direction, although it is likely the user doesn't have the fence on its list
-						if (uid == userid_loaded_for && SESSION_ID(sesn_ptr_carrier) == uid) {
+						if (uid == userid_loaded_for){// && SESSION_USERID(sesn_ptr_carrier) == uid) {
 							//already locked. Unlikely scenario???
-							_RemoveUserFromUserFenceAndUnlinkUser(f_ptr, InstanceHolderFromClientContext(sesn_ptr_carrier), false);
+							InstanceHolderForSession *instance_sesn_ptr_this_user = LocallyLocateSessionByUserId(uid);
+							_RemoveUserFromUserFenceAndUnlinkUser(f_ptr, instance_sesn_ptr_this_user, false);
 						} else {
 							instance_sesn_ptr_removed = LocallyLocateSessionByUserId(uid);
 							if (IS_PRESENT(instance_sesn_ptr_removed)) {
@@ -6799,7 +6783,7 @@ _CleanUpFaultyUserEntriesForFence (Session *sesn_ptr_carrier, Fence *f_ptr, unsi
 
 								SessionLockRWCtx(THREAD_CONTEXT_PTR, sesn_ptr_removed, _LOCK_TRY_FLAG_FALSE, __func__);
 								if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESULT_TYPE_SUCCESS)) {
-									if (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_THIS_THREAD)) lock_already_owned = true;
+									if (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD)) lock_already_owned = true;
 								} else	{
 									dangling_session = true;//lock failed
 								}
@@ -6811,7 +6795,7 @@ _CleanUpFaultyUserEntriesForFence (Session *sesn_ptr_carrier, Fence *f_ptr, unsi
 								lock_already_owned = false;
 							} else {
 								//this is tolerable, as we may not have session for that user locally
-								syslog (LOG_NOTICE, "%s (pid:'%lu', o_c:'%p', cid_c:'%lu', uid:'%lu, fid:'%lu'): FOUND USER THAT DID NOT REFERENCE FENCE IN ITS LIST: BUT NO LOCAL SESSION FOR THIS FOUND", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), uid, FENCE_ID(f_ptr));
+								syslog (LOG_NOTICE, "%s (pid:'%lu', th_ctx:'%p' uid:'%lu, fid:'%lu'): FOUND USER THAT DID NOT REFERENCE FENCE IN ITS LIST: BUT NO LOCAL SESSION FOR THIS FOUND", __func__, pthread_self(), THREAD_CONTEXT_PTR, uid, FENCE_ID(f_ptr));
 							}
 						}
 
@@ -6821,11 +6805,9 @@ _CleanUpFaultyUserEntriesForFence (Session *sesn_ptr_carrier, Fence *f_ptr, unsi
 						freeReplyObject(redis_ptr_user);
 				}
 			}
-		}
-		else if (list_type == INVITED_FENCES)
-		{
+		} else if (list_type == INVITED_FENCES) {
 			//TODO: implement _CleanUpFaultyUserEntriesForFence for other fence membership types
-			syslog(LOG_DEBUG, "%s (pid:'%lu', o_c:'%p', cid_c:'%lu', fid:'%lu'): WARNING: NOT IMPLEMENTED...", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), FENCE_ID(f_ptr));
+			syslog(LOG_DEBUG, "%s (pid:'%lu', th_ctx:'%p', fid:'%lu'): WARNING: NOT IMPLEMENTED...", __func__, pthread_self(), THREAD_CONTEXT_PTR, FENCE_ID(f_ptr));
 		}
 
 	}//end if
@@ -6969,9 +6951,9 @@ _InstateFencesListCacheRecordForUser (InstanceHolderForSession *instance_sesn_pt
 
 	if (redis_ptr_list->elements > 0) {
 		if (fence_call_flags&FENCE_CALLFLAG_FENCE_LIST_WITH_SCORES) {
-			_BuildFenceListWithScores (instance_sesn_ptr, redis_ptr_list, list_type, fence_call_flags);
+			_BuildFenceListWithScores(instance_sesn_ptr, redis_ptr_list, list_type, fence_call_flags);
 		} else {
-			_BuildFenceList (instance_sesn_ptr, redis_ptr_list, list_type, fence_call_flags);
+			_BuildFenceList(instance_sesn_ptr, redis_ptr_list, list_type, fence_call_flags);
 		}
 	}
 
@@ -7008,7 +6990,7 @@ _InstateFenceIntoSessionFromCacheRecord (InstanceHolderForSession *instance_sesn
 	  f_ptr_hashed = FenceOffInstanceHolder(instance_f_ptr_hashed);
 		FenceEventsLockRWCtx(THREAD_CONTEXT_PTR, f_ptr_hashed, _LOCK_TRY_FLAG_FALSE, SESSION_RESULT_PTR(sesn_ptr), __func__);
 		if (SESSION_RESULT_TYPE_EQUAL(sesn_ptr, RESULT_TYPE_ERR))	return NULL;
-		fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_THIS_THREAD));
+		fence_lock_already_owned = (SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 	} else {
 #ifdef __UF_TESTING
 		syslog(LOG_DEBUG, "%s (pid'%lu', o:'%p', cid:%lu', list_type:'%d'): COULD NOT FIND  FENCE bid='%lu' LOCALLY: RETRIEVING FROM BACKEND", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), list_type, fence_id);
@@ -7023,7 +7005,7 @@ _InstateFenceIntoSessionFromCacheRecord (InstanceHolderForSession *instance_sesn
 
 		//we request to keep fence locked upon return
 		//CALL_FLAG_ATTACH_USER_LIST_TO_FENCE does not add this user to list. we do it here
-		GetCacheRecordForFence (sesn_ptr, list_type, fence_id, &fence_lock_already_owned, fence_call_flags_final);
+		GetCacheRecordForFence(sesn_ptr, list_type, fence_id, SESSION_USERID(sesn_ptr), &fence_lock_already_owned, fence_call_flags_final);
     instance_f_ptr_hashed = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr);
 
 		if (IS_EMPTY(instance_f_ptr_hashed)) {
@@ -7097,7 +7079,7 @@ _InstateFenceForSnapshotSession (InstanceHolderForSession *instance_sesn_ptr, En
 
 	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
-	GetCacheRecordForFence (sesn_ptr, list_type, fence_id, NULL, FENCE_CALLFLAG_EMPTY);
+	GetCacheRecordForFence(sesn_ptr, list_type, fence_id, UNSPECIFIED_UID, NULL, FENCE_CALLFLAG_EMPTY);
   InstanceHolderForFence *instance_f_ptr = SESSION_RESULT_USERDATA(sesn_ptr);
 	if (unlikely(IS_EMPTY(instance_f_ptr)))	return NULL;
 
@@ -7197,28 +7179,30 @@ IsFenceOwnedByUser (Session *sesn_ptr, Fence *f_ptr)
 }
 
 
-static UFSRVResult * _HandleOrphanGeoFenceCandidate (Session *sesn_ptr_carrier, InstanceHolderForFence *, bool fence_lock_already_owned);
-static UFSRVResult * _HandleOrphanUserFenceCandidate (Session *sesn_ptr_carrier, InstanceHolderForFence *, bool fence_lock_already_owned);
-static UFSRVResult *_HandleOrphanUserFenceWithInvitedMembers (Session *sesn_ptr_carrier, InstanceHolderForFence *, bool fence_alreadyLocked);
+static UFSRVResult * _HandleOrphanGeoFenceCandidate (InstanceContextForSession *ctx_ptr_carrier, InstanceHolderForFence *, bool fence_lock_already_owned);
+static UFSRVResult * _HandleOrphanUserFenceCandidate (InstanceContextForSession *ctx_ptr_carrier, InstanceHolderForFence *, bool fence_lock_already_owned);
+static UFSRVResult *_HandleOrphanUserFenceWithInvitedMembers (InstanceContextForSession *ctx_ptr_carrier, InstanceHolderForFence *, bool fence_alreadyLocked);
 
 /**
  * 	@locked f_ptr:
  * 	@unlocks f_ptr: f_ptr lock transferred to the destroying method
  */
 static UFSRVResult *
-_HandleOrphanGeoFenceCandidate (Session *sesn_ptr_carrier, InstanceHolderForFence *instance_f_ptr, bool fence_lock_already_owned)
+_HandleOrphanGeoFenceCandidate (InstanceContextForSession *ctx_ptr_carrier, InstanceHolderForFence *instance_f_ptr, bool fence_lock_already_owned)
 {
+  Session *sesn_ptr_carrier = ctx_ptr_carrier->sesn_ptr;
+
 	if (IsFenceReferencedByUsers(instance_f_ptr))	goto return_no_action;
 
 	//this is invokes _DestructUserFence
-	int rc = FenceReturnToRecycler (instance_f_ptr,
+	int rc = FenceReturnToRecycler(instance_f_ptr,
 																(ContextData *)&((TypePoolContextDataFence){.is_fence_locked=fence_lock_already_owned, .sesn_ptr=sesn_ptr_carrier, .fence_data.instance_f_ptr=instance_f_ptr}),
 																FENCE_CALLFLAG_WRITEBACK_TO_DBBACKEND|FENCE_CALLFLAG_UNLOCK_FENCE);
 
 	if (likely(rc == 0))	_RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_DESTRUCTED);
 
 	return_no_action:
-	_RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr_carrier, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 
 }
 
@@ -7229,13 +7213,15 @@ _HandleOrphanGeoFenceCandidate (Session *sesn_ptr_carrier, InstanceHolderForFenc
  * @unlocks f_ptr: f_ptr lock transferred to the destroying method
  */
 static UFSRVResult *
-_HandleOrphanUserFenceCandidate (Session *sesn_ptr_carrier, InstanceHolderForFence *instance_f_ptr, bool fence_lock_already_owned)
+_HandleOrphanUserFenceCandidate (InstanceContextForSession *ctx_ptr_carrier, InstanceHolderForFence *instance_f_ptr, bool fence_lock_already_owned)
 {
   Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
 
 	if (IsFenceReferencedByInviteMembersOnly(f_ptr)) {
-		return (_HandleOrphanUserFenceWithInvitedMembers (sesn_ptr_carrier, instance_f_ptr, fence_lock_already_owned));
+		return (_HandleOrphanUserFenceWithInvitedMembers (ctx_ptr_carrier, instance_f_ptr, fence_lock_already_owned));
 	}
+
+	Session *sesn_ptr_carrier = ctx_ptr_carrier->sesn_ptr;
 
 	if (IsFenceReferencedByUsers(instance_f_ptr))	goto return_no_action;
 	if (IsFenceSticky(f_ptr))							goto return_no_action;
@@ -7259,11 +7245,13 @@ _HandleOrphanUserFenceCandidate (Session *sesn_ptr_carrier, InstanceHolderForFen
  * 	@unlocks f_ptr: f_ptr lock transferred to the destroying method
  */
 static UFSRVResult *
-_HandleOrphanUserFenceWithInvitedMembers (Session *sesn_ptr_carrier, InstanceHolderForFence *instance_f_ptr, bool fence_lock_already_owned)
+_HandleOrphanUserFenceWithInvitedMembers (InstanceContextForSession *ctx_ptr_carrier, InstanceHolderForFence *instance_f_ptr, bool fence_lock_already_owned)
 {
 	size_t 			dangling_users_counter  = 0;
 
-	dangling_users_counter = NetworkRemoveUsersFromInviteList (sesn_ptr_carrier, instance_f_ptr);
+	dangling_users_counter = NetworkRemoveUsersFromInviteList (ctx_ptr_carrier, instance_f_ptr);
+
+	Session *sesn_ptr_carrier = ctx_ptr_carrier->sesn_ptr;
 
 	//this invokes _DestructUserFence
 	if (dangling_users_counter == 0) {
@@ -7341,7 +7329,7 @@ CheckOrphanedFences (void *arg)
 		return 0;
 	}
 
-	int				i;
+	size_t	  i;
 	int				numResults          = 0;
 	bool			is_using_local_store= false;
 	InstanceHolderForFence  **current_fences    = NULL;
@@ -7352,13 +7340,13 @@ CheckOrphanedFences (void *arg)
 		goto return_with_value;
 	}
 
-	UfsrvConfigRegisterUfsrverActivity (pthread_getspecific(sessions_delegator_ptr->ufsrv_thread_pool.worker_persistance_key), time(NULL));
-
 	syslog(LOG_DEBUG, LOGSTR_CACHE_SIZE, __func__, pthread_self(), HASHTABLE_ENTRIES(hash), HASHTABLE_SIZE(hash), LOGCODE_CACHE_SIZE_SESSION, HASHTABLE_NAME(hash));
 
 	statsd_gauge(pthread_getspecific(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_instrumentation_backend_key), "worker.ufsrv.job.orphaned_fences.fences_global_size", (ssize_t)HASHTABLE_ENTRIES(hash));
 
 	long long timer_start = GetTimeNowInMicros();
+
+  UfsrvConfigRegisterUfsrverActivity(pthread_getspecific(sessions_delegator_ptr->ufsrv_thread_pool.worker_persistance_key), time(NULL));
 
 	if (HASHTABLE_SIZE(hash) == 0 || HASHTABLE_ENTRIES(hash) == 0) {
 		HashTable_UnLock(hash);
@@ -7383,7 +7371,7 @@ CheckOrphanedFences (void *arg)
 				break;
 			}
 
-//				SessionIncrementReference((Session *)hash->fTable[i], 1);
+			FenceIncrementReference((InstanceHolderForFence *)hash->fTable[i], 1);
 
 			*(current_fences + (numResults++)) = (InstanceHolderForFence *)hash->fTable[i];
 		}
@@ -7398,7 +7386,7 @@ CheckOrphanedFences (void *arg)
 	}
 
 	//pool based allocation
-	InstanceHolderForSession	*instance_sesn_ptr_carrier =	InstantiateCarrierSession (NULL, WORKERTYPE_UFSRVWORKER, CALL_FLAG_INSTANTIATE_FROM_SYSTEM_USER);
+	InstanceHolderForSession	*instance_sesn_ptr_carrier =	InstantiateCarrierSession(NULL, WORKERTYPE_UFSRVWORKER, CALL_FLAG_INSTANTIATE_FROM_SYSTEM_USER);
 	if (IS_EMPTY(instance_sesn_ptr_carrier)) {
 		syslog(LOG_ERR, "%s (pid:'%lu'): SEVERE ERROR: RECYCLER RETURNED NULL CARRIER SESSION OBJECT.", __func__, pthread_self());
 		numResults = -2;
@@ -7419,19 +7407,26 @@ CheckOrphanedFences (void *arg)
 			InstanceHolderForFence *instance_f_ptr = *(current_fences + i);
 			Fence *f_ptr = FenceOffInstanceHolder(instance_f_ptr);
 
+			if (IS_EMPTY(f_ptr)) {
+        syslog(LOG_ERR, "%s (pid:'%lu', fo_instance:'%p', idx:'%lu'): !!!SEVERE ERROR: INSTANCE HOLDER CONTAINED NULL FENCE INSTANCE REFERENCE", __func__, pthread_self(), instance_f_ptr, i);
+        FenceDecrementReference(instance_f_ptr, 1);
+        continue;
+			}
+
 			FenceEventsLockRWCtx(THREAD_CONTEXT_PTR, f_ptr, _LOCK_TRY_FLAG_TRUE, THREAD_CONTEXT_UFSRV_RESULT(ufsrv_thread_context), __func__);
 			if (_RESULT_TYPE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(ufsrv_thread_context), RESULT_TYPE_ERR)) {
-//					SessionDecrementReference(sesn_ptr, 1);
-
+			  FenceDecrementReference(instance_f_ptr, 1);
 				continue;
 			}
 
-			fence_lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(ufsrv_thread_context), RESCODE_PROG_LOCKED_THIS_THREAD));
+			fence_lock_already_owned = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(ufsrv_thread_context), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 			//>>>> FENCE NOW LOCKED
 
 			//DO STUFF....
-			if (IsGeoFence(f_ptr))	_HandleOrphanGeoFenceCandidate (sesn_ptr_carrier, instance_f_ptr, fence_lock_already_owned);
-			else 										_HandleOrphanUserFenceCandidate (sesn_ptr_carrier, instance_f_ptr, fence_lock_already_owned);
+      FenceDecrementReference(instance_f_ptr, 1);
+			InstanceContextForSession instance_ctx = {instance_sesn_ptr_carrier, sesn_ptr_carrier};
+			if (IsGeoFence(f_ptr))	_HandleOrphanGeoFenceCandidate (&instance_ctx, instance_f_ptr, fence_lock_already_owned);
+			else 										_HandleOrphanUserFenceCandidate (&instance_ctx, instance_f_ptr, fence_lock_already_owned);
 
 			result_code = SESSION_RESULT_CODE(sesn_ptr_carrier); //grab it whilst the session is still locked
 
@@ -7499,7 +7494,9 @@ GetFenceListTypeDescriptor (EnumFenceCollectionType list_type)
 void InitFenceRecyclerTypePool ()
 {
 	#define _THIS_FENCE_EXPANSION_THRESHOLD (1024*10)
-	FencePoolHandle = RecyclerInitTypePool ("Fence", sizeof(Fence), _THIS_FENCE_EXPANSION_THRESHOLD/*_CONF_SESNMEMSPECS_ALLOC_GROUP_SZ(masterptr)*/, &ops_fence);
+	FencePoolHandle = RecyclerInitTypePool("Fence", sizeof(Fence), _CONF_SESNMEMSPECS_ALLOC_GROUPS(masterptr),
+                                         _THIS_FENCE_EXPANSION_THRESHOLD/*_CONF_SESNMEMSPECS_ALLOC_GROUP_SZ(masterptr)*/,
+                                         &ops_fence);
 
 	syslog(LOG_INFO, "%s: Initialised TypePool: '%s'. TypeNumber:'%d', Block Size:'%lu'", __func__, FencePoolHandle->type_name, FencePoolHandle->type, FencePoolHandle->blocksz);
 }
@@ -7706,7 +7703,9 @@ FencePoolTypeNumber()
 void InitFenceStateDescriptorRecyclerTypePool ()
 {
 	#define _THIS_EXPANSION_THRESHOLD (1024*100)
-	FenceStateDescriptorPoolHandle = RecyclerInitTypePool ("FenceStateDescriptor", sizeof(FenceStateDescriptor), _THIS_EXPANSION_THRESHOLD/*_CONF_SESNMEMSPECS_ALLOC_GROUP_SZ(masterptr)*/, &ops_fence_state_descriptor);
+	FenceStateDescriptorPoolHandle = RecyclerInitTypePool("FenceStateDescriptor", sizeof(FenceStateDescriptor), _CONF_SESNMEMSPECS_ALLOC_GROUPS(masterptr),
+                                                        _THIS_EXPANSION_THRESHOLD/*_CONF_SESNMEMSPECS_ALLOC_GROUP_SZ(masterptr)*/,
+                                                        &ops_fence_state_descriptor);
 
 	syslog(LOG_INFO, "%s: Initialised TypePool: '%s'. TypeNumber:'%d', Block Size:'%lu'", __func__, FenceStateDescriptorPoolHandle->type_name, FenceStateDescriptorPoolHandle->type, FenceStateDescriptorPoolHandle->blocksz);
 }
@@ -7734,11 +7733,6 @@ TypePoolGetInitCallback_FenceStateDescriptor (InstanceHolderForFenceStateDescrip
 	InstanceHolderForFence *instance_f_ptr = (InstanceHolderForFence *)context_data;
 
 	fstate_ptr->instance_holder_fence = instance_f_ptr;
-
-	#ifdef __UF_FULLDEBUG
-		syslog(LOG_DEBUG, "%s {pid:'%lu', fid:'%lu', cname:'%s'}: Initialised FenceStateDescriptor", __func__, pthread_self(), FENCE_ID(f_ptr), FENCE_CNAME(f_ptr));
-	#endif
-
 
 	return 0;//success
 }

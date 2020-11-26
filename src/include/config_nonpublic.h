@@ -39,6 +39,9 @@
 #define SERVER_PUBLICKEY_SERIALISED "undefined"
 #define SERVER_KEYID            1
 
+#define PRIVATE_SERVER_PARAM   "undefined"
+#define PUBLIC_SERVER_PARAM    "undefined"
+
 #define API_EMAIL_KEY   "undefined"
 #define API_EMAIL_URL   "undefined"
 

@@ -23,15 +23,15 @@
 #include <main.h>
 #include <utils_crypto.h>
 #include <sockets.h>
-#include <list.h>
+#include <uflib/adt/adt_linkedlist.h>
 #include <session.h>
 #include <misc.h>
 #include <nportredird.h>
 #include <signal.h>
-#include <protocol.h>
+#include <ufsrv_core/protocol/protocol.h>
 #include <command_console_thread.h>
 #include <sessions_delegator_type.h>
-#include <ufsrvmsgqueue.h>
+#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue.h>
 
 static void Banner (void) __attribute__ ((unused));
 static void GoDaemon (void);
@@ -126,8 +126,7 @@ int main (int argc, char *argv[])
 
 }
 
-
- static void GoDaemon (void)
+static void GoDaemon (void)
  {
 		int pid;
 
@@ -168,15 +167,13 @@ int main (int argc, char *argv[])
 
  }
 
-
- static void Banner (void)
+static void Banner (void)
  {
    say ("*** usrv %s.\n", c_version);
 
  }
 
-
- void SetConfigurationDefaults (void)
+void SetConfigurationDefaults (void)
  {
 		masterptr->serverid=0;
     if (!masterptr->log_mode)  			masterptr->log_mode=LOG_MODE_SYSLOG;
@@ -186,7 +183,7 @@ int main (int argc, char *argv[])
 
  }
 
- void Help (void)
+void Help (void)
  {
    printf (" 			 ufsrv [-h]\n"
            "             [-v]\n"
@@ -200,7 +197,7 @@ int main (int argc, char *argv[])
 
  }
 
- void CheckCommandLine (int argc, char *argv[])
+void CheckCommandLine (int argc, char *argv[])
   {
   int i, 
       j=1,

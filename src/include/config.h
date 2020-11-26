@@ -47,8 +47,6 @@
 #define CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP				512 //temporary max ceiling on number of allowed server instance per region
 #define _CONFIGDEFAULT_DEFAULT_UFSRVGEOGROUP					3		//fallback ufsrv geogroup to use if user doesn have valid group
 #define CONFIG_UFSRV_UID															1		//system uid for ufrsv owned assets
-#define CONFIG_MAX_UFSRV_ID_SZ												16	//16 bytes of id
-#define CONFIG_MAX_UFSRV_ID_ENCODED_SZ								26	//in bytes when id is encoded in  Crockford's Base32. 01020CA9CT9G86G08000000000
 
 #define CONFIG_DBBACKEND_DBNAME "ufsrv"
 #define CONFIG_E164_NUMBER_UFSRV_COUNTRY_PREFIX				"+800"
@@ -63,24 +61,35 @@
 #define CONFIG_MAX_NICKNAME_SIZE											64
 #define CONFIG_MAX_FAVATAR_SIZE												128 //fence avatar reference
 #define CONFIG_MAX_INVITE_SET_SIZE										128	//user can include that many invitees per one command invocation
+#define CONFIGDEFAULT_MAX_IMAGE_BLURHASH_SZ           512
+#define CONFIGDEFAULT_MAX_IMAGE_CAPTION_SZ           1024
 #define _CONFIGDEFAULT_ATTACHMENT_NONCE_EXPIRY				1800	//(seconds) 30 minutes to allow for slow uploads
-#define	CONFIG_MAX_NONCE_SZ														(SHA_DIGEST_LENGTH+UINT64_LONGEST_STR_SZ)
+#define _CONFIGDEFAULT_MESSAGE_MAX_ATTACHMENTS_SZ 		10	//max attachments allowed in one message
+
 #define _CONFIGDEFAULT_GEOLOC_FUZZFACTOR							500.0		//meters radius
 #define CONFIG_FENCE_PERMISSIONS_PFACTOR 							6 //64 buckets initial size factor for hopscotch hash table size (this will be raised to power of 2)
 #define CONFIG_THREAD_LOCKED_OBJECTS_STORE_PFACTOR 							6 //64 buckets initial size factor for hopscotch hash table size (this will be raised to power of 2)
-#define CONFIG_FENCE_PERMISSIONS_KEYLEN								sizeof(unsigned long)
+
 #define CONFIG_FENCE_PERMISSIONS_KEYOFFSET(x, y)			offsetof(x, y)
 #define CONFIG_PREFERENCE_PREFIX											"pref_"
 #define CONFIG_DEFAULT_BOOLPREFS_VALUE                192 //turns on offsets 0 an 1
 #define CONFIG_DEFAULT_PREFS_INT_VALUE                0
 #define CONFIG_DEFAULT_PREFS_STRING_VALUE             "*"
-#define CONFIG_USER_PROFILEKEY_MAX_SIZE								32 //profile key binary size
-#define CONFIG_USER_PROFILEKEY_MAX_SIZE_ENCODED				57 //CONFIG_USER_PROFILEKEY_MAX_SIZE+1)/3)*5
+#define CONFIG_USER_PROFILEKEY_MAX_SIZE								32 //profile key binary size raw binary size
+#define CONFIG_USER_PROFILEKEY_MAX_SIZE_ENCODED				57 //CONFIG_USER_PROFILEKEY_MAX_SIZE+1)/3)*5, no terminating '\0'
 #define CONFIG_USER_ACCESS_TOKEN_MAX_SIZE							16 //access token binary size
 #define CONFIG_USER_ACCESS_TOKEN_MAX_SIZE_ENCODED			32 //access token encoded size
 
+#define CONFIGDEFAULT_GUARDIAN_NONCE_EXPIRY				    300	//(seconds)
+#define CONFIGDEFAULT_GUARDIAN_NONCE_PREFIX				    "_GUARDIAN"
+
+#define CONFIG_WEBSOCKET_HANDSHAKE_MIN_SZ             92
+#define CONFIG_WEBSOCKET_HANDSHAKE_MAX_SZ             512
+
 #define CONFIG_CM_TOKEN_SZ_MAX                        255 //GCM token sizes
 #define CONFIG_CM_TOKEN_UNDEFINED                     '*'
+
+#define CONFIG_MAX_ALLOWED_GUARDED_DEVICES            5 //max of five linked guarded devices by default
 
 //START NONPUBLIC
 #include <config_nonpublic.h>
@@ -96,6 +105,9 @@
 //fixed array for the main listened new connection queue
 #define _CONFIG_LISTENER_CONNECTION_QUEUE_SZ 1024
 
+//maximum allowed msg size for an intromessage
+#define _CONFIGDEFAULT_INTROMESSAGE_MSGSZ_MAX     1024
+
 #define _CONFIGDEFAULT_BACKENDCACHE_PORT_SESSION	21000
 #define _CONFIGDEFAULT_BACKENDCACHE_HOST_SESSION	"127.0.0.1"
 #define _CONFIGDEFAULT_BACKENDCACHE_PORT_USRMSG		22000
@@ -105,11 +117,12 @@
 #define _CONFIGDEFAULT_BACKENDCACHE_PORT_MSGQUEUE		24000
 #define _CONFIGDEFAULT_BACKENDCACHE_HOST_MSGQUEUE		"127.0.0.1"
 
+#define _CONFIGDEDAULT_IDLE_TIME_INTERVAL_INTRA_REQUEST	65 //must be in seconds. Check _CONFIGDEFAULT_SESSION_TIMEOUT_CHECK_FREQUENCY definitions below, choose the smallest and increase by 5 seconds
+#define _CONFIGDEDAULT_IDLE_TIME_INTERVAL	100000//usec (= 100 millisec)
+
 //How often to run the timeout checker job in seconds
-//#define _CONFIGDEDAULT_IDLE_TIME_INTERVAL	60//seconds
-#define _CONFIGDEDAULT_IDLE_TIME_INTERVAL	100000//usec (100 millisec)
-#define _CONFIGDEFAULT_SESSION_TIMEOUT_CHECK_FREQUENCY	60000000 //in micoro seconds 1 min
-#define _CONFIGDEFAULT_FENCE_ORPHANED_CHECK_FREQUENCY		120000000	//300000000 //in micoro seconds 5 min
+#define _CONFIGDEFAULT_SESSION_TIMEOUT_CHECK_FREQUENCY	60000000 //in micro seconds 1 min
+#define _CONFIGDEFAULT_FENCE_ORPHANED_CHECK_FREQUENCY		120000000	//2min //300000000 //in micoro seconds 5 min
 
 #define _CONFIGDEFAULT_ETAG_SIZE					32
 
@@ -191,6 +204,7 @@
 
 //when user makes a PUT request for endpoint /V1/Attachment, this request heade must be present
 #define _ATTACHMENT_HEADER_NONCE  "X-UFSRV-ATTACHMENT-NONCE"
+#define _ZKGROUP_AUTHORIZATION    "X-Group-Authorization"
 #define HTTP_HEADER_COOKIE        "X-Ufsrv-Cookie"
 
 #define __VALGRIND_DRD 1
