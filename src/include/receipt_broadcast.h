@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -19,18 +19,17 @@
 #ifndef SRC_INCLUDE_RECEIPT_BROADCAST_H_
 #define SRC_INCLUDE_RECEIPT_BROADCAST_H_
 
-
-#include <ufsrv_core/fence/fence_type.h>
-#include <ufsrv_core/fence/fence_event_type.h>
+#include <protocol/protocol_type.h>
+#include <ufsrvmsg_core/fence/fence_type.h>
+#include <ufsrvmsg_core/fence/fence_event_type.h>
 #include <session_type.h>
 #include <ufsrvresult_type.h>
-#include <ufsrv_core/SignalService.pb-c.h>
+#include <ufsrvmsg_core/SignalService.pb-c.h>
 #include <msgqueue_backend/UfsrvMessageQueue.pb-c.h>
 
-UFSRVResult *InterBroadcastReceipt (Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg);
-int HandleInterBroadcastForReceipt (MessageQueueMsgPayload *mqp_ptr, MessageQueueMessage 		*mqm_ptr, UFSRVResult *res_ptr, unsigned long callflags);
-int HandleIntraBroadcastForReceipt (MessageQueueMessage *, UFSRVResult *res_ptr, unsigned long call_flags);
-int VerifyReceiptCommandForIntra	(WireProtocolData *);
-
+UFSRVResult *InterBroadcastReceipt(Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg);
+int HandleInterBroadcastForReceipt(MessageQueueMsgPayload *mqp_ptr, MessageQueueMessage 		*mqm_ptr, UFSRVResult *res_ptr, unsigned long callflags);
+int HandleIntraBroadcastForReceipt(MessageQueueMessage *, UFSRVResult *res_ptr, unsigned long call_flags);
+int VerifyReceiptCommandForIntra(WireProtocolData *);
 
 #endif /* SRC_INCLUDE_RECEIPT_BROADCAST_H_ */

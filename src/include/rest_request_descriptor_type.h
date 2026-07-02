@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -34,7 +34,7 @@ typedef enum RestRequestHandlingState {
 
 typedef struct RestRequestDescriptor {
   struct {
-    ClientContextData *ctx_data;
+    ClientContextData *ctx_data; //caller-provided context data for the handler to work with
   } handler;
   struct {
     InstanceContextForSession *session_ctx;
@@ -42,6 +42,8 @@ typedef struct RestRequestDescriptor {
     json_object *jobj;
   } requester;
 } RestRequestDescriptor;
+
+#define AS_REST_REQUEST_DESCRIPTOR(x) ((RestRequestDescriptor *)(x))
 
 typedef int (*on_request_handled)(RestRequestHandlingState, RestRequestDescriptor *);
 

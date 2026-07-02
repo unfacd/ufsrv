@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,15 +18,26 @@
 #include <fence_zkgroup_utils.h>
 #include <zkgroup_utils/utils_zkgroup.h>
 
-int HandleCredentialRequest(uint8_t *server_private_param, Uuid *uuid, size_t redemption_start_time, size_t redemption_end_time, CollectionDescriptor *collection, on_request_handled executor, ClientContextData *ctx_data)
+/**
+ *
+ * @param server_private_param
+ * @param uuid
+ * @param redemption_start_time
+ * @param redemption_end_time
+ * @param collection
+ * @param executor A callback to run when request is handled
+ * @param ctx_data a private data object to hand into the @param executor
+ * @return
+ */
+int HandleCredentialRequest(const uint8_t *server_private_param, const Uuid *uuid, size_t redemption_start_time, size_t redemption_end_time, CollectionDescriptor *collection, on_request_handled executor, ClientContextData *ctx_data)
 {
   size_t  idx = 0;
-  GroupCredential *group_credential;
+  AuthenticationCredential *auth_credential;
 
   //loop inclusive of the endtime
-  for (size_t redemption_time=redemption_start_time; redemption_time<=redemption_end_time; redemption_time++) {
-    group_credential = (GroupCredential *)(((uintptr_t)collection->collection) + (idx * sizeof(GroupCredential)));
-    if (IS_EMPTY(IssueAuthCredentials(server_private_param, uuid, redemption_time, group_credential))) break;
+  for (size_t redemption_time=redemption_start_time; redemption_time <= redemption_end_time; redemption_time++) {
+    auth_credential = (AuthenticationCredential *)(((uintptr_t)collection->collection) + (idx * sizeof(AuthenticationCredential)));
+    if (IS_EMPTY(IssueAuthCredentials(server_private_param, uuid, redemption_time, auth_credential))) break;
 
     idx++;
   }
@@ -41,31 +52,32 @@ int HandleCredentialRequest(uint8_t *server_private_param, Uuid *uuid, size_t re
 }
 
 static unsigned char *
-_SerialiseCredential(GroupCredential *group_credential, uint8_t *value_in)
+_SerialiseCredential(AuthenticationCredential *group_credential, uint8_t *value_in)
 {
   uint8_t *value = IS_PRESENT(value_in) ? value_in : group_credential->credential.serialised.by_value;
 
-  return base64_encode(group_credential->credential.raw.by_value, AUTH_CREDENTIAL_RESPONSE_LEN, value);
+  return base64_encode(group_credential->credential.raw.by_value, AUTH_CREDENTIAL_RESPONSE_SIZE, value);
 }
 
 /**
+ * @brief A callback handler for authorization credentials json formatting.
  * { credentials[]={ {credential:"xxx", redemptionTime:"yyy"}, {credential:"xxx", redemptionTime:"yyy"}, {...} }
  * }
- * @param cred_response
- * @param jobj
+ * @param state success state of the calling request handler
+ * @param rest_descriptor A convenient encapsulation of data objects necessary to complete the callback passed from the calling request handler.
  * @return
  */
 int
-JsonFormatCredentialResponse(RestRequestHandlingState state, RestRequestDescriptor *rest_descriptor)
+JsonFormatCredentialResponseCallback(RestRequestHandlingState state, RestRequestDescriptor *rest_descriptor)
 {
   if (state == SUCCESS_STATE) {
-    GroupCredential *group_credential;
+    AuthenticationCredential *group_credential;
     CollectionDescriptor *collection = (CollectionDescriptor *)rest_descriptor->handler.ctx_data;
     json_object *jobj_credentials = json_object_new_array();
 
     for (size_t idx=0; idx<collection->collection_sz; idx++) {
       json_object *jobj_credential = json_object_new_object();
-      group_credential = (GroupCredential *)(((uintptr_t)collection->collection) + (idx * sizeof(GroupCredential)));
+      group_credential = (AuthenticationCredential *)(((uintptr_t)collection->collection) + (idx * sizeof(AuthenticationCredential)));
       json_object_object_add(jobj_credential, "credential", json_object_new_string(AS_CONST_CHAR_TYPE(_SerialiseCredential(group_credential, NULL))));
       json_object_object_add(jobj_credential, "redemptionTime", json_object_new_int(group_credential->redemption_time));
 

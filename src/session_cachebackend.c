@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,7 +20,7 @@
 #endif
 
 #include <main.h>
-#include <utils.h>
+#include <uflib/utils.h>
 #include <hiredis.h>
 #include <ufsrv_core/cache_backend/redis.h>
 #include <session_cachebackend.h>
@@ -34,7 +34,7 @@ UFSRVResult *
 CacheBackendSetSessionAttribute (Session *sesn_ptr, unsigned long userid, const char *attribute_name, const char *attribute_value)
 {
 	unsigned 						rescode			=	RESCODE_BACKEND_DATA;
-	PersistanceBackend	*pers_ptr		=	sesn_ptr->persistance_backend;
+	PersistanceBackend	*pers_ptr		=	THREAD_CONTEXT_PERSISTANCE_CACHEBACKEND(ufsrv_thread_context);
 	redisReply 					*redis_ptr	=	NULL;
 
 	if (!(redis_ptr = (*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_SESSION_SET_ATTRIBUTE, userid, attribute_name, IS_STR_LOADED(attribute_value)?attribute_value:CONFIG_DEFAULT_PREFS_STRING_VALUE)))	goto return_redis_error;

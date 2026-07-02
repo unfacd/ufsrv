@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,9 +20,9 @@
 #define UFSRV_COMMAND_BASE_CONTEXT_TYPE_H
 
 #include <session_type.h>
-#include <ufsrv_core/fence/fence_event_type.h>
+#include <ufsrvmsg_core/fence/fence_event_type.h>
 
-#include <ufsrv_core/SignalService.pb-c.h>
+#include <ufsrvmsg_core/SignalService.pb-c.h>
 #include <ufsrvwebsock/include/WebSocketMessage.pb-c.h>
 
 /**
@@ -41,6 +41,14 @@ typedef struct CommandBaseContext {
   ClientContextData *client_ctx_ptr; //placeholder for processor provided context data
 } CommandBaseContext;
 
+#define BASE_CMDCTX_SESN_ORIGINATOR(x) ((x)->sesn_originator.ctx_ptr->sesn_ptr)
+#define BASE_CMDCTX_SESN_INSTANCE_ORIGINATOR(x) ((x)->sesn_originator.ctx_ptr->instance_sesn_ptr)
+#define BASE_CMDCTX_SESN_CTX_ORIGINATOR(x) ((x)->sesn_originator.ctx_ptr)
+#define BASE_CMDCTX_SESN_LOCK_STATE_ORIGINATOR(x) ((x)->sesn_originator.lock_state)
+#define BASE_CMDCTX_DATA_MESSAGE(x) ((x)->data_msg_ptr_received)
+#define BASE_CMDCTX_WSM(x) ((x)->wsm_ptr_received)
+
+///< These macros work with supertypes that, by convention, include \ref CommandBaseContext as their first member
 #define COMMAND_BASE_CONTEXT(x) ((CommandBaseContext *)(x))
 #define CMDCTX_SESN_ORIGINATOR(x) ((x)->command_base_context.sesn_originator.ctx_ptr->sesn_ptr)
 #define CMDCTX_SESN_INSTANCE_ORIGINATOR(x) ((x)->command_base_context.sesn_originator.ctx_ptr->instance_sesn_ptr)
@@ -51,5 +59,6 @@ typedef struct CommandBaseContext {
 #define CMDCTX_WSM(x) ((x)->command_base_context.wsm_ptr_received)
 #define CMDCTX_EVENT(x) ((x)->command_base_context.event_ptr)
 #define CMDCTX_CLIENT_CTX_DATA(x) ((x)->command_base_context.client_ctx_ptr)
+
 
 #endif //UFSRV_COMMAND_BASE_CONTEXT_TYPE_H
