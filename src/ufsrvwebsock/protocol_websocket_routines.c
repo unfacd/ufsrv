@@ -1,5 +1,5 @@
  /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -27,7 +27,7 @@
 #include <openssl/sha.h> /* sha1 hash */
 #include "protocol_websocket_routines.h"
 #include <websock_parser/websocket_parser_type.h>
-#include <utils_bits.h>
+#include <uflib/utils_bits.h>
 
  typedef enum {
 	/**
@@ -232,13 +232,13 @@ int
 encode_hybi_client(SocketMessage *sm_ptr, const unsigned char *src, size_t srclength, unsigned char *target, size_t targsize, unsigned int opcode)
 
 {
-	extern void set_16bit (int value, unsigned char * buffer);
+	extern void set_16bit(int value, unsigned char * buffer);
 
-    unsigned long long b64_sz, len_offset = 1, payload_offset = 2;//, len = 0;
+  unsigned long long b64_sz, len_offset = 1, payload_offset = 2;//, len = 0;
 
-    if ((int)srclength <= 0) {
-      return 0;
-    }
+  if ((int)srclength <= 0) {
+    return 0;
+  }
 
     memset(target, 0, targsize);
 
@@ -269,7 +269,7 @@ encode_hybi_client(SocketMessage *sm_ptr, const unsigned char *src, size_t srcle
 		//masking block
 		set_bit(target + 1, 7);//mask bit
 
-		mask_value = (unsigned int) random ();
+		mask_value = (unsigned int)random();
 		memset(mask, 0, 4);
 		set_32bit(mask_value, (unsigned char *)mask);//pack it
 
@@ -298,7 +298,7 @@ encode_hybi_client(SocketMessage *sm_ptr, const unsigned char *src, size_t srcle
     //AA- disable Base24
     memcpy(target+payload_offset, src, srclength);
 
-    syslog (LOG_NOTICE, ">>>> Sending WS Frame with  payload_frame_offset: '%lld' length: '%llu'",  payload_offset, srclength+payload_offset);
+    syslog(LOG_NOTICE, ">>>> Sending WS Frame with  payload_frame_offset: '%lld' length: '%llu'",  payload_offset, srclength+payload_offset);
 
     //TODO: shift out of here
     sm_ptr->flag|=(SOCKMSG_ENCODED|SOCKMSG_WSFRAMED);
@@ -342,7 +342,7 @@ encode_hybi_client(SocketMessage *sm_ptr, const unsigned char *src, size_t srcle
 }
 
 int
-decode_hybi (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength, unsigned char *target, ssize_t targsize, unsigned int *opcode, unsigned int *left)
+decode_hybi(SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength, unsigned char *target, ssize_t targsize, unsigned int *opcode, unsigned int *left)
 {
   unsigned char *frame, *mask, *payload, save_char, cntstr[4];
   int masked = 0;
@@ -356,6 +356,9 @@ decode_hybi (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength, unsig
 #ifdef __UF_FULLDEBUG
     syslog(LOG_DEBUG, "%s {pid:'%lu'}: Deocde new frame length '%lu'...", __func__, pthread_self(), srclength);
 #endif
+
+  sm_ptr->frame_index = calloc(SOCKMSG_MAX_FRAME_COUNT, sizeof(size_t));
+  sm_ptr->frame_index_multiples = SOCKMSG_MAX_FRAME_COUNT;
 
 	while (1) {
 		// Need at least two bytes of the header
@@ -379,11 +382,21 @@ decode_hybi (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength, unsig
 
 		if (remaining < 2) {
 			//this should be zero if we processed and every thing adds up. by the end 'frame' should point to the end of the str so net is 0
-			if (remaining !=0)	syslog(LOG_NOTICE, "%s {pid:'%lu'}: Truncated frame header from client", __func__, pthread_self());
+			if (remaining != 0)	syslog(LOG_NOTICE, "%s {pid:'%lu'}: Truncated frame header from client", __func__, pthread_self());
 			break;
 		}
 
 		framecount++;
+    if (framecount > sm_ptr->frame_index_multiples) {
+      syslog(LOG_NOTICE, "%s {pid:'%lu', framecount:'%i', framecount_multiples:'%lu'}: FRAME COUNT EXCEEDED FRAME INDEX ARRAY HOLDING CAPACITY: EXPANDING BY '%i'...", __func__, pthread_self(), framecount, sm_ptr->frame_index_multiples, SOCKMSG_MAX_FRAME_COUNT);
+      sm_ptr->frame_index_multiples += SOCKMSG_MAX_FRAME_COUNT;
+      size_t *frame_index_expanded = reallocarray(sm_ptr->frame_index, sm_ptr->frame_index_multiples, sizeof(size_t));
+      if (IS_PRESENT(frame_index_expanded)) sm_ptr->frame_index = frame_index_expanded;
+      else {
+        syslog(LOG_ERR, "%s {pid:'%lu', framecount:'%i', framecount_multiples:'%lu'}: MEMORY ERROR: COULD NOT EXPAND  FRAME INDEX HOLDING CAPACITY: RETURNING", __func__, pthread_self(), framecount, sm_ptr->frame_index_multiples);
+        return -1;//deallocation of sm_ptr->frame_index happens at cleanup
+      }
+    }
 
 		*opcode = frame[0] & 0x0f;//00001111
 		masked = (frame[1] & 0x80) >> 7; //10000000 shift the value of the most sgnificnt to the right, padding with zero
@@ -512,13 +525,13 @@ decode_hybi (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength, unsig
 
 		//not needed with binary
 		///*(target+target_offset+len)='\0';
-		memcpy (target + target_offset, payload,  len);//move data into buffer
+		memcpy(target + target_offset, payload,  len);//move data into buffer
 
-		 sm_ptr->frame_index[framecount-1] = len;//to be able to read off individual frame lengths instead of relying on \0 marker
+    *(sm_ptr->frame_index + (framecount - 1)) = len;
 
-		 syslog(LOG_DEBUG, "%s {pid:'%lu'}: Finished decoding: frame_count:'%d' payload_length: '%lu' data: '%s'", __func__, pthread_self(), framecount, sm_ptr->frame_index[framecount-1], target+target_offset);
+    syslog(LOG_DEBUG, "%s {pid:'%lu'}: Finished decoding: frame_count:'%d' payload_length: '%lu' data: '%s'", __func__, pthread_self(), framecount, *(sm_ptr->frame_index + (framecount - 1)), target + target_offset);
 
-		 target_offset += (len);//+1);//increment len to move past the '0' <-- not applicable for non-b64
+    target_offset += (len);//+1);//increment len to move past the '0' <-- not applicable for non-b64
 	}
     
     *left								=	sm_ptr->missing_msg_size;//remaining;
@@ -533,29 +546,30 @@ decode_hybi (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength, unsig
 }
 
 int
-decode_hybi_client (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength, unsigned char *target, ssize_t targsize, unsigned int *opcode, unsigned int *left)
+decode_hybi_client(SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength, unsigned char *target, ssize_t targsize, unsigned int *opcode, unsigned int *left)
 
 {
-    unsigned char *frame, *mask, *payload, save_char, cntstr[4];;
-    int masked = 0;
-    int i = 0, len=0, framecount = 0;
-    ssize_t remaining;
-    unsigned int target_offset = 0, hdr_length = 0, payload_length = 0;
+  unsigned char *frame, *mask, *payload, save_char, cntstr[4];;
+  int masked = 0;
+  int i = 0, len=0, framecount = 0;
+  ssize_t remaining;
+  unsigned int target_offset = 0, hdr_length = 0, payload_length = 0;
 
-    *left = srclength;
-    frame = src;
+  *left = srclength;
+  frame = src;
 
-    syslog(LOG_DEBUG, "%s: Deocde new frame length '%lu'...", __func__, srclength);
+  syslog(LOG_DEBUG, "%s: Deocde new frame length '%lu'...", __func__, srclength);
 
-	while (1)
-	{
+  sm_ptr->frame_index           = calloc(SOCKMSG_MAX_FRAME_COUNT, sizeof(size_t));
+  sm_ptr->frame_index_multiples = SOCKMSG_MAX_FRAME_COUNT;
+
+	while (1) {
 		// Need at least two bytes of the header
 		// Find beginning of next frame. First time hdr_length, masked and
 		// payload_length are zero
 		frame += hdr_length + 4*masked + payload_length;
 
-		if (frame > src + srclength)
-		{
+		if (frame > src + srclength) {
 			//fragmentation: payload size indicates more data are to be read from socket
 			sm_ptr->missing_msg_size=frame-(src + srclength);
 			syslog(LOG_DEBUG, "%s: Received a partial frame from client: need '%ld' more bytes from next frame", __func__, sm_ptr->missing_msg_size);
@@ -576,11 +590,21 @@ decode_hybi_client (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength
 
 		framecount++;
 
-		*opcode = frame[0] & 0x0f;//00001111
+    if (framecount > sm_ptr->frame_index_multiples) {
+      syslog(LOG_NOTICE, "%s {pid:'%lu', framecount:'%i', framecount_multiples:'%lu'}: FRAME COUNT EXCEEDED FRAME INDEX ARRAY HOLDING CAPACITY: EXPANDING BY '%i'...", __func__, pthread_self(), framecount, sm_ptr->frame_index_multiples, SOCKMSG_MAX_FRAME_COUNT);
+      sm_ptr->frame_index_multiples += SOCKMSG_MAX_FRAME_COUNT;
+      size_t *frame_index_expanded = reallocarray(sm_ptr->frame_index, sm_ptr->frame_index_multiples, sizeof(size_t));
+      if (IS_PRESENT(frame_index_expanded)) sm_ptr->frame_index = frame_index_expanded;
+      else {
+        syslog(LOG_ERR, "%s {pid:'%lu', framecount:'%i', framecount_multiples:'%lu'}: MEMORY ERROR: COULD NOT EXPAND  FRAME INDEX HOLDING CAPACITY: RETURNING", __func__, pthread_self(), framecount, sm_ptr->frame_index_multiples);
+        return -1;//deallocation of sm_ptr->frame_index happens at cleanup
+      }
+    }
+
+    *opcode = frame[0] & 0x0f;//00001111
 		masked = (frame[1] & 0x80) >> 7; //10000000 shift the value of the most sgnificnt to the right, padding with zero
 
-		if (*opcode == 0x8)
-		{
+		if (*opcode == 0x8) {
 			syslog(LOG_DEBUG, "%s: client sent orderly close frame...", __func__);
 
 			break;
@@ -627,41 +651,33 @@ decode_hybi_client (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength
 			syslog(LOG_DEBUG, "%s: Receiving frames larger than 65535 bytes(actual: '%d' bytes)  not supported: returning", __func__, payload_length);
 
 			return -1;
-		}
-		else
-		{
+		} else {
 			syslog(LOG_DEBUG, "%s: ERROR: RECEIVED UNSUPPORTED payload length: '%u'", __func__, payload_length);
 
 			return -1;
-
 		}
 
-		if ((hdr_length + 4*masked + payload_length) > remaining)
-		{
+		if ((hdr_length + 4*masked + payload_length) > remaining) {
 			sm_ptr->holding_buffer_msg_size=remaining;//we hold that many in frame fragment raw_unprocessed_msg_size=remaining;
-			sm_ptr->raw_msg_cur_pos=frame-src;//remember begining of frame fragment in raw_buffer
+			sm_ptr->raw_msg_cur_pos = frame - src;//remember begining of frame fragment in raw_buffer
 			framecount--;
 
-			syslog(LOG_DEBUG, "%s: Current frame is fragmented: frame size: '%d'. Currently in raw_buffer: '%ld'. Current position in raw_buffer: '%ld'. Frame count decremented to: '%d'",
-					__func__, hdr_length + 4*masked + payload_length, sm_ptr->holding_buffer_msg_size, sm_ptr->raw_msg_cur_pos, framecount);
+			syslog(LOG_DEBUG, "%s: Current frame is fragmented: frame size: '%d'. Currently in raw_buffer: '%ld'. Current position in raw_buffer: '%ld'. Frame count decremented to: '%d'", __func__, hdr_length + 4*masked + payload_length, sm_ptr->holding_buffer_msg_size, sm_ptr->raw_msg_cur_pos, framecount);
 
 			continue;
 		}
 
-		syslog(LOG_DEBUG, "%s: payload_length: '%u'. header_length: '%d'. raw remaining: %ld\n", __func__,
-				payload_length, hdr_length+4*masked, remaining-(payload_length+hdr_length+4*masked));
+		syslog(LOG_DEBUG, "%s: payload_length: '%u'. header_length: '%d'. raw remaining: %ld\n", __func__, payload_length, hdr_length+4*masked, remaining-(payload_length+hdr_length+4*masked));
 
 		payload = frame + hdr_length + 4*masked;
 
-		if (*opcode != 1 && *opcode != 2)
-		{
+		if (*opcode != 1 && *opcode != 2) {
 			syslog(LOG_DEBUG, "%s: Ignoring non-data frame, opcode 0x%x", __func__, *opcode);
 
 			continue;
 		}
 
-		if (payload_length == 0)
-		{
+		if (payload_length == 0) {
 			syslog(LOG_DEBUG, "%s: Ignoring empty frame", __func__);
 			continue;
 		}
@@ -688,14 +704,13 @@ decode_hybi_client (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength
 			payload[i] ^= mask[i%4];//apply first 4 bytes which represent the maskingkey set by the client
 		}
 */
-		len=payload_length;/// //AA+ remove when disabling Base64
+		len = payload_length;/// //AA+ remove when disabling Base64
 
-		memcpy (target+target_offset, payload,  len);//move data into buffer
+		memcpy(target + target_offset, payload,  len);//move data into buffer
 
-		sm_ptr->frame_index[framecount-1] = len;//to be able to read off individual frame lengths instead of relying on \0 marker
+    *(sm_ptr->frame_index + (framecount - 1)) = len;
 
-		syslog(LOG_DEBUG, "%s: Finished decoding: frame_count:'%d' payload_length: '%lu' data: '%s'",
-			 __func__, framecount, sm_ptr->frame_index[framecount-1], target+target_offset);
+		syslog(LOG_DEBUG, "%s: Finished decoding: frame_count:'%d' payload_length: '%lu' data: '%s'", __func__, framecount, *(sm_ptr->frame_index + (framecount - 1)), target+target_offset);
 
 		target_offset += (len);//+1);//increment len to move past the '0' <-- not applicable for non-b64
 
@@ -705,8 +720,8 @@ decode_hybi_client (SocketMessage *sm_ptr, unsigned char *src, ssize_t srclength
 #endif
 	}//while
 
-    *left=sm_ptr->missing_msg_size;//remaining;
-    sm_ptr->frame_count=framecount;
+    *left               = sm_ptr->missing_msg_size;//remaining;
+    sm_ptr->frame_count = framecount;
 
     //unset flag
     //sm_ptr->flag&=~(SOCKMSG_ENCODED|SOCKMSG_WSFRAMED);
@@ -766,7 +781,7 @@ parse_handshake(Session *sesn_ptr, char *handshake)
 	}
 #endif
 
-  WebSocketSession *ws_ptr = (WebSocketSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
+  WebSocketSession *ws_ptr = (WebSocketSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr);
 	ProtocolHeaderWebsocket *headers = &(ws_ptr->protocol_header);
 	Socket *sptr = NULL;
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,7 +18,7 @@
 #ifndef SRC_INCLUDE_REDIS_BACKEND_TYPE_H_
 #define SRC_INCLUDE_REDIS_BACKEND_TYPE_H_
 
-#include <hiredis/hiredis.h>
+#include "hiredis/hiredis.h"
 
 //A generalised type exists in struct PersistanceBackend. For the time being they must match in layout.
 typedef struct RedisBackend RedisBackend;

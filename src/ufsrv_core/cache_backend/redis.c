@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -16,12 +16,12 @@
  */
 
 #ifdef HAVE_CONFIG_H
-# include <config.h>
+# include "include/config.h"
 #endif
 
 #include <stdarg.h> //va
 #include <time.h>
-#include <ufsrv_core/cache_backend/redis.h>
+#include "redis.h"
 
 extern __thread ThreadContext ufsrv_thread_context;
 
@@ -41,7 +41,7 @@ static long long usec(void)
 
 //to be phased out, as it only allows for one hardcoded persistance backend
 __attribute__ ((format (printf, 2, 3))) void *
-RedisSendCommandOld (Session *sesn_ptr_this, const char *format, ...)
+RedisSendCommandOld(Session *sesn_ptr_this, const char *format, ...)
 {
 	PersistanceBackend *pers_ptr = THREAD_CONTEXT_PERSISTANCE_CACHEBACKEND(ufsrv_thread_context);
 
@@ -78,7 +78,7 @@ RedisSendCommandOld (Session *sesn_ptr_this, const char *format, ...)
 }
 
 __attribute__ ((format (printf, 2, 3))) void *
-RedisSendCommand (CacheBackend *pers_ptr_in, const char *format, ...)
+RedisSendCommand(CacheBackend *pers_ptr_in, const char *format, ...)
 {
   CacheBackend *pers_ptr = NULL;
   if (IS_PRESENT(pers_ptr_in) && IS_PRESENT(pers_ptr_in->persistance_agent))	pers_ptr = pers_ptr_in;
@@ -154,7 +154,7 @@ RedisSendSessionCommand(Session *sesn_ptr_this, CacheBackend *pers_ptr_in, const
 }
 
 void *
-RedisSendCommandWithCollection (Session *sesn_ptr, CacheBackend *pers_ptr, CollectionDescriptorPair *collection_argv_argvlen)
+RedisSendCommandWithCollection(Session *sesn_ptr, CacheBackend *pers_ptr, CollectionDescriptorPair *collection_argv_argvlen)
 {
 	void *_reply = NULL;
 
@@ -187,7 +187,7 @@ RedisSendCommandWithCollection (Session *sesn_ptr, CacheBackend *pers_ptr, Colle
 }
 
 __attribute__ ((format (printf, 2, 3))) void *
-RedisSendCommandSessionless (void *ptr, const char *format, ...)
+RedisSendCommandSessionless(void *ptr, const char *format, ...)
 {
 	PersistanceBackend *pers_ptr = (PersistanceBackend *)ptr;
 
@@ -212,7 +212,11 @@ RedisSendCommandSessionless (void *ptr, const char *format, ...)
 			if (IS_PRESENT(_reply))	return _reply;
 		}
 
-		syslog(LOG_ERR, "%s {pid:'%lu', th_ctx:'%p'}: ERROR ('%d'): EXITING: REATTEMPTED: REDIS COMMAND ERROR '%s'",  __func__, pthread_self(), &ufsrv_thread_context, ((redisContext *)(pers_ptr->persistance_agent))->err, ((redisContext *)(pers_ptr->persistance_agent))->errstr);
+    if (IS_PRESENT((redisContext *)pers_ptr->persistance_agent)) {
+      syslog(LOG_ERR, "%s {pid:'%lu', th_ctx:'%p'}: ERROR ('%d'): EXITING: REATTEMPTED: REDIS COMMAND ERROR '%s'", __func__, pthread_self(), &ufsrv_thread_context, ((redisContext *) (pers_ptr->persistance_agent))->err, ((redisContext *) (pers_ptr->persistance_agent))->errstr);
+    } else {
+      syslog(LOG_ERR, "%s {pid:'%lu', th_ctx:'%p'}: ERROR: EXITING: REATTEMPTED: REDIS COMMAND ERROR '%s'", __func__, pthread_self(), &ufsrv_thread_context, "ERRSTR NOT AVAILABLE: PERSISTANCE_AGENT IS NULL");
+    }
 
 		exit(2);
 //		return NULL;
@@ -224,7 +228,7 @@ RedisSendCommandSessionless (void *ptr, const char *format, ...)
 
 //tobe phased out
 __attribute__ ((format (printf, 2, 3))) void *
-RedisSendCommandMultiOld (Session *sesn_ptr, const char *format, ...)
+RedisSendCommandMultiOld(Session *sesn_ptr, const char *format, ...)
 {
 	PersistanceBackend *pers_ptr = THREAD_CONTEXT_PERSISTANCE_CACHEBACKEND(ufsrv_thread_context);
 
@@ -235,9 +239,7 @@ RedisSendCommandMultiOld (Session *sesn_ptr, const char *format, ...)
   va_end(ap);
 
   if (reply != REDIS_OK) {
-
     syslog(LOG_ERR, "%s {pid:'%lu', th_ctx:'%p', o:'%p', cid:'%lu'}: ERROR ('%d'): REDIS COMMAND ERROR '%s'",  __func__, pthread_self(), &ufsrv_thread_context, sesn_ptr, sesn_ptr?SESSION_ID(sesn_ptr):0, ((redisContext *)(pers_ptr->persistance_agent))->err, ((redisContext *)(pers_ptr->persistance_agent))->errstr);
-
     return NULL;
   }
 
@@ -247,7 +249,7 @@ RedisSendCommandMultiOld (Session *sesn_ptr, const char *format, ...)
 }
 
 __attribute__ ((format (printf, 3, 4))) void *
-RedisSendCommandMulti (Session *sesn_ptr, CacheBackend *pers_ptr, const char *format, ...)
+RedisSendCommandMulti(Session *sesn_ptr, CacheBackend *pers_ptr, const char *format, ...)
 {
 	va_list ap;
 
@@ -256,7 +258,7 @@ RedisSendCommandMulti (Session *sesn_ptr, CacheBackend *pers_ptr, const char *fo
 	va_end(ap);
 
 
-	if (reply!=REDIS_OK) {
+	if (reply != REDIS_OK) {
 		syslog(LOG_ERR, "%s {pid:'%lu', th_ctx:'%p', o:'%p', cid:'%lu'}: ERROR ('%d'): REDIS COMMAND ERROR '%s'",  __func__, pthread_self(), &ufsrv_thread_context, sesn_ptr, SESSION_ID(sesn_ptr), ((redisContext *)(pers_ptr->persistance_agent))->err, ((redisContext *)(pers_ptr->persistance_agent))->errstr);
 
 		return NULL;
@@ -267,13 +269,13 @@ RedisSendCommandMulti (Session *sesn_ptr, CacheBackend *pers_ptr, const char *fo
 
 }
 
-#include <sds.h>
+#include "hiredis/sds.h"
 /**
  *
  *  @brief: Used with multi send command. Resets connection with redis in case of connection error.
  */
 int
-RedisGetReply (Session *sesn_ptr, CacheBackend *pers_ptr, redisReply	**reply)
+RedisGetReply(Session *sesn_ptr, CacheBackend *pers_ptr, redisReply	**reply)
 {
 	int ret;
 	sds obuf_redis_orig = sdsnewlen(((redisContext *)pers_ptr->persistance_agent)->obuf, sdslen(((redisContext *)pers_ptr->persistance_agent)->obuf));
@@ -302,7 +304,6 @@ RedisGetReply (Session *sesn_ptr, CacheBackend *pers_ptr, redisReply	**reply)
 	sdsfree(obuf_redis_orig);
 
 	return_success:
-
 	return ret;
 }
 
@@ -321,12 +322,10 @@ DisconnectRedisBackend(Session *sesn_ptr, int keep_fd)
 }
 
 void
-PrintPersistanceError (Session *sesn_ptr, char *user_str)
+PrintPersistanceError(Session *sesn_ptr, char *user_str)
 {
 	if (sesn_ptr) {
-
 		syslog(LOG_INFO, "%s: ERROR ('%d'): REDIS COMMAND ERROR '%s'", user_str,  ((redisContext *)(sesn_ptr->persistance_backend->persistance_agent))->err, ((redisContext *)(sesn_ptr->persistance_backend->persistance_agent))->errstr);
-
 	}
 }
 
@@ -336,20 +335,20 @@ CheckForScript (RedisBackend *pers_ptr, const char *unique_id)
 	//verify scripts
 	//script exists 3a94e53b4b39b8229102c70d92a4ac3f6f8e3c1f
 
-	redisReply *redis_ptr=(*pers_ptr->send_command)	(pers_ptr, "SCRIPT EXISTS %s", unique_id);
+	redisReply *redis_ptr = (*pers_ptr->send_command)	(pers_ptr, "SCRIPT EXISTS %s", unique_id);
 
 	if (!redis_ptr) {
 		syslog(LOG_ERR, "%s: REDIS_REPLY_ERROR COULD NOT GET REDIS RESPONSE FOR SCRIPT VERIFICATION (NULL): EXITING...", __func__);
-		 _exit (-1);
+		 _exit(-1);
 	}
 	if (redis_ptr->type == REDIS_REPLY_ERROR) {
 		 syslog(LOG_ERR, "%s: REDIS_REPLY_ERROR: COULD NOT GET REDIS RESPONSE FOR SCRIPT VERIFICATION: ERROR :' %s': EXITING...", __func__, redis_ptr->str);
-		 _exit (-1);
+		 _exit(-1);
 	}
 
 	if (redis_ptr->type == REDIS_REPLY_NIL) {
 		 syslog(LOG_ERR, "%s: REDIS_REPLY_NIL COULD NOT GET REDIS RESPONSE FOR SCRIPT VERIFICATION: EXITING...", __func__);
-		 _exit (-1);
+		 _exit(-1);
 	}
 
 	if ((redis_ptr->type == REDIS_REPLY_ARRAY)&&(redis_ptr->element[0]->integer==1)) {
@@ -357,7 +356,7 @@ CheckForScript (RedisBackend *pers_ptr, const char *unique_id)
 		freeReplyObject(redis_ptr);
 	} else {
 		syslog(LOG_ERR, "%s: CRITICAL ERROR: COULD NOT VERIFY CRITICAL LUA UNIQUE ID GENERATION FEATURE SCRIPT: EXITING...", __func__);
-		return-1;
+		return -1;
 	}
 
 	return 0;//success
@@ -382,7 +381,7 @@ CheckForScript (RedisBackend *pers_ptr, const char *unique_id)
  *   /usr/local/redis/3.2.5/redis-cli -p 19705  SCRIPT LOAD "$(cat /opt/redis/redis_id_generation.lua)"
  */
 unsigned long
-GenerateCacheBackendId (PersistanceBackend *backend_ptr)
+GenerateCacheBackendId(PersistanceBackend *backend_ptr)
 {
 	unsigned long id = 0;
 
@@ -415,11 +414,11 @@ GenerateCacheBackendId (PersistanceBackend *backend_ptr)
 	if (redis_ptr->elements != _REDIS_UID_FIELDS_COUNT) goto return_error_incomplete_set;//emty set
 
 	unsigned long sequence		=	redis_ptr->element[0]->integer;
-	unsigned long timestamp		=	((redis_ptr->element[3]->integer*MICROS_IN_ONE_SEC) + redis_ptr->element[4]->integer)/MILLIS_IN_ONE_MICRO_SEC;
+	unsigned long timestamp		=	((redis_ptr->element[3]->integer * MICROS_IN_ONE_SEC) + redis_ptr->element[4]->integer) / MILLIS_IN_ONE_MICRO_SEC;
 	unsigned shard_id 				= redis_ptr->element[2]->integer;
 
-	id = ((timestamp - CUSTOM_EPOCH_IN_MILLIS) << TIMESTAMP_SHIFT)|
-				(shard_id << LOGICAL_SHARD_ID_SHIFT)|
+	id = ((timestamp - CUSTOM_EPOCH_IN_MILLIS) << TIMESTAMP_SHIFT) |
+				(shard_id << LOGICAL_SHARD_ID_SHIFT) |
 				sequence;
 
 	goto return_deallocate;
@@ -459,7 +458,7 @@ GenerateCacheBackendId (PersistanceBackend *backend_ptr)
  * @return on success the initialised context or NULL
  */
 static redisContext *
-ConnectRedisBackend (const struct BackendConfig *config_ptr)
+ConnectRedisBackend(const struct BackendConfig *config_ptr)
 {
 	redisContext *c = NULL;
 
@@ -499,7 +498,7 @@ ConnectRedisBackend (const struct BackendConfig *config_ptr)
  * When passing in_per_ptr we assume we are reinitialisng an existing backend
  * free context and reallocate
  */
-RedisBackend *InitialiseRedisBackend(RedisBackend *in_per_ptr, struct BackendConfig *cfg)
+RedisBackend *BuildConnectionHandleForRedisBackend(RedisBackend *in_per_ptr, struct BackendConfig *cfg)
 {
 	redisReply 		*reply;
 	RedisBackend 	*per_ptr					=	NULL;
@@ -511,12 +510,13 @@ RedisBackend *InitialiseRedisBackend(RedisBackend *in_per_ptr, struct BackendCon
 
 		if (per_ptr->persistance_agent) {
 			redisFree(per_ptr->persistance_agent);//Because we are reinitialising an exiting backend connection
+      per_ptr->persistance_agent = NULL;
 		}
 	}
 
 	per_ptr->persistance_agent = ConnectRedisBackend(cfg);
 	if (!per_ptr->persistance_agent) {
-		if (!in_per_ptr)	free (per_ptr);
+		if (!in_per_ptr)	free(per_ptr);
 
 		return NULL;
 	}
@@ -525,8 +525,9 @@ RedisBackend *InitialiseRedisBackend(RedisBackend *in_per_ptr, struct BackendCon
 		syslog(LOG_ERR, "%s {pid:'%lu', th_ctx:'%p'} : ERROR: COULD NOT CONNECT TO REDIS BACKEND (%s:%d): '%s'", __func__, pthread_self(), &ufsrv_thread_context, cfg->con_tcp.host, cfg->con_tcp.port, ((redisContext *)per_ptr->persistance_agent)->errstr);
 
 		redisFree(per_ptr->persistance_agent);
+    per_ptr->persistance_agent = NULL;
 
-		if (!in_per_ptr)	free (per_ptr);
+		if (!in_per_ptr)	free(per_ptr);
 
 		return NULL;
 	}
@@ -552,8 +553,9 @@ RedisBackend *InitialiseRedisBackend(RedisBackend *in_per_ptr, struct BackendCon
       syslog (LOG_ERR, "%s {pid:'%lu', th_ctx:'%p'}: ERROR: COULD NOT SETNAME %s-%d-%lu following a PING", __func__, pthread_self(), &ufsrv_thread_context, cfg->backend_label, cfg->con_tcp.port, pthread_self());
 
       redisFree(per_ptr->persistance_agent);
+      per_ptr->persistance_agent = NULL;
 
-      if (!in_per_ptr)	free (per_ptr);
+      if (!in_per_ptr)	free(per_ptr);
 
       return NULL;
 
@@ -563,8 +565,9 @@ RedisBackend *InitialiseRedisBackend(RedisBackend *in_per_ptr, struct BackendCon
 		syslog (LOG_ERR, "%s {pid:'%lu', th_ctx:'%p'}: ERROR: DID NOT receive pong confirmation from RedisBackend (%s:%d)...", __func__, pthread_self(), &ufsrv_thread_context, cfg->con_tcp.host, cfg->con_tcp.port);
 
 		redisFree(per_ptr->persistance_agent);
+    per_ptr->persistance_agent = NULL;
 
-		if (!in_per_ptr)	free (per_ptr);
+		if (!in_per_ptr)	free(per_ptr);
 
 		return NULL;
 	}

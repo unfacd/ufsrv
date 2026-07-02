@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,13 +18,14 @@
 #ifndef SRC_INCLUDE_API_ENDPOINT_V1_MESSAGE_H_
 #define SRC_INCLUDE_API_ENDPOINT_V1_MESSAGE_H_
 
-#include <recycler/instance_type.h>
+#include <uflib/recycler/instance_type.h>
 #include <json/json.h>
 
 #define API_ENDPOINT_V1(x) int x (InstanceHolder *instance_sesn_ptr)
 
 API_ENDPOINT_V1(MESSAGE_NONCE);
 API_ENDPOINT_V1(MESSAGE);
+API_ENDPOINT_V1(MESSAGE_GID);
 API_ENDPOINT_V1(MESSAGE_ENCRYPT);
 API_ENDPOINT_V1(MESSAGE_DECRYPT);
 
