@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -16,25 +16,25 @@
  */
 
 #ifdef HAVE_CONFIG_H
-# include <config.h>
+# include "include/config.h"
 #endif
 
-#include <main.h>
-#include <cache_backend/persistance.h>
-#include <backendconfig_type.h>
-#include <nportredird.h>
-#include <net.h>
-#include <cache_backend/redis.h>
+#include "include/main.h"
+#include "persistance.h"
+#include "ufsrv_core/include/backendconfig_type.h"
+#include "include/nportredird.h"
+#include "include/net.h"
+#include "redis.h"
 
 extern ufsrv *const masterptr;
 
 //When passing in_per_ptr we assume we are reinitialisng an existing backend
 //free context and reallocate
-PersistanceBackend *InitialisePersistanceBackend (PersistanceBackend *in_per_ptr)
+PersistanceBackend *InitialisePersistanceBackend(PersistanceBackend *in_per_ptr)
 {
 	struct BackendConfig config;
 	struct timeval tv;
-	char resolved_ip[SBUF];
+	char resolved_ip[SBUF] = {0};
 
 	GenericDnsResolve(masterptr->persistance_backend_address, resolved_ip, sizeof(resolved_ip));
 	config.con_tcp.host                           = resolved_ip;
@@ -49,11 +49,11 @@ PersistanceBackend *InitialisePersistanceBackend (PersistanceBackend *in_per_ptr
 	config.con_tcp.timeout  = tv;
   config.backend_label    = masterptr->server_descriptive_name;
 
-	return ((PersistanceBackend *)InitialiseRedisBackend((RedisBackend *)in_per_ptr, &config));
+	return ((PersistanceBackend *) BuildConnectionHandleForRedisBackend((RedisBackend *) in_per_ptr, &config));
 
 }
 
-UserMessageCacheBackend *InitialiseCacheBackendUserMessage (PersistanceBackend *in_per_ptr)
+UserMessageCacheBackend *InitialiseCacheBackendUserMessage(PersistanceBackend *in_per_ptr)
 {
 	struct BackendConfig config;
 	struct timeval tv;
@@ -72,11 +72,11 @@ UserMessageCacheBackend *InitialiseCacheBackendUserMessage (PersistanceBackend *
 	config.con_tcp.timeout  = tv;
   config.backend_label    = masterptr->server_descriptive_name;
 
-	return ((UserMessageCacheBackend *)InitialiseRedisBackend((RedisBackend *)in_per_ptr, &config));
+	return ((UserMessageCacheBackend *) BuildConnectionHandleForRedisBackend((RedisBackend *) in_per_ptr, &config));
 
 }
 
-FenceCacheBackend *InitialiseCacheBackendFence (PersistanceBackend *in_per_ptr)
+FenceCacheBackend *InitialiseCacheBackendFence(PersistanceBackend *in_per_ptr)
 {
 	struct BackendConfig config;
 	struct timeval tv;
@@ -95,6 +95,6 @@ FenceCacheBackend *InitialiseCacheBackendFence (PersistanceBackend *in_per_ptr)
 	config.con_tcp.timeout = tv;
   config.backend_label = masterptr->server_descriptive_name;
 
-	return ((FenceCacheBackend *)InitialiseRedisBackend((RedisBackend *)in_per_ptr, &config));
+	return ((FenceCacheBackend *) BuildConnectionHandleForRedisBackend((RedisBackend *) in_per_ptr, &config));
 
 }

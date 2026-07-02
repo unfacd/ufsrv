@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -65,15 +65,15 @@ lextable_decode(int pos, char c)
  *  parses a given command and returns its corresponding callback function
  */
 static inline int
-_UfsrvCommandIndexGet (LexParserState *wsi, unsigned char c)
+_UfsrvCommandIndexGet(LexParserState *wsi, unsigned char c)
 {
 	  unsigned int n = 0;
 
 	  //we found a substring match earlier, but since we are reading more, we'll clear it
 	  //since we are reading more advance the pos by one to allow for cases where token common
-	  //prefixes. we dont want to bail out on first occurrence
+	  //prefixes. we don't want to bail out on first occurrence
 	  if (wsi->match_found >= 0) {
-	    wsi->match_found =- 1;
+	    wsi->match_found = -1;
 	    wsi->lextable_pos += 2;
 	  }
 
@@ -104,7 +104,7 @@ _UfsrvCommandIndexGet (LexParserState *wsi, unsigned char c)
  * 	@returns command index which is >=0. On error, -1.
  */
 int
-UfsrvCommandIndexGet (Session *sesn_ptr, const char *command_str)
+UfsrvCommandIndexGet(Session *sesn_ptr, const char *command_str)
 {
 	size_t len = strlen(command_str);
 	if (len > UFSRVCMD_MAXLEN) {

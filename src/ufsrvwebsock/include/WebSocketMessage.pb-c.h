@@ -4,7 +4,7 @@
 #ifndef PROTOBUF_C_WebSocketMessage_2eproto__INCLUDED
 #define PROTOBUF_C_WebSocketMessage_2eproto__INCLUDED
 
-#include <protobuf-c/protobuf-c.h>
+#include <uflib/protobuf-c/protobuf-c.h>
 
 PROTOBUF_C__BEGIN_DECLS
 

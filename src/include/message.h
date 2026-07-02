@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -25,7 +25,8 @@
 #include <transmission_message_type.h>
 #include <incoming_message_descriptor_type.h>
 #include <guardian_record_descriptor.h>
-#include <fence.h>
+#include <ufsrvmsg_core/fence/fence.h>
+#include <staged_message_descriptor_type.h>
 
 enum StoredMessageOptions {
 	MSGOPT_GET_FIRST 			= (0x1<<1),
@@ -39,40 +40,54 @@ enum StoredMessageOptions {
 	MSGOPT_GET_REM_ALL		=	((0x1<<3)|(0x1<<5)),
 };
 
+/**
+ * Parameters to inform post staged message fetch. Staged messages are copies of undelivered messages which users can retrieve via API calls
+ */
+enum StagedSetPersistance {
+  KEEP_ALL_STAGED_SETS = 0, //keep both, index and payload
+  KEEP_STAGED_SET_INDEX,
+  KEEP_STAGED_SET_PAYLOAD,
+
+  DELETE_ALL_STAGED_SETS,  //delete both, index and payload
+  DELETE_STAGED_SET_INDEX,
+  DELETE_STAGED_SET_PAYLOAD,
+};
+
 //<uid> <uid>
 #define REDIS_CMD_GUARDIAN_ADD "SADD GUARDIAN_FOR_%lu %lu"
 #define REDIS_CMD_GUARDIAN_REM 			"SREM GUARDIAN_FOR_%lu %lu"
 #define REDIS_CMD_FENCE_GUARDIAN_MEMBERS	"SMEMBERS GUARDIAN_FOR_%lu"
 #define REDIS_CMD_FENCE_GUARDIAN_ISMEMBER	"SISMEMBER GUARDIAN_FOR_%lu %lu"
 
-UFSRVResult *HandleStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *payload_name, enum StoredMessageOptions msg_opts);
-UFSRVResult *StoreStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *,  unsigned long callflags, unsigned char *command_buf_in);
-UFSRVResult *RemoveStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *, unsigned long call_flags);
-UFSRVResult *GetStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr, const char *payload_name, enum StoredMessageOptions msg_opts);
+UFSRVResult *HandleStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *payload_name, enum StoredMessageOptions msg_opts);
+UFSRVResult *StoreStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr, IncomingMessageDescriptor *,  unsigned long callflags, unsigned char *command_buf_in);
+UFSRVResult *RemoveStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *, unsigned long call_flags);
+UFSRVResult *GetStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr, const char *payload_name, enum StoredMessageOptions msg_opts);
 UFSRVResult *GetRemoveStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *payload_name);
 UFSRVResult *GetRemStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *payload_name, enum StoredMessageOptions);
 
-UFSRVResult *AddMessageCacheRecordForUsers (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr, UfsrvMsgCommandType msg_type, const unsigned char *b64encoded_rawmsg, unsigned long call_flags);
-UFSRVResult *GetMessageFromCacheRecords (Session *sesn_ptr, unsigned long call_flags);
-UFSRVResult *DeleteStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *, unsigned long userid);
-UFSRVResult *GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr, unsigned long userid);
-UFSRVResult *StoreStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *tmsg_ptr, unsigned long userid);
-UFSRVResult *GetStageMessageCacheBackendListSize (Session *sesn_ptr, unsigned long userid);
+UFSRVResult *AddMessageCacheRecordForUsers(Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr, UfsrvMsgCommandType msg_type, const unsigned char *b64encoded_rawmsg, unsigned long call_flags);
+UFSRVResult *GetMessageFromCacheRecords(Session *sesn_ptr, unsigned long call_flags);
+UFSRVResult *DeleteStagedMessageCacheRecordForUser(Session *sesn_ptr, StagedMessageDescriptor *);
+UFSRVResult *GetStagedMessageCacheRecordsForUserInJson(Session *sesn_ptr, unsigned long userid, enum StagedSetPersistance staged_set_persistence);
+UFSRVResult *StoreStagedMessageCacheRecordForUser(Session *sesn_ptr, TransmissionMessage *tmsg_ptr, unsigned long userid);
+UFSRVResult *GetStageMessageCacheBackendListSize(Session *sesn_ptr, unsigned long userid);
+UFSRVResult *DeleteStagedMessageCacheRecordsForUser(Session *sesn_ptr, unsigned long userid);
 
-int DbBackendInsertMessageRecord (const ParsedMessageDescriptor *in_msg_ptr);
-int DbBackendUpdateMessageStatus (unsigned long eid, unsigned  long uid_flagged_by, enum EventStatus status);
+int DbBackendInsertMessageRecord(const ParsedMessageDescriptor *in_msg_ptr);
+int DbBackendUpdateMessageStatus(unsigned long eid, unsigned  long uid_flagged_by, enum EventStatus status);
 
-char *GenerateGuardianNonce (Session *sesn_ptr, const char *value);
-unsigned long IsGuardianLinkNonceValid (const char *nonce, unsigned long value);
-UFSRVResult *DbBackendInsertGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr, bool force_data);
-UFSRVResult *DbBackendGetGuardianRecord (GuardianRecordDescriptor *descriptor_ptr);
-UFSRVResult *DbBackendGetGuardianRecords (GuardianRecordDescriptor *descriptor_ptr_guardian, CollectionDescriptor *collection_ptr_out);
-UFSRVResult *DbBackendGetGuardianRecordForOriginator (GuardianRecordDescriptor *descriptor_ptr);
-UFSRVResult *DbBackendDeleteGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr);
-UFSRVResult *CacheBackendAddGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr);
-UFSRVResult *CacheBackendRemGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr);
-UFSRVResult *CacheBackendGetGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr);
-bool IsUserGuardianFor (const GuardianRecordDescriptor *);
+char *GenerateGuardianNonce(Session *sesn_ptr, const char *value);
+unsigned long IsGuardianLinkNonceValid(const char *nonce, unsigned long value);
+UFSRVResult *DbBackendInsertGuardianRecord(const GuardianRecordDescriptor *descriptor_ptr, bool force_data);
+UFSRVResult *DbBackendGetGuardianRecord(GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *DbBackendGetGuardianRecords(GuardianRecordDescriptor *descriptor_ptr_guardian, CollectionDescriptor *collection_ptr_out);
+UFSRVResult *DbBackendGetGuardianRecordForOriginator(GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *DbBackendDeleteGuardianRecord(const GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *CacheBackendAddGuardianRecord(const GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *CacheBackendRemGuardianRecord(const GuardianRecordDescriptor *descriptor_ptr);
+UFSRVResult *CacheBackendGetGuardianRecord(const GuardianRecordDescriptor *descriptor_ptr);
+bool IsUserGuardianFor(const GuardianRecordDescriptor *);
 
 // MSGS_FOR:<%uid>
 #define REDIS_CMD_INTRAMESSAGE_LIST_GETALL 				"ZRANGE STAGED_INTRAMSGS_%s_%d 0 -1"

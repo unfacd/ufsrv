@@ -1,3 +1,18 @@
 ---
-Checks:          '*,-bugprone-infinite-loop'
+# Classification of the excludes:
+#
+#   * unclear, need to figure out if we want that:
+#       * cppcoreguidelines-pro-bounds-pointer-arithmetic ("do not use pointer arithmetic")
+#       * google-runtime-int ("consider replacing 'unsigned long' with 'uint64'")
+#       * google-readability-todo ("Missing username/bug in TODO ctidy")
+#       * llvm-header-guard ("Header guard does not follow preferred style")
+#
+#   * undesirable checks:
+#       * llvmlibc-restrict-system-libc-headers "System include sys/epoll.h not allowed"
+#       * altera-struct-pack-align ("accessing fields in struct 'FOO' is inefficient...")
+#       * altera-unroll-loops ("kernel performance could be improved by unrolling this loop with a '#pragma unroll' directive")
+#       * bmodernize-macro-to-enum "defines an integral constant; prefer an enum instead"
+#       * bugprone-reserved-identifier ""
+#
+Checks:          '*,-bugprone-infinite-loop, -altera-unroll-loops, -google-readability-todo, -llvm-header-guard'
 WarningsAsErrors: ''

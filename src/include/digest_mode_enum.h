@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,12 +18,12 @@
 #ifndef UFSRV_DIGEST_MODE_ENUM_H
 #define UFSRV_DIGEST_MODE_ENUM_H
 
-//Generic specifier for amount of details to be generated for a give entitiy, eg json object
+//Generic specifier for amount of details to be generated for a give entity, eg json object
 enum DigestMode {
   DIGESTMODE_FULL,
   DIGESTMODE_MODERATE,
   DIGESTMODE_BRIEF,
   DIGESTMODE_CONTACTS_SHARING
-} DigestModeEnum;
+} ;
 
 #endif //UFSRV_DIGEST_MODE_ENUM_H

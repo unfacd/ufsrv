@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,12 +18,13 @@
 #define SRC_INCLUDE_SESSIONS_DELEGATOR_TYPE_H_
 
 #include <session_type.h>
-#include <recycler/instance_type.h>
+#include <uflib/recycler/instance_type.h>
 #include <pthread.h>
 #include <uflib/adt/adt_queue.h>
-#include <hashtable.h>
+#include <uflib/adt/adt_hashtable.h>
 #include <uflib/adt/adt_linkedlist.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue_type.h>
+#include <jobworkers/workers_config_descriptor_type.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvmsgqueue_type.h>
 #include <ufsrv_core/instrumentation/instrumentation_backend.h>
 #include <uflib/db/db_sql.h>
 #include <uflib/adt/adt_lamport_queue.h>
@@ -35,7 +36,7 @@ enum  WorkerType {
 
 //basic context data passed to worker threads at creation time
 typedef struct WorkerThreadCreationContext {
-	size_t						        idx;
+  size_t						        idx;
 	InstanceHolderForSession  *ipc_pipe;
 	LocklessSpscQueue         *queue;
 } WorkerThreadCreationContext;
@@ -81,14 +82,6 @@ struct SessionsDelegator {
 #endif
  } new_connections;
 
-  //todo: why is this used for Timermanager thread?
-  struct {
-   Queue				queue;//sessions which have been previously suspended and never reclaimed within set timeout period
-   pthread_rwlock_t 	queue_rwlock;
-   pthread_t 			queue_manager_th;
-   time_t 			queue_manager_last_run;	//last time the manager ran
- } recycled_sessions;
-
   void *events_container; //epoll_event container memory initialised to max requested size upfront
 
   //for use by the delegator
@@ -102,9 +95,12 @@ struct SessionsDelegator {
 
   pthread_attr_t th_attr;
 
+  WorkersConfigDescriptor *jobworkers_config_descriptor; //Each ufsrv instance can register a workers pool
+
   //set of variables that control the non-session service worker threads pool in ufsrv_worker_thread
   //makesure you initialise all keys in UFSRVThreadsOnceInitialiser (void);
-  struct {
+//  WorkersConfigDescriptor jobworkers;
+ /* struct {
     pthread_t *workers; //number of workers to spawn
     pthread_cond_t  queue_not_empty_cond;
     pthread_cond_t  queue_empty_cond;
@@ -124,7 +120,7 @@ struct SessionsDelegator {
     Queue ufsrv_work_queue;
 #endif
     unsigned count_in_service;//how many are currently in service from the pool
-  } ufsrv_thread_pool;
+  } ufsrv_thread_pool;*/
 
 #if 0
   //TODO: to be used for session i/o workers, currently split between npotrtredird.h and session_type.h
@@ -161,8 +157,10 @@ struct SessionsDelegator {
   //control the behaviour of producer SessionsDelegator and consumers i/O worker threads
   //to be migrated to session_worker_thread_pool above
   pthread_t *session_worker_ths;//workers spawned at once
-  pthread_mutex_t work_queue_mutex;//store/retrieve session work requests
+  pthread_mutex_t work_queue_mutex;//This is the mutex that control the broadcasting of work availability for session workers
   pthread_mutexattr_t work_queue_mutex_attr;
+
+  pthread_barrier_t init_barrier;
 
   //queue/mutex not implemented yet, we read straight of the socket instead
   Queue worker_delegator_ipc_queue; //this os worker->delegator request queue signalling via self-pipe
@@ -177,7 +175,7 @@ struct SessionsDelegator {
    pthread_cond_t  queue_empty_cond;
    //end migration
   //pthread_cond_t work_queue_cond;
-  pid_t pid;
+  pthread_t pid;
 
 };
 typedef struct SessionsDelegator SessionsDelegator;

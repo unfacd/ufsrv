@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,10 +18,10 @@
 #ifndef SRC_INCLUDE_PERSISTANCE_H_
 #define SRC_INCLUDE_PERSISTANCE_H_
 
-#include <hiredis/hiredis.h>
-#include <ufsrv_core/cache_backend/persistance_type.h>
+#include "hiredis/hiredis.h"
+#include "persistance_type.h"
 #include <session.h>
-#include <ufsrv_core/cache_backend/redis.h>
+#include "redis.h"
 
 unsigned DisconnectPersistanceBackend(Session *, int);//redisContext *c, int keep_fd);
 PersistanceBackend *InitialisePersistanceBackend (PersistanceBackend *);

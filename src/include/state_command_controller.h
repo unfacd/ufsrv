@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,12 +20,12 @@
 #define UFSRV_STATE_COMMAND_CONTROLLER_H
 
 #include <ufsrvresult_type.h>
-#include <recycler/instance_type.h>
+#include <uflib/recycler/instance_type.h>
 #include <session_type.h>
 #include <command_base_context_type.h>
 
 #include <WebSocketMessage.pb-c.h>
-#include <ufsrv_core/SignalService.pb-c.h>
+#include <ufsrvmsg_core/SignalService.pb-c.h>
 
 typedef struct StateCommandContext {
   CommandBaseContext command_base_context;
