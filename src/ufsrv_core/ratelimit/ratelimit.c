@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -21,16 +21,16 @@
 #endif
 
 #include <main.h>
-#include <utils.h>
+#include <uflib/utils.h>
 #include <ufsrv_core/cache_backend/redis.h>
-#include <ufsrv_core/ratelimit/ratelimit.h>
+#include <ratelimit/ratelimit.h>
 
 #include <ratelimit_data.h>
 #include <thread_context_type.h>
 
 extern __thread ThreadContext ufsrv_thread_context;
 
-enum RateLimitCommandCode{
+enum RateLimitCommandCode {
 	COMMAND_CODE_MULTI=0,
 	COMMAND_CODE_ZREM,
 	COMMAND_CODE_ZRANGE,
@@ -64,14 +64,14 @@ After all operations are completed, we count the number of fetched elements. If 
 We also can compare the largest fetched element to the current timestamp. If they�re too close, we also don�t allow the action.
  */
 UFSRVResult *
-GetRequestRateLimitStatus (RateLimitDescriptor *rl_descriptor_ptr, RequestRateLimitStatus 	*rl_status_ptr_out)
+GetRequestRateLimitStatus(RateLimitDescriptor *rl_descriptor_ptr, RequestRateLimitStatus 	*rl_status_ptr_out)
 {
   CacheBackend *pers_ptr = rl_descriptor_ptr->pers_ptr;
   const RequestRateLimit *rl_ptr = rl_descriptor_ptr->request_rl_ptr;
 
 	int											rescode						=	RESCODE_BACKEND_RESOURCE_NULL;
 	long long 							time_now_in_micros=GetTimeNowInMicros();
-	size_t 									clear_before			=time_now_in_micros - (rl_ptr->interval*1000);//in micros
+	size_t 									clear_before			=time_now_in_micros - (rl_ptr->interval * 1000);//in micros
 	RequestRateLimitStatus 	*rl_status_ptr		=NULL;
 
 	if (IS_PRESENT(rl_status_ptr_out))	rl_status_ptr = rl_status_ptr_out;
@@ -89,7 +89,7 @@ GetRequestRateLimitStatus (RateLimitDescriptor *rl_descriptor_ptr, RequestRateLi
 	snprintf(command_buf, MBUF-1, "ZADD %s %llu %llu", rl_descriptor_ptr->namespace, time_now_in_micros, time_now_in_micros); //integer
 	(*pers_ptr->send_command_multi)(NULL, pers_ptr, command_buf);
 
-	snprintf(command_buf, MBUF-1, "EXPIRE %s %lu", rl_descriptor_ptr->namespace, (rl_ptr->interval*1000)/ 1000000);//integer, (convert to seconds)
+	snprintf(command_buf, MBUF-1, "EXPIRE %s %lu", rl_descriptor_ptr->namespace, (rl_ptr->interval * 1000)/ 1000000);//integer, (convert to seconds)
 	(*pers_ptr->send_command_multi)(NULL, pers_ptr, command_buf);
 
 	(*pers_ptr->send_command_multi)(NULL, pers_ptr, "EXEC");//array
@@ -218,20 +218,23 @@ GetRequestRateLimitStatus (RateLimitDescriptor *rl_descriptor_ptr, RequestRateLi
   _RETURN_RESULT_RES(rl_descriptor_ptr->res_ptr, NULL, RESULT_TYPE_ERR, rescode)
 }
 
-__attribute__((pure)) const RequestRateLimit *GetRateLimitSpecsFor (enum RateLimitNamespaceCategory category)
+/**
+ * @brief Return ratelimit specs based on category.
+ * @param category as per enumeration
+ */
+__attribute__((pure)) const RequestRateLimit *GetRateLimitSpecsFor(enum RateLimitNamespaceCategory category)
 {
-	if (category < RLNS_MAXVALUE)	return &(RequestRateLimitSpecs[category-1]);
+	return &(RequestRateLimitSpecs[category-1]);
 
-	return NULL;
 }
 
 bool
-IsRateLimitExceededWithNamespace (RateLimitDescriptor *rl_descriptor, enum RateLimitNamespaceCategory ratelimit_category)
+IsRateLimitExceededWithNamespace(RateLimitDescriptor *rl_descriptor, enum RateLimitNamespaceCategory ratelimit_category)
 {
   rl_descriptor->request_rl_ptr = GetRateLimitSpecsFor(ratelimit_category);
   RequestRateLimitStatus 	ratelimit_status_local;
 
-  GetRequestRateLimitStatus (rl_descriptor, &ratelimit_status_local);
+  GetRequestRateLimitStatus(rl_descriptor, &ratelimit_status_local);
   if (IS_PRESENT(_RESULT_USERDATA(rl_descriptor->res_ptr))) {
     //we are interested in both, rate and number of requests
     if (rl_descriptor->request_rl_ptr->min_difference > 0) {
@@ -268,7 +271,7 @@ IsRateLimitExceededWithNamespace (RateLimitDescriptor *rl_descriptor, enum RateL
  * @returns: false: ratelimit not exceed
  */
  bool
-IsRateLimitExceededForSession (CacheBackend *pers_ptr, unsigned long userid, unsigned long cid, enum RateLimitNamespaceCategory ratelimit_category)
+IsRateLimitExceededForSession(CacheBackend *pers_ptr, unsigned long userid, unsigned long cid, enum RateLimitNamespaceCategory ratelimit_category)
 {
   char 										namespace[SBUF]					=	{0};
   snprintf(namespace, SBUF-1, "%lu:%lu:%d", userid, cid, ratelimit_category);
@@ -311,8 +314,8 @@ IsRateLimitExceededForSession (CacheBackend *pers_ptr, unsigned long userid, uns
 }
 
 bool
-IsRateLimitExceededForIPAddress (CacheBackend *pers_ptr, const char *ip_address, enum RateLimitNamespaceCategory ratelimit_category, UFSRVResult *res_ptr) {
+IsRateLimitExceededForIPAddress(CacheBackend *pers_ptr, const char *ip_address, enum RateLimitNamespaceCategory ratelimit_category, UFSRVResult *res_ptr) {
   syslog(LOG_DEBUG, "%s {pid:'%lu', ip:'%s'}: Checking RateLimit...", __func__, pthread_self(), ip_address);
-  RateLimitDescriptor rl_descriptor = {.res_ptr=THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), .res_ptr=res_ptr, .pers_ptr=pers_ptr, .namespace=ip_address};
+  RateLimitDescriptor rl_descriptor = {.res_ptr=res_ptr, .pers_ptr=pers_ptr, .namespace=ip_address};
   return IsRateLimitExceededWithNamespace(&rl_descriptor, ratelimit_category);
 }

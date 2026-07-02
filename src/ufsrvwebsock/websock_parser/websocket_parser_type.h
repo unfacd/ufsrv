@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -21,7 +21,10 @@
 
 #define FAIL_CHAR 0x08
 #define LWS_MAX_HEADER_LEN 1024
-#define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
+
+#ifndef ARRAY_SIZE
+# define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
+#endif
 
 /*
  * these have to be kept in sync with lextable.h / minilex.c

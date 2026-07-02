@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2023 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,11 +20,11 @@
 #endif
 
 #include <main.h>
-#include <ufsrv_core/fence/fence_state.h>
-#include <ufsrv_core/user/user_preferences.h>
-#include <ufsrv_core/user/user_backend.h>
-#include <ufsrv_core/user/users_protobuf.h>
-#include <ufsrv_core/location/location.h>
+#include <ufsrvmsg_core/fence/fence_state.h>
+#include <ufsrvmsg_core/user/user_preferences.h>
+#include <ufsrvmsg_core/user/user_backend.h>
+#include <ufsrvmsg_core/user/users_protobuf.h>
+#include <ufsrvmsg_core/location/location.h>
 #include <share_list.h>
 #include <ufsrv_core/cache_backend/persistance.h>
 #include <misc.h>
@@ -34,11 +34,12 @@
 #include <protocol_http.h>
 #include <session_broadcast.h>
 #include <sessions_delegator_type.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
-#include <ufsrv_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
-#include <ufsrvuid.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <ufsrvmsg_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
+#include <uflib/ufsrvuid.h>
 
 #include <hiredis.h>
+#include "ufsrv_core/include/delegator_session_worker_thread.h"
 
 /**
  * 	@brief: Main interface method for broadcasting backend data model state change for Fence display name attribute.
@@ -60,15 +61,15 @@ typedef struct BroadcastMessageEnvelopeForSession BroadcastMessageEnvelopeForSes
 extern SessionsDelegator *const sessions_delegator_ptr;
 extern __thread ThreadContext ufsrv_thread_context;
 
-inline static void _PrepareInterBroadcastMessageForSession (BroadcastMessageEnvelopeForSession *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg);
-static UFSRVResult *_HandleInterBroadcastSessionStatus (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
-static UFSRVResult *_HandleInterBroadcastSessionConnected (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
-static UFSRVResult *_HandleInterBroadcastSessionSuspended (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
-static UFSRVResult *_HandleInterBroadcastSessionQuit (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
-static UFSRVResult *_HandleInterBroadcastSessionPreference (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
-static UFSRVResult *_HandleInterBroadcastSessionGeofenced (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
-static UFSRVResult *_HandleInterBroadcastSessionRebooted (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
-static inline UFSRVResult *_HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
+inline static void _PrepareInterBroadcastMessageForSession(BroadcastMessageEnvelopeForSession *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg);
+static UFSRVResult *_HandleInterBroadcastSessionStatus(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_HandleInterBroadcastSessionConnected(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_HandleInterBroadcastSessionSuspended(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_HandleInterBroadcastSessionQuit(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_HandleInterBroadcastSessionPreference(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_HandleInterBroadcastSessionGeofenced(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_HandleInterBroadcastSessionRebooted(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
+static inline UFSRVResult *_HandleIntraBroadcastForSession(InstanceHolderForSession *instance_sesn_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr);
 
 //TODO: needs updating
 
@@ -107,7 +108,7 @@ static inline UFSRVResult *_HandleIntraBroadcastForSession (InstanceHolderForSes
  * 	in more specific contextual stuff.
  */
 inline static void
-_PrepareInterBroadcastMessageForSession (BroadcastMessageEnvelopeForSession *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
+_PrepareInterBroadcastMessageForSession(BroadcastMessageEnvelopeForSession *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
 {
 	envelope_ptr->msgqueue_msg->command_type					=	UFSRV_SESSION;	envelope_ptr->msgqueue_msg->has_command_type=1;
 	envelope_ptr->msgqueue_msg->broadcast_semantics	=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTER; envelope_ptr->msgqueue_msg->has_broadcast_semantics	=1;
@@ -117,16 +118,13 @@ _PrepareInterBroadcastMessageForSession (BroadcastMessageEnvelopeForSession *env
 
 	envelope_ptr->header->args												=	command_arg;
 
-	if (IS_PRESENT(event_ptr))
-	{
+	if (IS_PRESENT(event_ptr)) {
 		envelope_ptr->header->eid													=	event_ptr->eid; 					envelope_ptr->header->has_eid=1;
 		envelope_ptr->header->when												=	event_ptr->when; 					envelope_ptr->header->has_when=1;
-	}
-	else
-	{	envelope_ptr->header->when												=	GetTimeNowInMillis(); 	envelope_ptr->header->has_when=1;}
+	} else {	envelope_ptr->header->when								=	GetTimeNowInMillis(); 	  envelope_ptr->header->has_when=1;}
 
-	envelope_ptr->header->cid													=	SESSION_ID(sesn_ptr); 		envelope_ptr->header->has_cid=1;
-	MakeUfsrvUidInProto(&(SESSION_UFSRVUIDSTORE(sesn_ptr)), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid=1;
+	envelope_ptr->header->cid													  =	SESSION_ID(sesn_ptr); 		envelope_ptr->header->has_cid=1;
+  ProvideUfsrvUidInProto(&(SESSION_UFSRVUIDSTORE(sesn_ptr)), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid=1;
 
 }
 
@@ -135,7 +133,7 @@ _PrepareInterBroadcastMessageForSession (BroadcastMessageEnvelopeForSession *env
  * 	@fence_event: None. This is a user session attribute. A join fence event would have triggered separately.
  */
 UFSRVResult *
-InterBroadcastSessionGeoFenced (Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
+InterBroadcastSessionGeoFenced(Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
 {
 
 	MessageQueueMessage 			msgqueue_msg					=	MESSAGE_QUEUE_MESSAGE__INIT;
@@ -159,11 +157,11 @@ InterBroadcastSessionGeoFenced (Session *sesn_ptr, ClientContextData *context_pt
 				.fence_records					=	NULL
   };
 
-	_PrepareInterBroadcastMessageForSession (&envelope, sesn_ptr, context_ptr, event_ptr, command_arg);
+	_PrepareInterBroadcastMessageForSession(&envelope, sesn_ptr, context_ptr, event_ptr, command_arg);
 
 	//_GENERATE_ENVELOPE_INITIALISATION(); //replaces above
 
-  MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
+  ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
   msgqueue_msg.has_ufsrvuid = 1;
 	msgqueue_sesn_msg.status					=	SESSION_MESSAGE__STATUS__GEOFENCED;
 
@@ -175,7 +173,7 @@ InterBroadcastSessionGeoFenced (Session *sesn_ptr, ClientContextData *context_pt
 }
 
 UFSRVResult *
-InterBroadcastSessionStatus (Session *sesn_ptr, ClientContextData *context_ptr, enum _SessionMessage__Status sesn_status, enum _CommandArgs command_arg)
+InterBroadcastSessionStatus(Session *sesn_ptr, ClientContextData *context_ptr, enum _SessionMessage__Status sesn_status, enum _CommandArgs command_arg)
 {
 	_GENERATE_ENVELOPE_INITIALISATION_FOR_SESSION_STATUS();
 
@@ -191,7 +189,7 @@ InterBroadcastSessionStatus (Session *sesn_ptr, ClientContextData *context_ptr, 
  * 	recipients won't ned to load from cache backend.
  */
 UFSRVResult *
-InterBroadcastSessionStatusRebooted (Session *sesn_ptr, ClientContextData *context_ptr, enum _SessionMessage__Status sesn_status, enum _CommandArgs command_arg)
+InterBroadcastSessionStatusRebooted(Session *sesn_ptr, ClientContextData *context_ptr, enum _SessionMessage__Status sesn_status, enum _CommandArgs command_arg)
 {
 	Session *sesn_ptr_rebooted 					=	(Session *)(context_ptr);	//could be the same reference as sesn_ptr
 
@@ -218,11 +216,11 @@ InterBroadcastSessionStatusRebooted (Session *sesn_ptr, ClientContextData *conte
  * 	@brief: TODO: TO BE PORTED TO PROTOBUF.
  */
 int
-HandleInterBroadcastForSession (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleInterBroadcastForSession(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int 										rescode __unused;
 
-	_HandleInterBroadcastSessionStatus (mqm_ptr, res_ptr);
+	_HandleInterBroadcastSessionStatus(mqm_ptr, res_ptr);
 
 	if (_RESULT_TYPE_SUCCESS(res_ptr))	goto return_success;
 
@@ -239,7 +237,7 @@ HandleInterBroadcastForSession (MessageQueueMessage *mqm_ptr, UFSRVResult *res_p
  * 	within this context muts be setup in Ephemeral mode with SessionLoadEphemeralMode(sesn_ptr);
  */
 static UFSRVResult *
-_HandleInterBroadcastSessionStatus (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
+_HandleInterBroadcastSessionStatus(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
 {
 	switch (mqm_ptr->session->status)
 	{
@@ -274,7 +272,7 @@ _HandleInterBroadcastSessionStatus (MessageQueueMessage *mqm_ptr, UFSRVResult *r
  * 	@brief: Session is connected remotely with other server instance
  */
 static UFSRVResult *
-_HandleInterBroadcastSessionConnected (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
+_HandleInterBroadcastSessionConnected(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
 {
 	Session *sesn_ptr_localuser = NULL;
 	InstanceHolderForSession *instance_sesn_ptr_localuser;
@@ -309,7 +307,7 @@ _HandleInterBroadcastSessionConnected (MessageQueueMessage *mqm_ptr, UFSRVResult
 }
 
 static UFSRVResult *
-_HandleInterBroadcastSessionSuspended (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
+_HandleInterBroadcastSessionSuspended(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
 {
 	Session *sesn_ptr_localuser = NULL;
   InstanceHolderForSession *instance_sesn_ptr_localuser;
@@ -346,7 +344,7 @@ _HandleInterBroadcastSessionSuspended (MessageQueueMessage *mqm_ptr, UFSRVResult
 }
 
 static UFSRVResult *
-_HandleInterBroadcastSessionQuit (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
+_HandleInterBroadcastSessionQuit(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
 {
 	Session *sesn_ptr_localuser = NULL;
   InstanceHolderForSession *instance_sesn_ptr_localuser;
@@ -385,7 +383,7 @@ _HandleInterBroadcastSessionQuit (MessageQueueMessage *mqm_ptr, UFSRVResult *res
  * 	@brief: Main processor for pref changes communicated over the msgbus. At the moment it only handle one pref.
  */
 static UFSRVResult *
-_HandleInterBroadcastSessionPreference (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
+_HandleInterBroadcastSessionPreference(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
 {
 	Session *sesn_ptr_localuser = NULL;
   InstanceHolderForSession *instance_sesn_ptr_localuser;
@@ -417,7 +415,7 @@ _HandleInterBroadcastSessionPreference (MessageQueueMessage *mqm_ptr, UFSRVResul
 
 		//this is temporary, the entire collection must be considered not just the first element collection
 		UfsrvEvent 				event = {0};
-		SetUserPreferenceByDescriptor (sesn_ptr_localuser, (UserPreferenceDescriptor *)collection_prefs_result.collection[0], &event);
+		SetUserPreferenceByDescriptor(sesn_ptr_localuser, (UserPreferenceDescriptor *)collection_prefs_result.collection[0], &event);
 
 		SESSION_WHEN_SERVICED(sesn_ptr_localuser) = time(NULL);
 		SessionUnLoadEphemeralMode(sesn_ptr_localuser);
@@ -440,7 +438,7 @@ _HandleInterBroadcastSessionPreference (MessageQueueMessage *mqm_ptr, UFSRVResul
  * 	@unlocks Session *; previously retrieved Session
  */
 static UFSRVResult *
-_HandleInterBroadcastSessionGeofenced (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
+_HandleInterBroadcastSessionGeofenced(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
 {
 	Session *sesn_ptr_localuser = NULL;
   InstanceHolderForSession *instance_sesn_ptr_localuser;
@@ -495,7 +493,7 @@ _HandleInterBroadcastSessionGeofenced (MessageQueueMessage *mqm_ptr, UFSRVResult
  * 	@unlocks Session *; previously retrieved Session
  */
 static UFSRVResult *
-_HandleInterBroadcastSessionRebooted (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
+_HandleInterBroadcastSessionRebooted(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
 {
 	Session *sesn_ptr_localuser = NULL;
   InstanceHolderForSession *instance_sesn_ptr_localuser;
@@ -542,7 +540,7 @@ _HandleInterBroadcastSessionRebooted (MessageQueueMessage *mqm_ptr, UFSRVResult 
       UserPreference *user_pref_ptr	=	sesn_msg_ptr->prefs[0]; //TODO: currently limited to one pref, should be looped
       if (IS_STR_LOADED(user_pref_ptr->values_str)) {
         UserPreferenceDescriptor 	pref		=	{0};
-        GetUserPreferenceNickname (sesn_ptr_localuser, PREF_NICKNAME, PREFSTORE_MEM, &pref);
+        GetUserPreferenceNickname(sesn_ptr_localuser, PREF_NICKNAME, PREFSTORE_MEM, &pref, _EMPTY_STR);
         pref.value.pref_value_str = user_pref_ptr->values_str;
         SetUserPreferenceNickname(sesn_ptr_localuser, &pref, PREFSTORE_MEM, NULL);
       }
@@ -581,7 +579,7 @@ static UFSRVResult *_HandleIntraCommandForSessionRebooted (InstanceHolderForSess
 
 //we may not implement this interface for INTRA Session commands, as the semantics are slightly different
 __unused inline static void
-_PrepareIntraBroadcastMessageForSession (BroadcastMessageEnvelopeForSession *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
+_PrepareIntraBroadcastMessageForSession(BroadcastMessageEnvelopeForSession *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
 {
 	envelope_ptr->msgqueue_msg->command_type					=	UFSRV_SESSION;	envelope_ptr->msgqueue_msg->has_command_type=1;
 	envelope_ptr->msgqueue_msg->broadcast_semantics		=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA; envelope_ptr->msgqueue_msg->has_broadcast_semantics	=1;
@@ -591,16 +589,13 @@ _PrepareIntraBroadcastMessageForSession (BroadcastMessageEnvelopeForSession *env
 
 	envelope_ptr->header->args												=	command_arg;
 
-	if (IS_PRESENT(event_ptr))
-	{
+	if (IS_PRESENT(event_ptr)) {
 		envelope_ptr->header->eid													=	event_ptr->eid; 					envelope_ptr->header->has_eid=1;
 		envelope_ptr->header->when												=	event_ptr->when; 					envelope_ptr->header->has_when=1;
-	}
-	else
-	{	envelope_ptr->header->when												=	GetTimeNowInMillis(); 	envelope_ptr->header->has_when=1;}
+	} else {	envelope_ptr->header->when												=	GetTimeNowInMillis(); 	envelope_ptr->header->has_when=1;}
 
 	envelope_ptr->header->cid													=	SESSION_ID(sesn_ptr); 		envelope_ptr->header->has_cid=1;
-	MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid = 1;
+  ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid = 1;
 
 }
 
@@ -609,7 +604,7 @@ _PrepareIntraBroadcastMessageForSession (BroadcastMessageEnvelopeForSession *env
  * 	drop some Session related commands for network-wide processing, such as invalidating sessions.
  */
 UFSRVResult *
-IntraBroadcastSessionStatusRebooted (Session *sesn_ptr, ClientContextData *context_ptr, enum _SessionMessage__Status sesn_status, enum _CommandArgs command_arg)
+IntraBroadcastSessionStatusRebooted(Session *sesn_ptr, ClientContextData *context_ptr, enum _SessionMessage__Status sesn_status, enum _CommandArgs command_arg)
 {
 	SessionMessage session_msg				= SESSION_MESSAGE__INIT;
 	CommandHeader		header						=	COMMAND_HEADER__INIT;
@@ -631,23 +626,24 @@ IntraBroadcastSessionStatusRebooted (Session *sesn_ptr, ClientContextData *conte
 }
 
 /**
- * 	@brief: Main interface function for handling INTRA broadcasts for Session related commands
- * 	@worker: UfsrvWorker
- * 	@locks sesn_ptr_localuser: by instantiation
- * 	@unlocks sesn_ptr:
+ * 	@brief Main interface for handling INTRA broadcasts for Session related commands
+ * 	@worker UfsrvWorker
+ * 	@locks sesn_ptr_localuser by instantiation
+ * 	@unlocks sesn_ptr
  */
 int
-HandleIntraBroadcastForSession (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleIntraBroadcastForSession(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
-	int									rc					= 0;
+	int									rc;
 	MessageCommand 			*msgcmd_ptr	= NULL;
 
 	long long timer_start						=	GetTimeNowInMicros();
 	long long timer_end;
+  WorkersConfigDescriptor *jobworkers_config = GetJobWorkersConfigurationDescriptor();
 
 	if ((rc = _VetrifySessionCommandForIntra(mqm_ptr->session)) < 0)	goto return_final;
 
-	InstanceHolderForSession				*instance_sesn_ptr_carrier			=	InstantiateCarrierSession (NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
+	InstanceHolderForSession				*instance_sesn_ptr_carrier			=	InstantiateCarrierSession(NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
 	if (IS_EMPTY(instance_sesn_ptr_carrier))	{
 	  rc = -4;
 	  goto return_final;
@@ -659,7 +655,7 @@ HandleIntraBroadcastForSession (MessageQueueMessage *mqm_ptr, UFSRVResult *res_p
 																					CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION);
 	Session *sesn_ptr_carrier = SessionOffInstanceHolder(instance_sesn_ptr_carrier);
 
-	GetSessionForThisUserByUserId (sesn_ptr_carrier, UfsrvUidGetSequenceId((const UfsrvUid *)mqm_ptr->session->header->ufsrvuid.data), &lock_already_owned, sesn_call_flags);
+	GetSessionForThisUserByUserId(sesn_ptr_carrier, UfsrvUidGetSequenceId((const UfsrvUid *)mqm_ptr->session->header->ufsrvuid.data), &lock_already_owned, sesn_call_flags);
 	InstanceHolderForSession *instance_sesn_ptr_local_user = (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr_carrier);
 	if (unlikely(IS_EMPTY(instance_sesn_ptr_local_user)))	goto return_error_unknown_uname;
 
@@ -669,16 +665,16 @@ HandleIntraBroadcastForSession (MessageQueueMessage *mqm_ptr, UFSRVResult *res_p
 
 	SESSION_WHEN_SERVICE_STARTED(sesn_ptr_local_user) = time(NULL);
 
-	UFSRVResult *res_ptr_temp = _HandleIntraBroadcastForSession (instance_sesn_ptr_local_user, mqm_ptr, res_ptr);
+	UFSRVResult *res_ptr_temp = _HandleIntraBroadcastForSession(instance_sesn_ptr_local_user, mqm_ptr, res_ptr);
 
-	//IMPORTANT: DONT REFERENCE sesn_ptr_local_user if function returned RESULT_CODE_SESN_INVALIDATED
+	//IMPORTANT: DON'T REFERENCE sesn_ptr_local_user if function returned RESCODE_SESN_INVALIDATED
 
 	if (_RESULT_TYPE_SUCCESS(res_ptr_temp))	rc = 0;
 	else																		rc = -5;
 
 	return_success:
 	SESSION_WHEN_SERVICED(sesn_ptr_local_user) = time(NULL);
-	if (!lock_already_owned && res_ptr_temp->result_code != RESULT_CODE_SESN_INVALIDATED)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_local_user, __func__);
+	if (!lock_already_owned && res_ptr_temp->result_code != RESCODE_SESN_INVALIDATED)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_local_user, __func__);
 
 	goto return_deallocate_carrier;
 
@@ -692,7 +688,7 @@ HandleIntraBroadcastForSession (MessageQueueMessage *mqm_ptr, UFSRVResult *res_p
 
 	return_final:
 	timer_end = GetTimeNowInMicros();
-	statsd_timing(pthread_getspecific(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.session.elapsed_time", (timer_end-timer_start));
+	statsd_timing(pthread_getspecific(jobworkers_config->ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.session.elapsed_time", (timer_end-timer_start));
 	return rc;
 
 }
@@ -707,11 +703,11 @@ HandleIntraBroadcastForSession (MessageQueueMessage *mqm_ptr, UFSRVResult *res_p
  * 	loaded from the cache backend and may not necessarily contain fresh cache db data such as nickname.
  *
  * 	@locked sesn_ptr: BY CALLER
- *	@unlocks sesn_ptr: (downstream when RESULT_CODE_SESN_INVALIDATED is returned successfully)
+ *	@unlocks sesn_ptr: (downstream when RESCODE_SESN_INVALIDATED is returned successfully)
  *	@worker: UfsrvWorker
  */
 static inline UFSRVResult *
-_HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
+_HandleIntraBroadcastForSession(InstanceHolderForSession *instance_sesn_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr)
 {
 	UFSRVResult *res_ptr_local = _ufsrv_result_generic_error;
 	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
@@ -721,9 +717,9 @@ _HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, Me
 	switch (mqm_ptr->session->status)
 	{
 	case SESSION_MESSAGE__STATUS__INVALIDTED:
-		res_ptr_local = InvalidateLocalSessionReferenceFromProto (instance_sesn_ptr, mqm_ptr, CALLFLAGS_EMPTY);
+		res_ptr_local = InvalidateLocalSessionReferenceFromProto(instance_sesn_ptr, mqm_ptr, CALLFLAGS_EMPTY);
 
-		if ((_RESULT_TYPE_SUCCESS(res_ptr_local)) && (_RESULT_CODE_EQUAL(res_ptr_local, RESULT_CODE_SESN_INVALIDATED))) {
+		if ((_RESULT_TYPE_SUCCESS(res_ptr_local)) && (_RESULT_CODE_EQUAL(res_ptr_local, RESCODE_SESN_INVALIDATED))) {
 			//>>>> sesn_ptr NOW UNLOCKED and returned to recycler-> DONT REFRENCE IT IN THE CALLER
 			*res_ptr = *res_ptr_local;
 			goto return_final;
@@ -733,11 +729,11 @@ _HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, Me
 		break;
 
 	case SESSION_MESSAGE__STATUS__REBOOTED:
-		_HandleIntraCommandForSessionRebooted (instance_sesn_ptr, mqm_ptr->session);
+		_HandleIntraCommandForSessionRebooted(instance_sesn_ptr, mqm_ptr->session);
 		break;
 
 	case SESSION_MESSAGE__STATUS__PREFERENCE:
-		HandleIntraCommandForSessionPreference (sesn_ptr, mqm_ptr->session);
+		HandleIntraCommandForSessionPreference(sesn_ptr, mqm_ptr->session);
 		break;
 
 	case  SESSION_MESSAGE__STATUS__HEARTBEAT:
@@ -748,7 +744,7 @@ _HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, Me
 	}
 
 	return_unload:
-	SessionUnLoadEphemeralMode (sesn_ptr);
+	SessionUnLoadEphemeralMode(sesn_ptr);
 
 	return_final:
 	return res_ptr;
@@ -763,7 +759,7 @@ _HandleIntraBroadcastForSession (InstanceHolderForSession *instance_sesn_ptr, Me
  * 	@locked sesn_ptr:
  */
 static UFSRVResult *
-_HandleIntraCommandForSessionRebooted (InstanceHolderForSession *instance_sesn_ptr, SessionMessage *sesn_msg_ptr)
+_HandleIntraCommandForSessionRebooted(InstanceHolderForSession *instance_sesn_ptr, SessionMessage *sesn_msg_ptr)
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
@@ -803,9 +799,9 @@ _HandleIntraCommandForSessionRebooted (InstanceHolderForSession *instance_sesn_p
 
 		ReloadCMToken(sesn_ptr, NULL);
 
-		TransferBasicSessionDbBackendData (sesn_ptr, &authenticated_account);
-		RefreshBackendCacheForSession (sesn_ptr, old_cookie, CALL_FLAG_DONT_BROADCAST_SESSION_EVENT);
-		InterBroadcastSessionStatusRebooted (sesn_ptr, sesn_ptr, SESSION_MESSAGE__STATUS__REBOOTED, 0);
+		TransferBasicSessionDbBackendData(sesn_ptr, &authenticated_account);
+		RefreshBackendCacheForSession(sesn_ptr, old_cookie, CALL_FLAG_DONT_BROADCAST_SESSION_EVENT);
+		InterBroadcastSessionStatusRebooted(sesn_ptr, sesn_ptr, SESSION_MESSAGE__STATUS__REBOOTED, 0);
 
 		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 	}
@@ -818,7 +814,7 @@ _HandleIntraCommandForSessionRebooted (InstanceHolderForSession *instance_sesn_p
  * 	@brief: Verify the fitness of the FenceCommand message in the context of on INTRA broadcast
  */
 inline static int
-_VetrifySessionCommandForIntra	(WireProtocolData *data_ptr)
+_VetrifySessionCommandForIntra(WireProtocolData *data_ptr)
 {
 	int rc = 0;
   SessionMessage *cmd_ptr = (SessionMessage *)data_ptr;

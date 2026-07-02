@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,7 +20,7 @@
 #endif
 
 #include <main.h>
-#include <ufsrv_core/instrumentation/instrumentation_backend.h>
+#include <instrumentation/instrumentation_backend.h>
 #include <nportredird.h>
 
 extern ufsrv *const masterptr;
@@ -46,7 +46,7 @@ InstrumentationBackendServerInit (const char *host, int port)
 
 	int error;
 	if ((error = getaddrinfo(host, NULL, &hints, &result))) {
-		syslog(LOG_ERR, "InstrumentationBackendServerInit COULD NOT invoke 'getaddrinfo' on BackendInstrumentation....");
+		syslog(LOG_ERR, "InstrumentationBackendServerInit (error: '%d'): COULD NOT invoke 'getaddrinfo' on BackendInstrumentation....", error);
 		return errno;
 	}
 
@@ -60,23 +60,31 @@ InstrumentationBackendServerInit (const char *host, int port)
 }
 
 InstrumentationBackend *
-InstrumentationBackendInit (const char *ns)
+InstrumentationBackendInit(const char *ns, InstrumentationBackend *instrum_backend_provided)
 {
-	InstrumentationBackend *temp=calloc(1, sizeof(InstrumentationBackend));
+  InstrumentationBackend *instrum_backend = NULL;
 
-	if ((temp->socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+  if (IS_PRESENT(instrum_backend_provided)) instrum_backend = instrum_backend_provided;
+	else instrum_backend = calloc(1, sizeof(InstrumentationBackend));
+
+	if ((instrum_backend->socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
 		syslog(LOG_ERR, "InstrumentationBackendInit COULD NOT create socket for BackendInstrumentation....");
 
+		if (IS_EMPTY(instrum_backend_provided)) free(instrum_backend);
 		return NULL;
 	}
 
+	//TODO consider connecting the UDP socket: A UDP socket in the connected state will only receive datagrams that originate from the given remote address. It is therefore feasible to use functions such as read or recv in place of recvfrom. Similarly the given remote address becomes the default for outgoing datagrams, therefore it is feasible to use write or send in place of sendto.
+  //if (connect(instrum_backend->socket, (struct sockaddr *) &masterptr->instrumentation_backend_server, sizeof(masterptr->instrumentation_backend_server)) == -1) {
+    //
+  //}
 	if (IS_STR_LOADED(ns)) {
-		strncpy(temp->name_space, ns, SBUF-1);
+		strncpy(instrum_backend->name_space, ns, SBUF-1);
 	} else {
-		snprintf(temp->name_space, SBUF-1, "%s-%d", masterptr->server_class, masterptr->serverid_by_user);
+		snprintf(instrum_backend->name_space, SBUF-1, "%s-%d", masterptr->server_class, masterptr->serverid_by_user);
 	}
 
-	return temp;
+	return instrum_backend;
 
 }
 
@@ -94,7 +102,7 @@ InstrumentationBackendReset(InstrumentationBackend *link)
 static int should_send(float sample_rate)
 {
   if (sample_rate < 1.0) {
-      float p = ((float)random() / RAND_MAX);
+      float p = ((float)random() / (float)RAND_MAX);
       return sample_rate > p;
   } else {
       return 1;
@@ -145,6 +153,7 @@ statsd_send(InstrumentationBackend *link, const char *message)
 {
   int slen = sizeof(masterptr->instrumentation_backend_server);
 
+  //TODO consider connecting the socket. See comment above about connection UDP sockets
   if (sendto(link->socket, message, strlen(message), 0, (struct sockaddr *) &masterptr->instrumentation_backend_server, slen) == -1) {
     perror("sendto");
     return -1;
