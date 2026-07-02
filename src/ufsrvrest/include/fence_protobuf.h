@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,9 +18,9 @@
 #ifndef UFSRVREST_FENCE_PROTOBUF_H
 #define UFSRVREST_FENCE_PROTOBUF_H
 
-#include <main_types.h>
+#include <uflib/main_types.h>
 #include <session_type.h>
 
-BufferDescriptor *MakeFencesNearByInProtoPacked (Session *sesn_ptr_carrier, float longitude, float latitude, size_t setsize_requested, BufferDescriptor *buffer_descriptor_ptr_out);
+BufferDescriptor *ProvideFencesNearByInProtoPacked (Session *sesn_ptr_carrier, float longitude, float latitude, size_t setsize_requested, BufferDescriptor *buffer_descriptor_ptr_out);
 
 #endif //UFSRV_FENCE_PROTOBUF_H

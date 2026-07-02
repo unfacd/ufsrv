@@ -105,6 +105,4 @@ set_target_properties(curve25519 PROPERTIES OUTPUT_NAME "curve25519")
 target_include_directories(curve25519 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Add -fPIC flag
-if(BUILD_SHARED_LIBS)
-    set_property(TARGET curve25519 PROPERTY POSITION_INDEPENDENT_CODE ON)
-endif()
+set_property(TARGET curve25519 PROPERTY POSITION_INDEPENDENT_CODE ON)
