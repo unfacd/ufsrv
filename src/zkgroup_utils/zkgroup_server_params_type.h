@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,20 +18,21 @@
 #ifndef UFSRV_ZKGROUP_SERVER_PARAMS_TYPE_H
 #define UFSRV_ZKGROUP_SERVER_PARAMS_TYPE_H
 
-#include <standard_c_includes.h>
+#include <uflib/standard_c_includes.h>
+#include <signal_ffi.h>
 
-#define SERVER_SECRET_PARAM_SIZE  SERVER_SECRET_PARAMS_LEN//769
-#define SERVER_PUB_PARAM_SIZE     SERVER_PUBLIC_PARAMS_LEN
+#define SERVER_SECRET_PARAMS_SIZE  SignalSERVER_SECRET_PARAMS_LEN //1537
+#define SERVER_PUBLIC_PARAMS_SIZE  SignalSERVER_PUBLIC_PARAMS_LEN //289
 
 typedef struct ZKGroupServerParams {
   struct {
-    uint8_t raw[SERVER_SECRET_PARAM_SIZE];
-    uint8_t encoded[((SERVER_SECRET_PARAM_SIZE + 2) / 3) * 5];
+    uint8_t raw[SERVER_SECRET_PARAMS_SIZE];
+    uint8_t encoded[((SERVER_SECRET_PARAMS_SIZE + 2) / 3) * 5];
   } secret_param;
 
   struct {
-    uint8_t raw[SERVER_PUB_PARAM_SIZE];
-    uint8_t encoded[((SERVER_PUB_PARAM_SIZE + 2) / 3) * 5];
+    uint8_t raw[SERVER_PUBLIC_PARAMS_SIZE];
+    uint8_t encoded[((SERVER_PUBLIC_PARAMS_SIZE + 2) / 3) * 5];
   } public_param;
 
 } ZKGroupServerParams;

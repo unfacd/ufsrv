@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,7 +18,7 @@
 #ifndef UFSRVCMD_USER_CALLBACKS_H
 # define UFSRVCMD_USER_CALLBACKS_H
 
-#include <recycler/instance_type.h>
+#include <uflib/recycler/instance_type.h>
 #include <session_type.h>
 #include <json/json.h>
 #include <ufsrvwebsock/include/WebSocketMessage.pb-c.h>

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -19,7 +19,7 @@
 #define SRC_INCLUDE_PROTOCOL_WEBSOCKET_IO_H_
 
 #include <ufsrvresult_type.h>
-#include <recycler/instance_type.h>
+#include <uflib/recycler/instance_type.h>
 #include <transmission_message_type.h>
 
 int ReadFromSocketRaw (Session *sesnptr, SocketMessage *);

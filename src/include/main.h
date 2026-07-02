@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -24,7 +24,7 @@ MODULEID("$Id: main.h,v 1.1 1999/07/26 01:46:59 ayman Exp $")
 #ifndef MAIN_H
 # define MAIN_H
 
-#include <standard_c_includes.h>
+#include <uflib/standard_c_includes.h>
 
 #if __VALGRIND_DRD
 # include <valgrind/valgrind.h>
@@ -35,15 +35,15 @@ MODULEID("$Id: main.h,v 1.1 1999/07/26 01:46:59 ayman Exp $")
 
 #include <systemd/sd-daemon.h>
 
-#include <standard_net_includes.h>
+#include <uflib/standard_net_includes.h>
 
-#include <standard_ssl_includes.h>
+#include <uflib/standard_ssl_includes.h>
 
 #include <curl/curl.h>
 
 #include <log_message_literals.h>
-#include <utils.h>
-#include <main_types.h>
+#include <uflib/utils.h>
+#include <uflib/main_types.h>
 
  #define xmalloc(x, y) \
          (x)=malloc ((y)); \
@@ -71,7 +71,7 @@ MODULEID("$Id: main.h,v 1.1 1999/07/26 01:46:59 ayman Exp $")
 #define say(x...) printf(x)
 #define arethesame(x, y) (!strcasecmp((x), (y)))
 #define mstrncpy(s, p, n) \
-   strncpy (s, p, strlen(p)>n-1?n:strlen(p)+1); \
+   strncpy (s, p, strlen(p) > n - 1? n : strlen(p) + 1); \
    s[n-1]='\0'
 
 #define LUA_CTX masterptr->lua_ptr
