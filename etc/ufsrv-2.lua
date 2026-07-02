@@ -9,6 +9,10 @@ command_console_bind_address="127.0.0.1"
 ufsrvmsgqueue_bind_address="ufsrvmsgqueue.unfacd.com"
 ufsrvmsgqueue_port=6380
 
+ufsrv_sys_runtime = {
+    run_as_user = "ufsrv",
+    chroot = "/"
+}
 
 ufsrv_user_timeouts={
 											unauthenticated_timeout=60, 

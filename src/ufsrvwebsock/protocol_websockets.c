@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2024 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -21,26 +21,29 @@
 
 #include <main.h>
 #include <misc.h>
-#include <recycler/recycler.h>
-#include <ufsrv_core/protocol/protocol.h>
-#include <ufsrv_core/protocol/protocol_io.h>
+#include <uflib/recycler/recycler.h>
+#include <ufsrvmsg_core/protocol/protocol.h>
+#include <ufsrvmsg_core/protocol/protocol_io.h>
 #include <ufsrvwebsock/include/protocol_websocket.h>
 #include <ufsrvwebsock/include/protocol_websocket_io.h>
 #include <ufsrvwebsock/include/protocol_websocket_routines.h>
-#include <fence.h>
-#include <ufsrv_core/location/location.h>
-#include <ufsrv_core/user/users.h>
+#include <ufsrvmsg_core/fence/fence.h>
+#include <ufsrvmsg_core/location/location.h>
+#include <ufsrvmsg_core/user/users.h>
 #include <net.h>
 #include <ufsrvcmd_parser.h>
 #include <ufsrvcmd_data.h>//array of indexed callbacks
 #include <ufsrvcmd_user_data.h>//array of ufsrvcmd for users indexed callbacks
 #include <sessions_delegator_type.h>
-#include <ufsrv_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
-#include <ufsrv_core/user/user_backend.h>
+#include <ufsrvmsg_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
+#include "ufsrv_core/include/delegator_session_worker_thread.h"
+#include <ufsrvmsg_core/user/user_backend.h>
 #include <http_request.h>
 #include <message.h>
-#include <ufsrv_core/fence/fence_state.h>
-#include <ufsrvuid.h>
+#include <ufsrvmsg_core/fence/fence_state.h>
+#include <uflib/ufsrvuid.h>
+#include <gpc_utils.h>
+#include "staged_message_descriptor_type.h"
 
 //ype and array data defined in ufsrvcmd_data.h
 const UfsrvCommand *const ufsrvcmd_server_bound_callbacks_ptr = ufsrvmd_server_bound_callbacks_array;//service commands originating client -> server
@@ -54,17 +57,19 @@ extern SessionsDelegator *const sessions_delegator_ptr;
 extern __thread ThreadContext ufsrv_thread_context;
 extern ufsrv *const masterptr;
 
-static UFSRVResult *_ParseUfsrvCommandMessage (InstanceContextForSession *, SocketMessage *sock_msg_ptr, unsigned frame_offset, size_t len) __attribute__((always_inline));
-static UFSRVResult *_UfsrvCommandInvokeCommandCallback (InstanceContextForSession *, WebSocketMessage *wsm_ptr, size_t cmdidx) __attribute__((always_inline));
-static UFSRVResult *_DecodeAndParseWebSocketWireMessage (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr, const UfsrvCommand *ufsrv_cmd_ptr, json_object *jobj_msg);
+static UFSRVResult *_ParseUfsrvCommandMessage(InstanceContextForSession *, SocketMessage *sock_msg_ptr, unsigned frame_offset, size_t len) __attribute__((always_inline));
+static UFSRVResult *_UfsrvCommandInvokeCommandCallback(InstanceContextForSession *, WebSocketMessage *wsm_ptr, size_t cmdidx) __attribute__((always_inline));
+static UFSRVResult *_DecodeAndParseWebSocketWireMessage(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr, const UfsrvCommand *ufsrv_cmd_ptr, json_object *jobj_msg);
 
 /**
  *  relay to a processing callback. replaces MarshalServiceCommandToClient() below
- *
+ *  @param payload for majority of commands this is a structure describing to how to size, pack and marshal the payload message to be sent back in accordance with agreed data representation (with the client).
+ *                 Most command will use UfsrvCommandMarshallingDescriptor and message will be formatted in protocol buffer
+ *  @param jobj_in Optionally, the caller can pass in, typically loaded json object, which will be unpacked and sent as string in the response. A jobj object is always passed in regardless, for convenience.
  *
  */
 UFSRVResult *
-UfsrvCommandInvokeUserCommand (InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_target, WebSocketMessage *wsm_ptr_received, struct json_object *jobj_in, WireProtocolData *payload, unsigned req_cmd_idx)
+UfsrvCommandInvokeUserCommand(InstanceContextForSession *ctx_ptr, InstanceContextForSession *ctx_ptr_target, WebSocketMessage *wsm_ptr_received, struct json_object *jobj_in, WireProtocolData *payload, unsigned req_cmd_idx)
 {
 	if (req_cmd_idx <= ufsrvcmd_user_maxidx) {
 #ifdef __UF_TESTING
@@ -83,7 +88,7 @@ UfsrvCommandInvokeUserCommand (InstanceContextForSession *ctx_ptr, InstanceConte
 
       UFSRVResult *r_ptr = (*p->callback)(ctx_ptr, ctx_ptr_target, wsm_ptr_received, jobj, payload);
 
-      if (IS_EMPTY(jobj)) json_object_put(jobj);
+      if (!IS_EMPTY(jobj)) json_object_put(jobj);
 
       return r_ptr;
     } else {
@@ -121,7 +126,7 @@ UfsrvCommandInvokeUserCommand (InstanceContextForSession *ctx_ptr, InstanceConte
  *  @unlocks sesn_ptr_target: unless CALL_FLAG_DONT_LOCK_SESSION
  */
 int
-UfsrvCommandMarshalTransmission (InstanceContextForSession *ctx_ptr_this, InstanceContextForSession *ctx_ptr_target, TransmissionMessage *tmsg_ptr, unsigned long call_flags)
+UfsrvCommandMarshalTransmission(InstanceContextForSession *ctx_ptr_this, InstanceContextForSession *ctx_ptr_target, TransmissionMessage *tmsg_ptr, unsigned long call_flags)
 {
   bool 										lock_already_owned	= false;
   HttpRequestContext 			*http_ptr		=	NULL;
@@ -151,7 +156,7 @@ UfsrvCommandMarshalTransmission (InstanceContextForSession *ctx_ptr_this, Instan
     http_ptr = GetHttpRequestContextUfsrvWorker(ctx_ptr_this->sesn_ptr);
     if (IS_PRESENT(ctx_ptr_target))		SessionLoadEphemeralMode(ctx_ptr_target->sesn_ptr);
   } else {
-    if (IS_PRESENT(ctx_ptr_target))	SessionTransferAccessContext (ctx_ptr_this->sesn_ptr, ctx_ptr_target->sesn_ptr, 0);
+    if (IS_PRESENT(ctx_ptr_target))	SessionTransferAccessContext(ctx_ptr_this->sesn_ptr, ctx_ptr_target->sesn_ptr, 0);
     http_ptr = GetHttpRequestContext(ctx_ptr_this->sesn_ptr);
   }
 
@@ -173,23 +178,24 @@ UfsrvCommandMarshalTransmission (InstanceContextForSession *ctx_ptr_this, Instan
   memcpy(msg_packed_copy, tmsg_ptr->msg_packed,  msg_packed_copy_sz);
 
   if ((tmsg_ptr->eid > 0) && _PROTOCOL_CTL_CLOUDMSG_ON_IOERROR(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr)))))
-    StoreStagedMessageCacheRecordForUser(sesn_ptr, tmsg_ptr, IS_PRESENT(ctx_ptr_target)?SESSION_USERID(ctx_ptr_target->sesn_ptr):SESSION_USERID(sesn_ptr));
+    StoreStagedMessageCacheRecordForUser(sesn_ptr, tmsg_ptr, IS_PRESENT(ctx_ptr_target)? SESSION_USERID(ctx_ptr_target->sesn_ptr) : SESSION_USERID(sesn_ptr));
 
-  if	((SESSION_SOCKETFD(sesn_ptr) <= 0) || (SendToSocket(InstanceHolderFromClientContext(sesn_ptr), tmsg_ptr, 0) < 0)) { //0 means partial writeso it is not error
+  if	((SESSION_SOCKETFD(sesn_ptr) <= 0) || (SendToSocket(InstanceHolderFromClientContext(sesn_ptr), tmsg_ptr, 0) < 0)) { //0 means partial write, so it is not error
     if ((tmsg_ptr->eid > 0) && _PROTOCOL_CTL_CLOUDMSG_ON_IOERROR(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr)))))
-      UfsrvCommandMarshalCloudMessagingNotification(sesn_ptr, http_ptr, NULL); //TODO: enable GCM: temporarily disable to aid with valgrind
+      UfsrvCommandMarshalCloudMessagingNotification(sesn_ptr, http_ptr, NULL);
 
     rescode = -1;
     goto return_restore;
-  } else {
-    if ((tmsg_ptr->eid > 0) && _PROTOCOL_CTL_CLOUDMSG_ON_IOERROR(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr)))))
-      DeleteStagedMessageCacheRecordForUser(sesn_ptr, tmsg_ptr, IS_PRESENT(ctx_ptr_target)?SESSION_USERID(ctx_ptr_target->sesn_ptr):SESSION_USERID(sesn_ptr));
+  } else {//successful delivery, so remove staged message
+    if ((tmsg_ptr->eid > 0) && _PROTOCOL_CTL_CLOUDMSG_ON_IOERROR(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))))) {
+      DeleteStagedMessageCacheRecordForUser(sesn_ptr, &(StagedMessageDescriptor){.gid=tmsg_ptr->gid, .fid=tmsg_ptr->fid, .userid=IS_PRESENT(ctx_ptr_target)? SESSION_USERID(ctx_ptr_target->sesn_ptr) : SESSION_USERID(sesn_ptr)});
+    }
   }
 
   return_restore:
   if (IS_PRESENT(ctx_ptr_target)) {
     if (SESNSTATUS_IS_SET(ctx_ptr_this->sesn_ptr->stat, SESNSTATUS_EPHEMERAL))	SessionUnLoadEphemeralMode(ctx_ptr_target->sesn_ptr);
-    if (!(call_flags&CALL_FLAG_DONT_LOCK_SESSION))	if (!lock_already_owned)	SessionUnLockCtx (THREAD_CONTEXT_PTR, ctx_ptr_target->sesn_ptr, __func__);
+    if (!(call_flags&CALL_FLAG_DONT_LOCK_SESSION))	if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, ctx_ptr_target->sesn_ptr, __func__);
   }
 
   return  rescode;
@@ -197,7 +203,7 @@ UfsrvCommandMarshalTransmission (InstanceContextForSession *ctx_ptr_this, Instan
 }
 
 void
-ResetWebSocketProtocolSession (WebSocketSession *ws_ptr, bool is_self_destruct)
+ResetWebSocketProtocolSession(WebSocketSession *ws_ptr, bool is_self_destruct)
 {
   if (IS_PRESENT(ws_ptr)) {
     if (IS_PRESENT(ws_ptr->protocol_header.key1)) {
@@ -214,13 +220,15 @@ ResetWebSocketProtocolSession (WebSocketSession *ws_ptr, bool is_self_destruct)
 /**
  * 	@brief: Relies on the presence of the "dry_run":true param to test if the token is valid without actually contacting the end user.
  * 	Defaults to false. Useful for checking if the app was uninstalled, hence we'd be in a position suspend user's account.
+ * 	@note see https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages/send
  */
 bool
-IsUserCloudRegistered (Session *sesn_ptr, HttpRequestContext *http_ptr)
+IsUserCloudRegistered(Session *sesn_ptr, HttpRequestContext *http_ptr)
 {
-#define GCM_DRYRUN_REQUEST_JSON	"{\"to\":\"%s\", \"dry_run\":true, \"data\": { \"notification\":\"yes\"} }"
+#define GCM_DRYRUN_REQUEST_JSON_ORIG	"{\"to\":\"%s\", \"dry_run\":true, \"data\": { \"notification\":\"yes\"} }"
+#define GCM_DRYRUN_REQUEST_JSON "{\"validate_only\": boolean, \"message\":{ \"token\":\"%s\", \"data\": { \"notification\":\"yes\"}} }"
 	int 	rescode				=	RESCODE_PROG_NULL_POINTER;
-	char 	json_payload[sizeof(GCM_DRYRUN_REQUEST_JSON)+CONFIG_CM_TOKEN_SZ_MAX]	= {0};
+	char 	json_payload[sizeof(GCM_DRYRUN_REQUEST_JSON) + CONFIG_CM_TOKEN_SZ_MAX]	= {0};
 	char 	*gcm_id				=	NULL;
 
 	if (!IS_STR_LOADED(SESSION_CMTOKEN(sesn_ptr))) {
@@ -229,11 +237,12 @@ IsUserCloudRegistered (Session *sesn_ptr, HttpRequestContext *http_ptr)
 	  if (IS_EMPTY(SESSION_CMTOKEN(sesn_ptr)))  goto return_db_error;
 	}
 
-	gcm_id=SESSION_CMTOKEN(sesn_ptr);
+	gcm_id = SESSION_CMTOKEN(sesn_ptr);
 	snprintf(json_payload, (sizeof(GCM_DRYRUN_REQUEST_JSON)+CONFIG_CM_TOKEN_SZ_MAX)-1, GCM_DRYRUN_REQUEST_JSON, gcm_id);
 
 
-	int result = HttpRequestGoogleGcm(http_ptr, APIURL_GOOGLE_GCM, json_payload);
+//	int result = HttpRequestGoogleGcm(http_ptr, APIURL_GOOGLE_GCM, json_payload);
+  int result = HttpRequestGoogleFcm(http_ptr, json_payload);
 
 	if (result == 0)	goto return_gcm_error;
 
@@ -252,16 +261,98 @@ IsUserCloudRegistered (Session *sesn_ptr, HttpRequestContext *http_ptr)
 }
 
 /**
+ * @brief Request a push challenge. A number will be pushed to the GCM (FCM) id. This can then be used during SMS/call requests to bypass the CAPTCHA.
+ * "/ v1/ accounts/ fcm/ preauth/<gcmid>/<rego id email>%s"
+ *
+ * client input
+ * gcm_registration(fcm token) id
+ * uf registration id (email)
+ * type fcm (challenge)
+ * server amend:
+ * verification code (random[16]).Hex Condensed (store in pending account)
+ * GcmMessage(String gcmId(fcm_token), @Nullable UUID uuid(NULL), int deviceId(0), Type type(GcmMessage.Type.CHALLENGE), Optional<String> data)(stored verification code))
+ *
+ * public class GcmRequestEntity {
+
+  @JsonProperty(value = "collapse_key")
+  private String collapseKey;
+
+  @JsonProperty(value = "time_to_live")
+  private Long ttl;
+
+  @JsonProperty(value = "delay_while_idle")
+  private Boolean delayWhileIdle;
+
+  @JsonProperty(value = "data")
+  private Map<String, String> data; <-- {type:CHALNEG:"1", "stored pending account value"}
+
+  @JsonProperty(value = "registration_ids")
+  private List<String> registrationIds; <-- fcm_token
+
+  @JsonProperty
+  private String priority; <-- "high"
+
+ * GET
+ * responds 200 OK
+ */
+UFSRVResult *
+UfsrvCommandMarshalCloudMessagingChallenge(HttpRequestContext *http_ptr, const char *gcm_id, const char *challenge)
+{
+#define GCM_REQUEST_JSON_ORIG	"{\"priority\":\"high\", \"registration_ids\":[\"%s\"], \"data\": { \"1\":\"%s\"}}"
+#define GCM_REQUEST_JSON	"{ \"priority\":\"HIGH\", \"message\":{ \"token\":\"%s\", \"data\": { \"1\":\"%s\"}} }"
+  int 	rescode				=	RESCODE_PROG_NULL_POINTER;
+  char 	json_payload[sizeof(GCM_REQUEST_JSON) + CONFIG_CM_TOKEN_SZ_MAX]	= {0};
+
+  snprintf(json_payload, (sizeof(GCM_REQUEST_JSON) + CONFIG_CM_TOKEN_SZ_MAX) - 1, GCM_REQUEST_JSON, gcm_id, challenge);
+
+#if 0
+  asprintf(&json_payload, "{\"to\":\"%s\", "
+					 	 	 	 	 	 	 	 	 //"\"notification\": {\"body\":\"body_hello\", \"title\":\"title_hello\"} }",  gcm_id);
+					 	 	 	 	 	 	 	 "\"data\": { \"notification\":\"yes\"} }",  gcm_id);//
+#endif
+  //HttpRequestContext *http_ptr=GetHttpRequestContextUfsrvWorker(sesn_ptr);
+
+//  int result = HttpRequestGoogleGcm(http_ptr, APIURL_GOOGLE_GCM, json_payload);
+  int result = HttpRequestGoogleFcm(http_ptr, json_payload);
+
+  if (result == 0)	goto return_gcm_error;
+
+  return_success:
+  THREAD_CONTEXT_RETURN_RESULT_SUCCESS(NULL, rescode)
+
+  return_gcm_error:
+  syslog(LOG_ERR, "%s (pid:'%lu'): ERROR: COULD NOT POST json_payload '%s'. gcm_id:'%s'", __func__, pthread_self(), json_payload, gcm_id);
+//  statsd_inc(sesn_ptr->instrumentation_backend, "gcm.delivery.failed", 1.0);
+  goto return_error;
+
+#if 0
+  //curl --header "Authorization: key=xxx" --header "Content-Type:application/json" https://android.googleapis.com/gcm/send -d "{\"registration_ids\":[\"APA91bFaBGQMQQ8XzNlo1Zw86e8e8IpbiJF1xXbFlcQul2TtcTg9oymXImN3FBhpuocYGeFILssTxh6paB8WwEfZdi1kLmqepfguB7yXnUTMc2bdw5Tq2IWR71stpmtcpFtvyNp9tGBY\"] \"message\":\"hellow\"}"
+//curl --header "Authorization: key=xxx
+//" --header "Content-Type:application/json" https://android.googleapis.com/gcm/se
+//nd -d "{\"registration_ids\":[\"APA91bFaBGQMQQ8XzNlo1Zw86e8e8IpbiJF1xXbFlcQul2Tt
+//cTg9oymXImN3FBhpuocYGeFILssTxh6paB8WwEfZdi1kLmqepfguB7yXnUTMc2bdw5Tq2IWR71stpmtc
+//pFtvyNp9tGBY\"] \"message\":\"hellow\"}" --insecure
+
+		//response
+		//{"multicast_id":6126472261424557086,"success":1,"failure":0,"canonical_ids":1,"results":[{"registration_id":"APA91bEW6clA02RI2S_4caipD1k-SotCMjCbdrwrHWeNcxAPBG7Pra3ermvKN-gn9bi_rY4l6iTEZ3gPqYZyaW5V_hpZKv9JOn1IoPo5aHTobzaAb1lJHpST0PT3Y0Dx-iTnV3eFKKWm","message_id":"0:1478614820005773%3af43603f9fd7ecd"}]}
+#endif
+
+  return_error:
+  THREAD_CONTEXT_RETURN_RESULT_ERROR(NULL, rescode)
+
+#undef GCM_REQUEST_JSON
+}
+
+/**
  * @param sesn_ptr: must be Session owner with full backend access context
  */
 UFSRVResult *
-UfsrvCommandMarshalCloudMessagingNotification (Session *sesn_ptr, HttpRequestContext *http_ptr, WireProtocolData *data)
+UfsrvCommandMarshalCloudMessagingNotification(Session *sesn_ptr, HttpRequestContext *http_ptr, WireProtocolData *data)
 {
-	if (IS_EMPTY(sesn_ptr))	goto return_generic_error;
-
-	#define GCM_REQUEST_JSON	"{\"to\":\"%s\", \"data\": { \"notification\":\"yes\"} }"
+//#define GCM_REQUEST_JSON_ORIG	"{\"to\":\"%s\", \"data\": { \"notification\":\"yes\"} }"
+#define GCM_REQUEST_JSON	"{ \"message\":{ \"token\":\"%s\", \"data\": { \"notification\":\"yes\"}} }"
 	int 	rescode				=	RESCODE_PROG_NULL_POINTER;
-	char 	json_payload[sizeof(GCM_REQUEST_JSON)+CONFIG_CM_TOKEN_SZ_MAX]	= {0};
+	char 	json_payload[sizeof(GCM_REQUEST_JSON) + CONFIG_CM_TOKEN_SZ_MAX]	= {0};
 	char 	*gcm_id				=	NULL;
 
   if (IS_EMPTY(SESSION_CMTOKEN(sesn_ptr))) {
@@ -270,7 +361,7 @@ UfsrvCommandMarshalCloudMessagingNotification (Session *sesn_ptr, HttpRequestCon
     if (IS_EMPTY(SESSION_CMTOKEN(sesn_ptr)))  goto return_db_error;
   }
 
-	gcm_id=SESSION_CMTOKEN(sesn_ptr);
+	gcm_id = SESSION_CMTOKEN(sesn_ptr);
 	snprintf(json_payload, (sizeof(GCM_REQUEST_JSON) + CONFIG_CM_TOKEN_SZ_MAX) - 1, GCM_REQUEST_JSON, gcm_id);
 
 #if 0
@@ -280,7 +371,8 @@ UfsrvCommandMarshalCloudMessagingNotification (Session *sesn_ptr, HttpRequestCon
 #endif
 	//HttpRequestContext *http_ptr=GetHttpRequestContextUfsrvWorker(sesn_ptr);
 
-	int result = HttpRequestGoogleGcm(http_ptr, APIURL_GOOGLE_GCM, json_payload);
+//	int result = HttpRequestGoogleGcm(http_ptr, APIURL_GOOGLE_GCM, json_payload);
+  int result = HttpRequestGoogleFcm(http_ptr, json_payload);
 
 	if (result == 0)	goto return_gcm_error;
 
@@ -314,13 +406,220 @@ UfsrvCommandMarshalCloudMessagingNotification (Session *sesn_ptr, HttpRequestCon
 	return _ufsrv_result_generic_error;
 }
 
-UFSRVResult *
-proto_websocket_protocol_init_callback (Protocol *proto_ptr)
-{
-	syslog (LOG_INFO, "%s: Initialising WebSocket Protocol...", __func__);
+#include <jobworkers/ufsrvworker_pool_descriptor_type.h>
+#include <ufsrv_core/jobworkers/jobworkers_utils.h>
+#include <jobworkers/base_thread_context_data_type.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvmsgqueue.h>
+#include <ufsrv_core/cache_backend/persistance.h>
 
-	InitUFSRV();
-	CreateSessionsDelegatorThread ();
+static UFSRVResult *
+_UfsrvWorkerPoolOneoffInitialiser(WorkerPoolDescriptor *pool_descriptor)
+{
+  return DefaultUfsrvWorkerPoolOneoffInitialiser(pool_descriptor);
+}
+
+/**
+ * @brief static type provider for ufsrv worker pool. One per server instance.
+ */
+static WorkerPoolDescriptor *const
+_GetUfsrvWorkerPoolDescriptor(oneoff_initialiser on_created) {
+  static WorkerPoolDescriptor ufsrvworker_pool;
+
+  ufsrvworker_pool.on_created = on_created;
+
+  return &ufsrvworker_pool;
+}
+
+/**
+ * @brief Callback initialiser for a UfsrvWorker thread, applicable to ufsrvwebsock and ufsrvapi class servers.
+ * @param thread_base_ctx_data pre-allocated context
+ */
+static UFSRVResult *
+_UfsrvWorkerThreadDataContextInitialiser(BaseThreadContext *thread_base_ctx_data)
+{
+  ThreadContext *ufsrv_thread_context_ptr = thread_base_ctx_data->user_thread_context;
+  WorkersConfigDescriptor *config_descriptor = &(thread_base_ctx_data->pool_descriptor->workers_pool_config_descriptor);
+
+  //todo: this is the old pthread_key based implementation. Delete one the thread_local implementation is finalised.
+  pthread_key_create(&(config_descriptor->ufsrv_thread_context_key), NULL);
+  pthread_setspecific(config_descriptor->ufsrv_thread_context_key, (void *)&ufsrv_thread_context);
+
+  HopscotchHashtableConfigurable  *locked_objects_store = &(thread_base_ctx_data->locked_objects_store);
+  hopscotch_init_with_offset(&(locked_objects_store->hashtable), CONFIG_THREAD_LOCKED_OBJECTS_STORE_PFACTOR);
+  locked_objects_store->keylen = 0;
+  locked_objects_store->keylen = 64;
+  locked_objects_store->hash_func = (uint64_t (*)(uint8_t *, size_t))inthash_u64;
+
+  ufsrv_thread_context_ptr->ht_ptr = locked_objects_store;
+  ufsrv_thread_context.ht_ptr = locked_objects_store;//TBD
+
+  InitUfsrvScheduledJobsStore(&thread_base_ctx_data->scheduled_jobs_store, 0, NULL);
+
+  ufsrv_thread_context_ptr->res_ptr = &(thread_base_ctx_data->ufsrv_result);
+  ufsrv_thread_context.res_ptr = &(thread_base_ctx_data->ufsrv_result);//TBD
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  if (IS_PRESENT(InitialiseHttpRequestContext(&(thread_base_ctx_data->http_request_context), 0))) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->ufsrv_http_request_context_key, (void *)&(thread_base_ctx_data->http_request_context));
+
+    ufsrv_thread_context_ptr->http_request_context = &(thread_base_ctx_data->http_request_context);;
+    ufsrv_thread_context.http_request_context = &(thread_base_ctx_data->http_request_context);//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE HttpRequestContext for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+    _exit(-1);
+  }
+
+  syslog(LOG_DEBUG, "%s: SUCCESS (http_ptr:'%p'): Initialised HttpRequestContext for Ufsrv Worker thread: '%lu'...", __func__, &(thread_base_ctx_data->http_request_context), pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  InstrumentationBackend *instr_ptr = InstrumentationBackendInit(NULL, NULL);//no namespace
+  if (instr_ptr) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->ufsrv_instrumentation_backend_key, (void *)instr_ptr);
+
+    ufsrv_thread_context_ptr->instrumentation_backend = instr_ptr;
+    ufsrv_thread_context.instrumentation_backend = instr_ptr;//TBD
+  } else {
+    syslog(LOG_NOTICE, "%s: ERROR: COULD NOT INITIALISE INSTRUMENTATION for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+  }
+
+  syslog(LOG_INFO, "%s: SUCCESS (instr_ptr:'%p'): Initialised Instrumentation Backend for Ufsrv Worker thread: '%lu' (NOT IMPLEMENTED)...", __func__, instr_ptr, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  struct _h_connection *db_ptr = InitialiseDbBackend();
+  if (db_ptr) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->ufsrv_db_backend_key, (void *)db_ptr);//TODO: move key to delegator structure
+
+    ufsrv_thread_context_ptr->db_backend = db_ptr;
+    ufsrv_thread_context.db_backend = db_ptr;//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE DB Backend access for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+    _exit(-1);
+  }
+
+  syslog(LOG_INFO, "%s: SUCCESS: Initialised DB Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  PersistanceBackend *per_ptr = InitialisePersistanceBackend(NULL);
+  if (per_ptr) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->worker_persistance_key, (void *)per_ptr);
+
+    ufsrv_thread_context_ptr->persistance_backend = per_ptr;
+    ufsrv_thread_context.persistance_backend = per_ptr;//TBD
+  } else {
+    syslog(LOG_ERR, "ThreadUFServerWorker: ERROR: COULD NOT INITIALISE Session Cache Backend for Ufsrv Worker thread: '%lu'...", pthread_self());
+    exit(-1);
+  }
+
+  syslog(LOG_INFO, "%s: SUCCESS: Initialised Session Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  UserMessageCacheBackend *per_ptr_usrmsg = InitialiseCacheBackendUserMessage(NULL);
+  if (per_ptr_usrmsg) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->worker_usrmsg_cachebackend_key, (void *)per_ptr_usrmsg);
+
+    ufsrv_thread_context_ptr->usrmsg_cachebackend = per_ptr_usrmsg;
+    ufsrv_thread_context.usrmsg_cachebackend = per_ptr_usrmsg;//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE UserMessage Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+    _exit (-1);
+  }
+
+  syslog(LOG_INFO, "%s : SUCCESS: Initialised UserMessage Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  FenceCacheBackend *per_ptr_fence = InitialiseCacheBackendFence(NULL);
+  if (per_ptr_fence) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->worker_fence_cachebackend_key, (void *)per_ptr_fence);
+
+    ufsrv_thread_context_ptr->fence_cachebackend = per_ptr_fence;
+    ufsrv_thread_context.fence_cachebackend = per_ptr_fence;//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE Fence Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+    _exit (-1);
+  }
+
+  syslog(LOG_INFO, "%s : SUCCESS: Initialised Fence Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  MessageQueueBackend *mq_ptr = BuildConnectionHandleForMessageQueueBackend(NULL);
+  if (mq_ptr) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->ufsrv_msgqueue_pub_key, (void *)mq_ptr);
+
+    ufsrv_thread_context_ptr->msgqueue_backend = mq_ptr;
+    ufsrv_thread_context.msgqueue_backend = mq_ptr;//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE MessageQueue Publisher for UfServerWorker thread: '%lu'...", __func__, pthread_self());
+    exit (-1);
+  }
+
+  syslog(LOG_INFO, "%s: SUCCESS: Initialised MessageQueue Publisher Backend for UfServerWorker thread: '%lu'...", __func__, pthread_self());
+
+  THREAD_CONTEXT_RETURN_RESULT_SUCCESS(NULL, RECODE_NONE)
+}
+
+/**
+ * @brief Initialise and launch the job workers subsystem (one per instance)
+ */
+static void
+_LaunchUfsrvWorkers()
+{
+  WorkerPoolDescriptor *const pool_descriptor = _GetUfsrvWorkerPoolDescriptor(_UfsrvWorkerPoolOneoffInitialiser);
+  size_t pool_sz = GetJobWorkersPoolSize(_CONFIGDEFAULT_MAX_UFSRV_WORKERS);
+  pool_descriptor->workers_pool_config_descriptor.up_status = POOL_STATE_UP;
+  pool_descriptor->workers_pool_config_descriptor.pool_sz = pool_sz;
+//  pool_descriptor->sessions_delegator = sd_ptr;
+  pool_descriptor->thread_handlers.on_instantiated = _UfsrvWorkerThreadDataContextInitialiser;
+  RegisterJobWorkersConfigurationDescriptor(&pool_descriptor->workers_pool_config_descriptor);
+
+  if (IS_PRESENT(pool_descriptor->on_created)) {
+    pool_descriptor->on_created(pool_descriptor);
+  }
+
+  LaunchUfServerWorkerThreads(pool_descriptor, sizeof(ThreadContext));
+}
+
+/**
+ * @brief Grouping of startup scheduled jobs
+ */
+static void
+_InitialiseStartupScheduledJobs()
+{
+  InitialiseScheduledJobTypeForSessionsTimeouts();
+  InitialiseScheduledJobTypeForOrphanedFences();
+  InitialiseScheduledJobTypesForGpcAuthorization();
+}
+
+UFSRVResult *
+proto_websocket_protocol_init_callback(Protocol *proto_ptr)
+{
+  syslog(LOG_INFO, "%s: Initialising protocol: '%s' ...", __func__, proto_ptr->protocol_name);
+
+  SessionsDelegator *sd_ptr = InitialiseDelegator();
+  if (IS_EMPTY(sd_ptr)) {
+    syslog(LOG_ERR, "%s: ERROR COULD NOT INITIALISE DELEGATOR... EXISTING", __func__ );
+    exit(-1);
+  }
+
+  InitUFSRV((UfsrvSessionsDelegator *)sd_ptr);
+  LaunchSessionsDelegatorThread(sd_ptr);
+
+  _LaunchUfsrvWorkers();
+  LaunchTimerManagerThread(&_InitialiseStartupScheduledJobs);//ensure RegisterJobWorkersConfigurationDescriptor() is called beforehand
 
 	InitFenceRecyclerTypePool();
 	InitFenceStateDescriptorRecyclerTypePool();
@@ -328,16 +627,14 @@ proto_websocket_protocol_init_callback (Protocol *proto_ptr)
 	InitialiseMaserFenceRegistries();
 	InitialiseMasterUserRegistry();
 
-	InitialiseScheduledJobTypeForOrphanedFences();
-
-	RegisterFenceUserPreferencesSource ();
-	RegisterUserPreferencesSource ();
+	RegisterFenceUserPreferencesSource();
+	RegisterUserPreferencesSource();
 
 	return NULL;
 }
 
 UFSRVResult *
-proto_websocket_init_listener (void)
+proto_websocket_init_listener(void)
 {
 	int socket;
 	static UFSRVResult res = {0};
@@ -366,7 +663,7 @@ proto_websocket_init_listener (void)
 
 //TODO: this may need to be phased out
 UFSRVResult *
-proto_websocket_init_workers_delegator_callback (void)
+proto_websocket_init_workers_delegator_callback(void)
 {
 	//CreateSessionsDelegatorThread ();
 
@@ -374,18 +671,18 @@ proto_websocket_init_workers_delegator_callback (void)
 }
 
 UFSRVResult *
-proto_websocket_main_listener_callback (Socket *sock_ptr_listener, ClientContextData *context_ptr)
+proto_websocket_main_listener_callback(Socket *sock_ptr_listener, ClientContextData *context_ptr)
 {
-	UfsrvMainListener (sock_ptr_listener, (Socket *)context_ptr); //this never really returns
+	UfsrvMainListener(sock_ptr_listener, (Socket *)context_ptr); //this never really returns
 
 	return _ufsrv_result_generic_success;
 }
 
 UFSRVResult *
-proto_websocket_hanshake_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned callflags, int **comeback)
+proto_websocket_hanshake_callback(InstanceHolder *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned callflags, int **comeback)
 {
-  Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
-	UFSRVResult *res_ptr = ProcessIncomingWsHandshake(sesn_ptr, sock_msg_ptr);
+  Session *sesn_ptr     = SessionOffInstanceHolder(instance_sesn_ptr);
+	UFSRVResult *res_ptr  = ProcessIncomingWsHandshake(sesn_ptr, sock_msg_ptr);
 	switch (res_ptr->result_type)
 	{
 		case RESULT_TYPE_ERR:
@@ -409,23 +706,22 @@ proto_websocket_hanshake_callback (InstanceHolder *instance_sesn_ptr, SocketMess
  * 	@brief: Session has just been successfully handshaked both ways and authenticated. This session could be brand new, migrated, unsuspended etc...
  */
 UFSRVResult *
-proto_websocket_post_hanshake_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned callflags)
+proto_websocket_post_hanshake_callback(InstanceHolder *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned callflags)
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
 	//TODO: authenticated_user check for return
 	//MarshalServiceCommandToClient(sesn_ptr_hashed, NULL, 1);//authenticated user
-	DetermineUserLocationByServer (sesn_ptr, GetHttpRequestContext(sesn_ptr),  0);//broadcast event
+	DetermineUserLocationByServer(sesn_ptr, GetHttpRequestContext(sesn_ptr),  0);//broadcast event
 
-  UfsrvCommandInvokeUserCommand(&(InstanceContextForSession) {instance_sesn_ptr, sesn_ptr}, NULL, NULL, NULL, NULL,
-                                uSTATESYNC_V1_IDX);
+  UfsrvCommandInvokeUserCommand(&(InstanceContextForSession) {instance_sesn_ptr, sesn_ptr}, NULL, NULL, NULL, NULL, uSTATESYNC_V1_IDX);
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
  
 }
 
 static inline UFSRVResult *
-_UfsrvCommandInvokeCommandCallback (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr, size_t cmdidx)
+_UfsrvCommandInvokeCommandCallback(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr, size_t cmdidx)
 {
   Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
@@ -490,7 +786,7 @@ _UfsrvCommandInvokeCommandCallback (InstanceContextForSession *ctx_ptr, WebSocke
  * @param wire_message
  */
 static UFSRVResult *
-_DecodeAndParseWebSocketWireMessage (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr, const UfsrvCommand *ufsrv_cmd_ptr, json_object *jobj_msg)
+_DecodeAndParseWebSocketWireMessage(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr, const UfsrvCommand *ufsrv_cmd_ptr, json_object *jobj_msg)
 {
   int 				jobj_array_size		= 0;
   const char 	*destination			= json_object_get_string(json__get(jobj_msg, "destination"));
@@ -516,7 +812,7 @@ _DecodeAndParseWebSocketWireMessage (InstanceContextForSession *ctx_ptr, WebSock
     jobj_entry = json_object_array_get_idx (jobj_messages_array, i);
     if (IS_PRESENT(jobj_entry)) {
       int device_id = json_object_get_int(json__get(jobj_entry, "destinationDeviceId"));
-      int rego_id = json_object_get_int(json__get(jobj_entry, "destinationRegistrationId"));
+      int rego_id   = json_object_get_int(json__get(jobj_entry, "destinationRegistrationId"));
 
       const char *msg_body_b64 = json_object_get_string(json__get(jobj_entry, "content"));
 
@@ -564,20 +860,19 @@ _DecodeAndParseWebSocketWireMessage (InstanceContextForSession *ctx_ptr, WebSock
 
 //TODO: we kind of mirroring what MarshalServiceCommandToClient is doing. We should consolidate at some stage
 
-//This is reference as callback in protocol.h. If signature change, it needs to change there as well.
 //TODO: frame_offset and len parameters are no longer applicable. frame_offset should be used as callflags by the calling environment
 UFSRVResult *
-proto_websocket_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned frame_offset, size_t len)
+proto_websocket_msg_callback(InstanceHolder *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned frame_offset, size_t len)
 {
 	ssize_t read_result;
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
-	read_result = ReadFromSocket (instance_sesn_ptr, sock_msg_ptr, frame_offset);//frame_offset is 'callflags' passed by the calling environment
+	read_result = ReadFromSocket(instance_sesn_ptr, sock_msg_ptr, frame_offset);//frame_offset is 'callflags' passed by the calling environment
 
 	if (read_result > 0)	goto process_framed_decoded_msg;
 	else if (read_result == 0) {//if we are reading a very large frame, the first fragment will be seen by decode_hybi, which will return 0
 		//subsequent reads will detect missing size and will continue to report zero until  full frame is recieved up to 65k which is the max frame zize we allowe for Websocket
-			syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): COULD NOT FIND COMPLETE FRAME: NO MSG WILL BE PROCESSED: (frame_coundt='%lu' missing_msg_size: '%lu') RETURNING...", __func__,pthread_self(), SESSION_ID(sesn_ptr), sock_msg_ptr->frame_count, sock_msg_ptr->missing_msg_size);
+			syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): COULD NOT FIND A COMPLETE FRAME: NO MSG WILL BE PROCESSED: (frame_coundt='%lu' missing_msg_size: '%lu') RETURNING...", __func__, pthread_self(), SESSION_ID(sesn_ptr), sock_msg_ptr->frame_count, sock_msg_ptr->missing_msg_size);
 
 		_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_SUCCESS, RESCODE_IO_FRAGMENTATION)
 	} else {
@@ -608,7 +903,7 @@ proto_websocket_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *
 
 	//TODO: this may be redundant as read_result==0 condition above should indicate the same condition
 	if (sock_msg_ptr->frame_count == 0) {
-		syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): NO FRAME WAS FOUND: NO MSG WILL BE PROCESSED: (missing_msg_size: '%lu') RETURNING...", __func__, pthread_self(), SESSION_ID(sesn_ptr), sock_msg_ptr->missing_msg_size);
+		syslog(LOG_DEBUG, "%s (pid:'%lu' o:'%p', frameindex_multiples:'%lu'): NO FRAME WAS FOUND: NO MSG WILL BE PROCESSED: (missing_msg_size: '%lu') RETURNING...", __func__, pthread_self(), sesn_ptr, sock_msg_ptr->frame_index_multiples, sock_msg_ptr->missing_msg_size);
 
 		//TODO: FIX: this should be considered an error condition?
 		_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_SUCCESS, RESCODE_IO_FRAGMENTATION)
@@ -617,15 +912,15 @@ proto_websocket_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *
 	//start framed_decoded_msg
 	{
 		unsigned 	loop_counter								=	sock_msg_ptr->frame_count;
-		const 		ProtocolCallbacks *const pc	=	&(((Protocol *)sesn_ptr->protocol_registry)->protocol_callbacks);
+		__unused const 		ProtocolCallbacks *const pc	=	&(((Protocol *)sesn_ptr->protocol_registry)->protocol_callbacks);
 		size_t 		len													=	sock_msg_ptr->frame_index[0];//length of the first frame payload
 		int 			frame_offset								=	0;
 		UFSRVResult *ufcmd_result;
 
-		while ((loop_counter--)) {
-			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p',  cid:'%lu'}: PARSE ITERATION: '%d': PAYLOAD length: '%lu' READING OFFSET '%d'...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), loop_counter+1, len, frame_offset);
+		while (loop_counter--) {
+			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p',  cid:'%lu'}: PARSE ITERATION: '%d': PAYLOAD length: '%lu' READING OFFSET '%d'...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), loop_counter + 1, len, frame_offset);
 
-			ufcmd_result = _ParseUfsrvCommandMessage (&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, sock_msg_ptr, frame_offset, len);
+			ufcmd_result = _ParseUfsrvCommandMessage(&(InstanceContextForSession){instance_sesn_ptr, sesn_ptr}, sock_msg_ptr, frame_offset, len);
 			switch (ufcmd_result->result_type)
 			{
 			case RESULT_TYPE_SUCCESS:
@@ -641,7 +936,7 @@ proto_websocket_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *
 				{
 					case RESCODE_IO_MSGPARSED:
 						//processing or logical error
-						syslog(LOG_NOTICE, "%s (pid:'%lu' cid:'%lu'):  COULD NOT parse message...", __func__, pthread_self(), SESSION_ID(sesn_ptr));
+						syslog(LOG_NOTICE, "%s (pid:'%lu', o:'%p', cid:'%lu'):  COULD NOT parse message...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr));
 
 						//TODO: implement trip threshold
 						//ignore requestand send error status back to client
@@ -653,7 +948,7 @@ proto_websocket_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *
 					default:
 						//network error
 						if (SESNSTATUS_IS_SET(sesn_ptr->stat, SESNSTATUS_SUSPENDED)) {
-							syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): SESSION HAS BEEN SUSPENDED AMID ITERATION: PARSE ITERATION: '%d': READING OFFSET '%d': DISCONTINUING LOOP", __func__, pthread_self(), SESSION_ID(sesn_ptr), loop_counter+1, frame_offset);
+							syslog(LOG_DEBUG, "%s (pid:'%lu' o:'%p'): SESSION HAS BEEN SUSPENDED AMID ITERATION: PARSE ITERATION: '%d': READING OFFSET '%d': DISCONTINUING LOOP", __func__, pthread_self(), sesn_ptr, loop_counter + 1, frame_offset);
 
 							//TODO: do we break? or save the frame_offset where we left?we need to retry last msg?
 						}
@@ -665,7 +960,7 @@ proto_websocket_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *
 			loop_processing_body:
 			//additional check just in case
 			if (SESNSTATUS_IS_SET(sesn_ptr->stat, SESNSTATUS_SUSPENDED)) {
-				syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): OUTSIDE CONDITIONAL: SESSION HAS BEEN SUSPENDED AMID ITERATION: PARSE ITERATION: '%d': READING OFFSET '%d'...", __func__, pthread_self(), SESSION_ID(sesn_ptr), loop_counter+1, frame_offset);
+				syslog(LOG_DEBUG, "%s (pid:'%lu' o:'%p'): OUTSIDE CONDITIONAL: SESSION HAS BEEN SUSPENDED AMID ITERATION: PARSE ITERATION: '%d': READING OFFSET '%d'...", __func__, pthread_self(), sesn_ptr, loop_counter + 1, frame_offset);
 
 				//TODO: do we break? or save the frame_offset where we left?we need to retry last msg?
 				break;
@@ -676,20 +971,23 @@ proto_websocket_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *
 				frame_offset += len;//remember last len
 
 				if (frame_offset == sock_msg_ptr->processed_msg_size) {
-					syslog(LOG_DEBUG, ">>>> %s (pid:'%lu' cid:'%lu'): MESG OFFSET EQUALS TOTAL MSG SIZE: loop_counter: '%u'. frame_offset='%d'. BREAKING LOOP", __func__, pthread_self(), SESSION_ID(sesn_ptr), loop_counter+1, frame_offset);
+					syslog(LOG_DEBUG, ">>>> %s (pid:'%lu' o:'%p'): MESG OFFSET EQUALS TOTAL MSG SIZE: loop_counter: '%u'. frame_offset='%d'. BREAKING LOOP", __func__, pthread_self(), sesn_ptr, loop_counter + 1, frame_offset);
 					break;
 				}
 
-				len = sock_msg_ptr->frame_index[sock_msg_ptr->frame_count - (loop_counter - 1)];//Increment offset to go past the '0'then read the length upto the next '0'
+//				len = sock_msg_ptr->frame_index[sock_msg_ptr->frame_count - loop_counter];//Increment offset to go past the '0'then read the length upto the next '0'
+        len = *(sock_msg_ptr->frame_index + (sock_msg_ptr->frame_count - loop_counter));
 			}
 		}//while
 
 		//reset buffer
 		cleanup_exit_block:
-		free (sock_msg_ptr->_processed_msg);
-		sock_msg_ptr->_processed_msg			=	0;
-		sock_msg_ptr->processed_msg_size	=	0;
-		sock_msg_ptr->frame_count					=	0;
+		free(sock_msg_ptr->_processed_msg);
+    free(sock_msg_ptr->frame_index);
+		sock_msg_ptr->_processed_msg		    =	0;
+		sock_msg_ptr->processed_msg_size    =	0;
+		sock_msg_ptr->frame_count				    =	0;
+    sock_msg_ptr->frame_index_multiples = 0;
 
 		_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_SUCCESS, RESCODE_IO_MSGPARSED)
 
@@ -698,7 +996,7 @@ proto_websocket_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *
 }
 
 UFSRVResult *
-proto_websocket_decode_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMessage *sm_ptr, unsigned frame_offset)
+proto_websocket_decode_msg_callback(InstanceHolder *instance_sesn_ptr, SocketMessage *sm_ptr, unsigned frame_offset)
 {
 	unsigned int  opcode = 0,
 	              left;
@@ -721,7 +1019,7 @@ proto_websocket_decode_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMe
 	if (opcode == 8) {
 		//orderly shutdown by client. all allocated buffers are cleared
 		sm_ptr->processed_msg_size	=	1; //just to make sure buffer is correctly marked for destruction
-		SuspendSession (instance_sesn_ptr, SOFT_SUSPENSE);
+		SuspendSession(instance_sesn_ptr, SOFT_SUSPENSE);
 
 		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_IO_PROTOCOL_SHUTDOWN)
 	}
@@ -732,9 +1030,9 @@ proto_websocket_decode_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMe
 
 		//buffer data is now unbalanced: get rid of it now in case the client becomes unsuspended and uses the buffer again
 		sm_ptr->processed_msg_size	=	1; //just to make sure buffer is correctly marked for destruction
-		DestructSocketMessage (sm_ptr); //this will free sm_ptr->_processed_msg even if its corresponding size is -1
+		DestructSocketMessage(sm_ptr); //this will free sm_ptr->_processed_msg even if its corresponding size is -1
 
-		SuspendSession (instance_sesn_ptr, SOFT_SUSPENSE);
+		SuspendSession(instance_sesn_ptr, SOFT_SUSPENSE);
 
 		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_IO_DECODED)
 	}
@@ -745,7 +1043,7 @@ proto_websocket_decode_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMe
 				__func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), sm_ptr->missing_msg_size, sm_ptr->raw_msg_cur_pos, sm_ptr->holding_buffer_msg_size);
 
 		//how much we managed to collect so far
-		sm_ptr->holding_buffer = (unsigned char *)strndup((char *)(sm_ptr->_raw_msg+sm_ptr->raw_msg_cur_pos), sm_ptr->holding_buffer_msg_size);
+		sm_ptr->holding_buffer = (unsigned char *)strndup((char *)(sm_ptr->_raw_msg + sm_ptr->raw_msg_cur_pos), sm_ptr->holding_buffer_msg_size);
 	} else {
 #ifdef __UF_FULLDEBUG
 		syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): SUCESS: READ AND DECODED MESSAGE. size:  '%ld'. Raw buffer will be freed.", __func__, pthread_self(), SESSION_ID(sesn_ptr), sm_ptr->processed_msg_size);
@@ -753,7 +1051,7 @@ proto_websocket_decode_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMe
 	}
 
 	//we are good. This buffer has been successfully utilised wholly or in part
-	free (sm_ptr->_raw_msg);
+	free(sm_ptr->_raw_msg);
 	sm_ptr->_raw_msg			=	NULL;
 	sm_ptr->raw_msg_size	=	0;
 
@@ -762,7 +1060,7 @@ proto_websocket_decode_msg_callback (InstanceHolder *instance_sesn_ptr, SocketMe
 }
 
 UFSRVResult *
-proto_websocket_encode_msg_callback (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned frame_offset)
+proto_websocket_encode_msg_callback(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned frame_offset)
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
@@ -799,7 +1097,7 @@ proto_websocket_encode_msg_callback (InstanceHolderForSession *instance_sesn_ptr
  * @return RESULT_TYPE_ERR, RESCODE_IO_PROTOUNPACKING: packaging error
  */
 static inline UFSRVResult *
-_ParseUfsrvCommandMessage (InstanceContextForSession *ctx_ptr, SocketMessage *sock_msg_ptr, unsigned frame_offset, size_t len)
+_ParseUfsrvCommandMessage(InstanceContextForSession *ctx_ptr, SocketMessage *sock_msg_ptr, unsigned frame_offset, size_t len)
 {
 	WebSocketMessage *wsm_ptr;
 
@@ -831,7 +1129,7 @@ _ParseUfsrvCommandMessage (InstanceContextForSession *ctx_ptr, SocketMessage *so
         int cmdidx = UfsrvCommandIndexGet(sesn_ptr, command);
         //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-        _UfsrvCommandInvokeCommandCallback (ctx_ptr, wsm_ptr, cmdidx);
+        _UfsrvCommandInvokeCommandCallback(ctx_ptr, wsm_ptr, cmdidx);
 
       break;
 
@@ -864,14 +1162,14 @@ _ParseUfsrvCommandMessage (InstanceContextForSession *ctx_ptr, SocketMessage *so
  *
  */
 UFSRVResult *
-proto_websocket_init_session_callback (ClientContextData *ctx_data_ptr, unsigned call_flags)
+proto_websocket_init_session_callback(ClientContextData *ctx_data_ptr, unsigned call_flags)
 {
   Session *sesn_ptr = (Session *)ctx_data_ptr;
 
   if (call_flags == 0) {
-    SESSION_PROTOCOLSESSION(sesn_ptr) = calloc(1, sizeof(WebSocketSession));
+    SESSION_PROTOCOL_SESSION_DATA(sesn_ptr) = calloc(1, sizeof(WebSocketSession));
   } else {
-    SESSION_PROTOCOLSESSION(sesn_ptr) = calloc(1, sizeof(WebSocketSession));
+    SESSION_PROTOCOL_SESSION_DATA(sesn_ptr) = calloc(1, sizeof(WebSocketSession));
   }
 
   //TODO: at the moment the session object needs to be recreated regardless of recycler origin. Future optimisation
@@ -889,17 +1187,17 @@ proto_websocket_init_session_callback (ClientContextData *ctx_data_ptr, unsigned
  * @return
  */
 UFSRVResult *
-proto_websocket_reset_callback (InstanceHolder *instance_sesn_ptr, unsigned call_flags)
+proto_websocket_reset_callback(InstanceHolder *instance_sesn_ptr, unsigned call_flags)
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
-  WebSocketSession *ws_ptr = (WebSocketSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
+  WebSocketSession *ws_ptr = (WebSocketSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr);
 
 	if (call_flags == 0) {
 			if (IS_PRESENT(ws_ptr)) {
-				syslog (LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p', o:'%p', cid: '%lu'}: WEBSOCKET SESSION: DESTRUCTING OBJECT INSTANCE...", __func__, pthread_self(), THREAD_CONTEXT_PTR, sesn_ptr, SESSION_ID(sesn_ptr));
+				syslog(LOG_DEBUG, "%s {pid:'%lu', th_ctx:'%p', o:'%p', cid: '%lu'}: WEBSOCKET SESSION: DESTRUCTING OBJECT INSTANCE...", __func__, pthread_self(), THREAD_CONTEXT_PTR, sesn_ptr, SESSION_ID(sesn_ptr));
 				if (IS_PRESENT(ws_ptr->protocol_header.key1)) {
-				  free (ws_ptr->protocol_header.key1);
+				  free(ws_ptr->protocol_header.key1);
 				  LOAD_NULL(ws_ptr->protocol_header.key1);
 				}
 			}
@@ -910,7 +1208,7 @@ proto_websocket_reset_callback (InstanceHolder *instance_sesn_ptr, unsigned call
 			}
 		}
 
-  LOAD_NULL(SESSION_PROTOCOLSESSION(sesn_ptr));
+  LOAD_NULL(SESSION_PROTOCOL_SESSION_DATA(sesn_ptr));
 
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_NOOP, RESCODE_PROG_NULL_POINTER)
 
@@ -932,7 +1230,7 @@ proto_websocket_reset_callback (InstanceHolder *instance_sesn_ptr, unsigned call
  * 	@returns on returning error, session will be suspended by the caller
  */
 UFSRVResult *
-proto_websocket_service_timeout_callback (InstanceHolder *instance_sesn_ptr, time_t now, unsigned long call_flags)
+proto_websocket_service_timeout_callback(InstanceHolder *instance_sesn_ptr, time_t now, unsigned long call_flags)
 {
 	bool recycle_flag = false;
 	bool suspended_flag = false;
@@ -1016,9 +1314,9 @@ proto_websocket_service_timeout_callback (InstanceHolder *instance_sesn_ptr, tim
 		if (SuspendSession(instance_sesn_ptr, SOFT_SUSPENSE)) suspended_flag = true;
 	}
 
-	if (recycle_flag)	_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_SUCCESS, RESULT_CODE_SESN_HARDSPENDED)
+	if (recycle_flag)	_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_SUCCESS, RESCODE_SESN_HARDSPENDED)
 
-	if (suspended_flag)	_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_SUCCESS, RESULT_CODE_SESN_SOFTSPENDED)
+	if (suspended_flag)	_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_SUCCESS, RESCODE_SESN_SOFTSPENDED)
 
 	_return_noop:
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_NOOP, RESCODE_PROG_NULL_POINTER)
@@ -1054,7 +1352,7 @@ proto_websocket_close_callback (InstanceHolder *instance_sesn_ptr)
   _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_NOOP, RESCODE_PROG_NULL_POINTER)
 }
 
-#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvcmd_broadcast.h>
 
 UFSRVResult *
 proto_websocket_msgqueue_topics_callback(UFSRVResult *res_ptr)
@@ -1072,4 +1370,15 @@ proto_websocket_msgqueue_topics_callback(UFSRVResult *res_ptr)
 
 	_RETURN_RESULT_RES(res_ptr, &collection_topics, RESULT_TYPE_SUCCESS, RESCODE_PROTOCOL_DATA)
 
+}
+
+UFSRVResult *
+proto_websocket_generate_session_id_callback(UFSRVResult *res_ptr, ClientContextData *context_data)
+{
+  unsigned long session_id = GenerateSessionIdGlobally();
+  if (session_id == 0) {
+    _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROTOCOL_DATA)
+  } else {
+    _RETURN_RESULT_RES(res_ptr, (uintptr_t)(unsigned long)session_id, RESULT_TYPE_SUCCESS, RESCODE_PROTOCOL_DATA)
+  }
 }

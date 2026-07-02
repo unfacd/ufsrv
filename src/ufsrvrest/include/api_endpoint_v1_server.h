@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2024 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,10 +18,11 @@
 #ifndef UFSRV_API_ENDPOINT_V1_SERVER_H
 #define UFSRV_API_ENDPOINT_V1_SERVER_H
 
-#include <recycler/instance_type.h>
+#include <uflib/recycler/instance_type.h>
 
 #define API_ENDPOINT_V1(x) int x (InstanceHolder *instance_sesn_ptr)
 
+API_ENDPOINT_V1(ASSETLINKS);
 API_ENDPOINT_V1(SERVER_CERTIFICATE);
 API_ENDPOINT_V1(SERVER_ZKGROUP_PARAMS);
 

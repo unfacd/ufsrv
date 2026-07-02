@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-204 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -22,20 +22,21 @@
 #include <main.h>
 #include <error.h>
 #include <misc.h>
-#include <recycler/recycler.h>
+#include <uflib/recycler/recycler.h>
 #include <uflib/adt/adt_lamport_queue.h>
 #include <uflib/adt/adt_queue.h>
 #include <session.h>
 #include <net.h>
-#include <ufsrv_core/protocol/protocol.h>
-#include <ufsrvwebsock/include/protocol_websocket.h>
+#include <ufsrvmsg_core/protocol/protocol.h>
 #include <sessions_delegator_type.h>
 #include <nportredird.h>
 #include <ufsrv_core/cache_backend/persistance.h>
 #include <ufsrv_core/instrumentation/instrumentation_backend.h>
 #include <ufsrv_core/cache_backend/redis.h>
 #include <uflib/db/db_sql.h>
-#include <include/nportredird.h>
+#include <delegator_timer_thread.h>
+#include <uflib/adt/adt_minheap.h>
+#include <gpc_utils.h>
 
 static ufsrv master;
 ufsrv *const masterptr = &master;
@@ -62,7 +63,7 @@ static inline void InitHashTables(void);
 //reader end is destination socket in WorkDelegatorThread fd[0]
 //flow source:fd[1] -> destination:fd[0]
  static void
- InitConnectionListenerToWorkDelegatorPipe (void)
+ InitConnectionListenerToWorkDelegatorPipe(void)
  {
  	Socket *ss_ptr, *ds_ptr = NULL;
  	Session	*sesn_ptr = NULL;
@@ -87,14 +88,14 @@ static inline void InitHashTables(void);
 	strcpy (ds_ptr->address, "pipe.reader.localhost");
 	strcpy (ds_ptr->haddress, "pipe.writer.localhost");
 
-	if (!(sesn_ptr = InstantiateSession(ss_ptr, ds_ptr, 0, -1))) {
-	  close (ss_ptr->sock);
-	  close (ds_ptr->sock);
-	  free (ss_ptr);
-	  free (ds_ptr);
+	if (!(sesn_ptr = InstantiateSessionObject(ss_ptr, ds_ptr, 0, -1))) {
+	  close(ss_ptr->sock);
+	  close(ds_ptr->sock);
+	  free(ss_ptr);
+	  free(ds_ptr);
 
 	  syslog(LOG_ERR, "%s: COULD NOT initialise Pipe Interconnection Session: exiting...", __func__);
-	  _exit (-1);
+	  _exit(-1);
  }
 
 	//handy access. Even though not managed out off recycler, for consistency we envelope with InstanceHolder
@@ -102,17 +103,88 @@ static inline void InitHashTables(void);
 	SetInstance(instance_sesn_ptr, sesn_ptr);
 	WORK_DELEGATOR_PIPE = instance_sesn_ptr;
 
-	syslog(LOG_INFO, "%s: successfully initialised Pipe Interconnection Session (cid:'%lu') conection: WRITER: '%s:%d' READER: '%s:%d'",__func__,
+	syslog(LOG_INFO, "%s: Successfully initialised Pipe Interconnection Session (cid:'%lu') conection: WRITER: '%s:%d' READER: '%s:%d'",__func__,
 			sesn_ptr->session_id, sesn_ptr->ssptr->address, sesn_ptr->ssptr->sock, sesn_ptr->dsptr->address, sesn_ptr->dsptr->sock);
 
  }
+
+ /**
+  * @brief Convenient result object predefined with success value. Do not reassign values.
+  */
+
+ UFSRVResult *const
+ ProvideSuccessResult() {
+  static UFSRVResult success_result = {
+          .result_type=RESULT_TYPE_SUCCESS,
+          .result_code=RECODE_NONE
+  };
+
+  return &success_result;
+ }
+
+ UfsrvSessionsDelegator *const
+ GetUfsrvSessionsDelegator()
+ {
+   return master.sessions_delegator;
+ }
+
+ void
+ RegisterUfsrvSessionsDelegator(UfsrvSessionsDelegator *const sessions_delegator)
+ {
+   if (IS_PRESENT(sessions_delegator)) {
+     master.sessions_delegator = sessions_delegator;
+   } else {
+     syslog(LOG_ERR, "%s: ERROR: NO SESSIONS DELEGATOR PROVIDED: EXITING", __func__ );
+     exit(-1);
+   }
+
+ };
+
+
+#define MASTER_CLOUD_AUTHORIZATION_FCM masterptr->cloud_authorization.fcm
+#define MASTER_CLOUD_AUTHORIZATION_INTEGRITY_API masterptr->cloud_authorization.integrity_api
+
+void RegisterUfsrvCloudAuthorizationTokenForFcm(CloudAuthorizationToken *cloud_authorization_token_ptr)
+{
+  master.cloud_authorization.fcm = cloud_authorization_token_ptr;
+}
+
+void RegisterUfsrvCloudAuthorizationTokenForIntegrityApi(CloudAuthorizationToken *cloud_authorization_token_ptr)
+{
+  master.cloud_authorization.integrity_api = cloud_authorization_token_ptr;
+}
+
+CloudAuthorizationToken *
+GetUfsrvCloudAuthorizationTokenForFcm()
+{
+  return MASTER_CLOUD_AUTHORIZATION_FCM;
+}
+
+CloudAuthorizationToken *
+GetUfsrvCloudAuthorizationTokenForIntegrityApi()
+{
+  return MASTER_CLOUD_AUTHORIZATION_INTEGRITY_API;
+}
+
+/**
+ * @brief
+ */
+void InitialiseScheduledJobTypesForGpcAuthorization(void)
+{
+  ScheduledJob *scheduled_job_ptr;
+  scheduled_job_ptr = InitialiseScheduledJobTypeForGpcAuthenticatorIntegrityApi();
+  RegisterUfsrvCloudAuthorizationTokenForIntegrityApi(AS_CLOUD_AUTHORIZATION_TOKEN(scheduled_job_ptr->context_data));
+  scheduled_job_ptr = InitialiseScheduledJobTypeForGpcAuthenticatorFcmMessaging();
+  RegisterUfsrvCloudAuthorizationTokenForFcm(AS_CLOUD_AUTHORIZATION_TOKEN(scheduled_job_ptr->context_data));
+
+}
 
 /**
 * 	@brief: This SPSC queue is shared between AnswerTelnetRequest (producer) and ThreadWorkerDelegator (consumer).
 * 	Ensure instrumentation is already initialised in order to correctly report on queue capacity.
 */
 static void
-InitNewConnectionsQueue (void)
+InitNewConnectionsQueue(void)
 {
 #ifdef CONFIG_USE_LOCKLESS_NEW_CONNECTIONS_QUEUE
 	syslog(LOG_INFO, ">> %s: New Connections Queue: Initialising lockless queue...", __func__);
@@ -174,7 +246,7 @@ dyn_destroy_func(struct CRYPTO_dynlock_value *l, const char *file, int line)
 static void dyn_lock_func(int mode, struct CRYPTO_dynlock_value *l, const char *file, int line);
 static void dyn_lock_func(int mode, struct CRYPTO_dynlock_value *l, const char *file, int line)
 {
-	if(mode & CRYPTO_LOCK)
+	if (mode & CRYPTO_LOCK)
 	pthread_mutex_lock(&l->mutex);
 	else
 	pthread_mutex_unlock(&l->mutex);
@@ -187,49 +259,42 @@ static void dyn_lock_func(int mode, struct CRYPTO_dynlock_value *l, const char *
 //http://www.informit.com/authors/bio/1933efae-b8cc-4f72-aebd-a4b7c7f761c2
 //http://www.cse.cuhk.edu.hk/~pclee/tsinghua/files/lec3.pdf
 void
-InitSSL (void)
+InitSSL(void)
 {
-	if (masterptr->ufsrv_crypto.initialised==0)
-	{
+	if (masterptr->ufsrv_crypto.initialised == 0) {
 		const SSL_METHOD *ssl_method_console, *ssl_method_client;
 
 		SSL_library_init();
 		OpenSSL_add_all_algorithms();
 		SSL_load_error_strings();
 
-		ssl_method_console=TLSv1_server_method();
-		if((masterptr->ufsrv_crypto.ssl_ctx= SSL_CTX_new(ssl_method_console))==NULL)
-		{
-			syslog (LOG_INFO, "%s: ERROR: COULD NOT INITIALISE SSL CTX for CONSOLE connections...", __func__);
+		ssl_method_console = TLSv1_server_method();
+		if ((masterptr->ufsrv_crypto.ssl_ctx = SSL_CTX_new(ssl_method_console)) == NULL) {
+			syslog(LOG_INFO, "%s: ERROR: COULD NOT INITIALISE SSL CTX for CONSOLE connections...", __func__);
 			exit(-1);
 		}
 
-		if((masterptr->ufsrv_crypto.ssl_console= SSL_new(masterptr->ufsrv_crypto.ssl_ctx))==NULL)
-		{
-			syslog (LOG_INFO, "%s: ERROR: COULD NOT OBTAIN SSL object for CONSOLE CTX...", __func__);
+		if ((masterptr->ufsrv_crypto.ssl_console = SSL_new(masterptr->ufsrv_crypto.ssl_ctx)) == NULL) {
+			syslog(LOG_INFO, "%s: ERROR: COULD NOT OBTAIN SSL object for CONSOLE CTX...", __func__);
 			exit(-1);
 		}
 
-		ssl_method_client=TLSv1_server_method();
-		if((masterptr->ufsrv_crypto.ssl_user_ctx= SSL_CTX_new(ssl_method_client))==NULL)
-		{
-			syslog (LOG_INFO, "%s: ERROR: COULD NOT INITIALISE SSL CTX for CLIENT connections...", __func__);
+		ssl_method_client = TLSv1_server_method();
+		if((masterptr->ufsrv_crypto.ssl_user_ctx = SSL_CTX_new(ssl_method_client)) == NULL) {
+			syslog(LOG_INFO, "%s: ERROR: COULD NOT INITIALISE SSL CTX for CLIENT connections...", __func__);
 			exit(-1);
 		}
-
-
 
 		{//console certificate
 			lua_getglobal(LUA_CTX, "ufsrv_ssl");
-			if (!lua_istable(LUA_CTX, -1))
-			{
+			if (!lua_istable(LUA_CTX, -1)) {
 				  //error(masterptr->lua_ptr, "`ufsrv_ssl' is not a valid config table");
 				  error(-1, 0, "`ufsrv_ssl' is not a valid config table");
 			}
 
-			char *l=LUA_GetFieldToString("location");
-			char *c=LUA_GetFieldToString("certificate");
-			char *k=LUA_GetFieldToString("key");
+			char *l = LUA_GetFieldToString("location");
+			char *c = LUA_GetFieldToString("certificate");
+			char *k = LUA_GetFieldToString("key");
 			syslog (LOG_DEBUG, "%s: ufsrv_ssl location='%s' key='%s' certificate='%s'...",  __func__, l, k, c);
 
 			char *file_path;
@@ -240,22 +305,20 @@ InitSSL (void)
 			SSL_CTX_use_PrivateKey_file(masterptr->ufsrv_crypto.ssl_ctx, file_path, SSL_FILETYPE_PEM); free(file_path);
 			free(l);
 
-			if(!(SSL_CTX_check_private_key(masterptr->ufsrv_crypto.ssl_ctx)))
-			{
-				syslog (LOG_INFO, "%s: ERROR: COULD NOT CHECK PRIVATE KEY FOR CONSOLE CTX...", __func__);
-				exit (-1);
+			if (!(SSL_CTX_check_private_key(masterptr->ufsrv_crypto.ssl_ctx))) {
+				syslog(LOG_INFO, "%s: ERROR: COULD NOT CHECK PRIVATE KEY FOR CONSOLE CTX...", __func__);
+//				exit(-1);
 			}
 		}
 
 		{//client certificate
 			lua_getglobal(LUA_CTX, "ufsrv_user_ssl");
-			if (!lua_istable(LUA_CTX, -1))
-			{
+			if (!lua_istable(LUA_CTX, -1)) {
 				  error(-1, 0, "`ufsrv_user_ssl' is not a valid config table");
 			}
-			char *l=LUA_GetFieldToString("location");
-			char *c=LUA_GetFieldToString("certificate");
-			char *k=LUA_GetFieldToString("key");
+			char *l = LUA_GetFieldToString("location");
+			char *c = LUA_GetFieldToString("certificate");
+			char *k = LUA_GetFieldToString("key");
 			syslog (LOG_DEBUG, "%s: ufsrv_user_ssl location='%s' key='%s' certificate='%s'...",  __func__, l, k, c);
 
 			char *file_path;
@@ -266,20 +329,16 @@ InitSSL (void)
 			SSL_CTX_use_PrivateKey_file(masterptr->ufsrv_crypto.ssl_user_ctx, file_path, SSL_FILETYPE_PEM); free(file_path);
 			free(l);
 
-			if(!(SSL_CTX_check_private_key(masterptr->ufsrv_crypto.ssl_user_ctx)))
-			{
-				syslog (LOG_INFO, "%s: ERROR: COULD NOT CHECK PRIVATE KEY FOR USER CTX...", __func__);
-				exit (-1);
+			if (!(SSL_CTX_check_private_key(masterptr->ufsrv_crypto.ssl_user_ctx))) {
+				syslog(LOG_INFO, "%s: ERROR: COULD NOT CHECK PRIVATE KEY FOR USER CTX...", __func__);
+//				exit(-1);
 			}
-
 		}
-
 
 		{//static allocation of SSL threading semantics
 			int i;
 			masterptr->ufsrv_crypto.ssl_mutexes = (pthread_mutex_t *) malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t));
-			for(i=0; i<CRYPTO_num_locks(); i++)
-			{
+			for(i=0; i<CRYPTO_num_locks(); i++) {
 				pthread_mutex_init(&masterptr->ufsrv_crypto.ssl_mutexes[i], NULL);
 			}
 
@@ -293,19 +352,18 @@ InitSSL (void)
 			CRYPTO_set_dynlock_destroy_callback(dyn_destroy_func);
 		}
 
-		masterptr->ufsrv_crypto.initialised=1;
+		masterptr->ufsrv_crypto.initialised = 1;
 
 		syslog (LOG_INFO, "%s: SUCCESS: SSL subsystem initialised.", __func__);
 
-	}
-	else
-	{
+	} else {
 		syslog (LOG_INFO, "%s: SSL subsystem is already initialised", __func__);
 	}
 
 }
 
-static void _InitServerCertificates ()
+static void
+_InitServerCertificates()
 {
 	int size_out;
 	unsigned char *key_raw;
@@ -327,12 +385,13 @@ static void _InitServerCertificates ()
   MASTER_CONF_SERVER_KEYID       = SERVER_KEYID;
 }
 
-static void _InitCredentialsIssuanceServerParams()
+static void
+_InitCredentialsIssuanceServerParams()
 {
   int size_out = 0;
 
   base64_decode_buffered((const unsigned char *)PRIVATE_SERVER_PARAM, strlen(PRIVATE_SERVER_PARAM), MASTER_CONF_SERVER_PRIVATE_PARAMS, &size_out);
-  if (size_out != SERVER_SECRET_PARAMS_LEN) {
+  if (size_out != SERVER_SECRET_PARAMS_SIZE) {
     syslog(LOG_ERR, "%s: ERROR (size: '%d', param:'%s'): COULD NOT DECODE PRIVATE SERVER PARAMS: TERMINATING...", __func__, size_out, PRIVATE_SERVER_PARAM);
 
     exit(-1);
@@ -340,16 +399,51 @@ static void _InitCredentialsIssuanceServerParams()
 
   size_out = 0;
   base64_decode_buffered((const unsigned char *)PUBLIC_SERVER_PARAM, strlen(PUBLIC_SERVER_PARAM), MASTER_CONF_SERVER_PUBLIC_PARAMS, &size_out);
-  if (size_out != SERVER_PUBLIC_PARAMS_LEN) {
+  if (size_out != SERVER_PUBLIC_PARAMS_SIZE) {
     syslog(LOG_ERR, "%s: ERROR (size: '%d', param:'%s'): COULD NOT DECODE PUBLIC SERVER PARAMS: TERMINATING...", __func__, size_out, PUBLIC_SERVER_PARAM);
 
     exit(-1);
   }
-
-
+}
+__pure ScheduledJobs  *
+GetScheduledJobsStore(void)
+{
+  static ScheduledJobs scheduled_jobs_store;
+  return &scheduled_jobs_store;
 }
 
-void InvokeMainListener (int protocol_id, Socket *sock_ptr_listener, ClientContextData *context_ptr)
+void
+InitUfsrvScheduledJobsStore(ScheduledJobs *scheduled_jobs, size_t count, void (*scheduled_jobs_startup_callback)(void))
+{
+  InitScheduledJobsStore(scheduled_jobs, count);
+  if (IS_PRESENT(scheduled_jobs_startup_callback)) {
+    scheduled_jobs_startup_callback();
+  }
+  syslog(LOG_INFO, "%s (pid:'%lu', o:'%p', page_sz:'%d', entries_per_page:'%d'): SUCCESS: Initialised ScheduledJobsStore", __func__, pthread_self(), scheduled_jobs, heap_page_size(), heap_entries_per_page());
+}
+
+/**
+ * @brief Launch the TimerManager thread that fires off timed jobs.This also initialises the scheduled jobs store.
+ */
+void
+LaunchTimerManagerThread(void (*scheduled_jobs_startup_callback)(void))
+{
+  InitUfsrvScheduledJobsStore(GetScheduledJobsStore(), 0, scheduled_jobs_startup_callback);
+
+  int result = pthread_create(&(masterptr->timer_delegator.thread), NULL, ThreadTimerManager, (void *)GetScheduledJobsStore());
+  if (result != 0) {
+    char error_str[MEDIUMBUF] = {0};
+    strerror_r(errno, error_str, MEDIUMBUF);
+    syslog(LOG_ERR, "InitialiseWorkerDelegator: TERMINATING (errno: '%d'): COULD NOT INITIALISE Timer Manager(TM) thread: '%s'...", errno, error_str);
+
+    exit(-1);
+  }
+
+  syslog(LOG_INFO, ">> %s: SUCCESSFULLY Initialised TimerManager...'", __func__);
+}
+
+void
+InvokeMainListener(int protocol_id, Socket *sock_ptr_listener, ClientContextData *context_ptr)
 {
 	if (_PROTOCOL_CLLBACKS_MAIN_LISTENER(protocols_registry_ptr, protocol_id)) {
 		UFSRVResult *res_ptr = _PROTOCOL_CLLBACKS_MAIN_LISTENER_INVOKE(protocols_registry_ptr, protocol_id, sock_ptr_listener, context_ptr);
@@ -360,9 +454,15 @@ void InvokeMainListener (int protocol_id, Socket *sock_ptr_listener, ClientConte
  * 	@brief: Generic listening semantics for delegated connection requests
  */
 #include <command_console_thread.h>
+#include <ufsrv_sessions_delegator_type.h>
+#include <protocol_sfu.h>
+#include <mmsg_provider.h>
+#include <coroutine_run_context_provider.h>
+#include <type_providers/mpsc_queue_node_provider.h>
+#include <sfu_session_provider.h>
 
 void
-UfsrvMainListener (Socket *sock_ptr_listener, Socket *sock_ptr_console)
+UfsrvMainListener(Socket *sock_ptr_listener, Socket *sock_ptr_console)
 {
 	int 		x;
 	fd_set 	fd,
@@ -379,18 +479,18 @@ UfsrvMainListener (Socket *sock_ptr_listener, Socket *sock_ptr_console)
 	if (unlikely(IS_PRESENT(sock_ptr_console)))		FD_SET(sock_ptr_console->sock, &fd);
 
 	while (1 != 2) {
-		x = select (FD_SETSIZE, &fd, NULL, NULL, NULL);
+		x = select(FD_SETSIZE, &fd, NULL, NULL, NULL);
 
 		if (x > 0) {
 			if (FD_ISSET(sock_ptr_listener->sock, &fd)) {
-				AnswerTelnetRequest (sock_ptr_listener);
+        AnswerTelnetRequest(sock_ptr_listener, EXTRA_KEEPALIVE_OPTIONS_UNSPECIFIED);
 			}
 
 			if (IS_PRESENT(sock_ptr_console)) {
 				if (FD_ISSET(sock_ptr_console->sock, &fd)) {
 					syslog(LOG_INFO, "Main: Processing an incoming connection for Command Console on socket %d.", sock_ptr_console->sock);
 
-					AnswerCommandConsoleRequest (sock_ptr_console);
+					AnswerCommandConsoleRequest(sock_ptr_console);
 				}
 			}
 
@@ -402,7 +502,7 @@ UfsrvMainListener (Socket *sock_ptr_listener, Socket *sock_ptr_console)
 			close (sock_ptr_listener->sock);
 			if (IS_PRESENT(sock_ptr_console))	close (sock_ptr_console->sock);
 
-			_exit (-2);
+			_exit(-2);
 		}
 
 		goto again;
@@ -411,60 +511,50 @@ UfsrvMainListener (Socket *sock_ptr_listener, Socket *sock_ptr_console)
 
 }
 
+char * __attribute__((const))
+GetMainListenerAddress()
+{
+  return master.main_listener_address;
+}
+
 void
-InitHTTPClient (void)
+InitHTTPClient(void)
 {
 	syslog(LOG_INFO, "Initialisaing HTTPClient subsystem...");
 
 	curl_global_init(CURL_GLOBAL_ALL);
 }
 
+/**
+ * @brief Initialiser for thread keys used to hold common and essential connection handles for various backends and data stores.
+ * Each thread will load its unique instance of each handle, using same keyname.
+ */
 static void
-UFSRVThreadsOnceInitialiser (void)
+UFSRVThreadsOnceInitialiser(void)
 {
 	syslog(LOG_INFO, "%s: Performing pthread ONCE initialisation...", __func__);
-
-	//initialise thread specific key for session io worker threads
-	pthread_key_create (&(masterptr->threads_subsystem.ufsrv_thread_context_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(masterptr->threads_subsystem.ufsrv_http_request_context_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(masterptr->threads_subsystem.ufsrv_data_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(masterptr->threads_subsystem.ufsrv_usrmsg_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(masterptr->threads_subsystem.ufsrv_fence_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(masterptr->threads_subsystem.ufsrv_instrumentation_backend_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(masterptr->threads_subsystem.ufsrv_msgqueue_pub_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(masterptr->threads_subsystem.ufsrv_db_backend_key), NULL);//TODO: no clean up callback
-
-	pthread_key_create (&(sessions_delegator_ptr->worker_delegator_pipe_key), NULL);//TODO: no clean up callback
-
-
-	//initialise thread specific key for ufsrv worker threads as defined in SessionDelegator
-	pthread_key_create (&(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_thread_context_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_http_request_context_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(sessions_delegator_ptr->ufsrv_thread_pool.worker_persistance_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(sessions_delegator_ptr->ufsrv_thread_pool.worker_usrmsg_cachebackend_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(sessions_delegator_ptr->ufsrv_thread_pool.worker_fence_cachebackend_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_instrumentation_backend_key), NULL);//TODO: no clean up callback
-	pthread_key_create (&(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_msgqueue_pub_key), NULL);
-	pthread_key_create (&(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_db_backend_key), NULL);
-
+  //NOOP
 }
 
+/**
+ * @brief This is a common bootstrapping sequence for ufsrvwebsock and ufsrvrest type servers.
+ */
 void
-InitUFSRV (void)
+InitUFSRV(UfsrvSessionsDelegator *sd_ptr)
 {
-	masterptr->threads_subsystem.ufsrv_once=PTHREAD_ONCE_INIT;
+  RegisterUfsrvSessionsDelegator((UfsrvSessionsDelegator *const)sd_ptr);
+	masterptr->threads_subsystem.ufsrv_once = PTHREAD_ONCE_INIT;
 	pthread_once(&(masterptr->threads_subsystem.ufsrv_once), UFSRVThreadsOnceInitialiser);
 
 	_InitServerCertificates();
 	_InitCredentialsIssuanceServerParams();
 	InitSSL();
 
-	InstrumentationBackendServerInit (masterptr->stats_backend.address, masterptr->stats_backend.port);
+	InstrumentationBackendServerInit(masterptr->stats_backend.address, masterptr->stats_backend.port);
 
-	masterptr->instrumentation_backend = InstrumentationBackendInit (NULL);
+	masterptr->instrumentation_backend = InstrumentationBackendInit(NULL, NULL);
 	if (IS_PRESENT(masterptr->instrumentation_backend))	syslog(LOG_DEBUG, "%s: SUCCESS (instr_ptr:'%p'): Initialised Instrumentation Backend for Main Thread: '%lu'...", __func__, masterptr->instrumentation_backend, pthread_self());
 	else	syslog(LOG_DEBUG, "%s: ERROR: COULD NOT Initialise Instrumentation Backend for Main Thread: '%lu'...", __func__, pthread_self());
-
 
 	{
     PersistanceBackend *per_ptr = InitialisePersistanceBackend(NULL);
@@ -513,16 +603,11 @@ InitUFSRV (void)
 		}
 	}
 
-	InitMysql ();
-
+	InitMysql();
 	InitConnectionListenerToWorkDelegatorPipe();
-
-	InitNewConnectionsQueue ();
-
-	InitHashTables ();
-
-	InitSessionRecyclerTypePool ();
-
+	InitNewConnectionsQueue();
+	InitHashTables();
+	InitSessionRecyclerTypePool(GetSessionInstantiator());
 	if (UfsrvConfigRegisterUfsrverInstance(masterptr->persistance_backend)) {
 		syslog(LOG_INFO, "%s: SUCCESS: Registered with Configuration Server", __func__);
 #if 0
@@ -534,53 +619,169 @@ InitUFSRV (void)
 #endif
 	} else {
 		syslog(LOG_ERR, "%s: CRITICAL ERROR: COULD NOT REGISTER WITH CONFIGURATION SERVER: EXITING...", __func__);
-		_exit (-1);
+		_exit(-1);
 	}
 
  }  /**/
 
+ /**
+ * @brief This is a common bootstrapping sequence for ufsrvsfu (Selective Forwarding Unit) type servers.
+ */
+ void
+ InitUFSRVForSfu(UfsrvSessionsDelegator *sd_ptr)
+ {
+   RegisterUfsrvSessionsDelegator(sd_ptr);
+   masterptr->threads_subsystem.ufsrv_once = PTHREAD_ONCE_INIT;
+   pthread_once(&(masterptr->threads_subsystem.ufsrv_once), UFSRVThreadsOnceInitialiser);
+
+   InitSSL();
+
+   InstrumentationBackendServerInit(masterptr->stats_backend.address, masterptr->stats_backend.port);
+
+   masterptr->instrumentation_backend = InstrumentationBackendInit(NULL, NULL);
+   if (IS_PRESENT(masterptr->instrumentation_backend))	syslog(LOG_DEBUG, "%s: SUCCESS (instr_ptr:'%p'): Initialised Instrumentation Backend for Main Thread: '%lu'...", __func__, masterptr->instrumentation_backend, pthread_self());
+   else	syslog(LOG_DEBUG, "%s: ERROR: COULD NOT Initialise Instrumentation Backend for Main Thread: '%lu'...", __func__, pthread_self());
+
+#if 0
+   {
+     PersistanceBackend *per_ptr = InitialisePersistanceBackend(NULL);
+     if (per_ptr) {
+       masterptr->persistance_backend = per_ptr;
+       syslog(LOG_INFO, "%s: SUCCESS {o:'%p'}: Initialised Persistence Backend for Main Listener thread...", __func__, per_ptr);
+     } else {
+       syslog(LOG_INFO, "%s: ERROR: COULD NOT INITIALISE Persistence Backend for Main Listener thread: Exiting", __func__);
+       _exit(-1);
+     }
+
+     UserMessageCacheBackend *per_ptr_usrmsg = InitialiseCacheBackendUserMessage(NULL);
+     if (IS_PRESENT(per_ptr_usrmsg)) {
+       masterptr->usrmsg_cachebackend = per_ptr_usrmsg;
+       syslog(LOG_INFO, "%s: SUCCESS {o:'%p'}: Initialised Cache Backend UserMessage for Main Listener thread...", __func__, per_ptr_usrmsg);
+     } else {
+       syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE Cache Backend UserMessage  for Main Listener  thread: Exiting...", __func__);
+       _exit (-1);
+     }
+
+     {
+       //verify scripts. check redis.h for details
+       //script exists 3a94e53b4b39b8229102c70d92a4ac3f6f8e3c1f
+
+       redisReply *redis_ptr = (*masterptr->persistance_backend->send_command_sessionless)(masterptr->persistance_backend, "SCRIPT EXISTS %s", REDIS_SCRIPT_SHA1_UNIQUE_ID);
+
+       if (!redis_ptr) {
+         syslog(LOG_ERR, "%s: REDIS_REPLY_ERROR COULD NOT GET REDIS RESPONSE FOR SCRIPT VERIFICATION (NULL): EXITING...", __func__);
+         _exit(-1);
+       }
+       if (redis_ptr->type == REDIS_REPLY_ERROR) {
+         syslog(LOG_ERR, "%s: REDIS_REPLY_ERROR: COULD NOT GET REDIS RESPONSE FOR SCRIPT VERIFICATION: ERROR :' %s': EXITING...", __func__, redis_ptr->str);
+         _exit(-1);
+       }
+       if (redis_ptr->type == REDIS_REPLY_NIL) {
+         syslog(LOG_ERR, "%s: REDIS_REPLY_NIL COULD NOT GET REDIS RESPONSE FOR SCRIPT VERIFICATION: EXITING...", __func__);
+         _exit(-1);
+       }
+       if ((redis_ptr->type == REDIS_REPLY_ARRAY) && (redis_ptr->element[0]->integer == 1)) {
+         syslog(LOG_INFO, "%s: SUCCESS: VERIFIED CRITICAL UNIQUE ID GENERATION SYSTEM...", __func__);
+         freeReplyObject(redis_ptr);
+       } else {
+         syslog(LOG_ERR, "%s: CRITICAL ERROR: COULD NOT VERIFY CRITICAL LUA UNIQUE ID GENERATION FEATURE SCRIPT: EXITING...", __func__);
+         _exit(-1);
+       }
+     }
+   }
+
+   InitMysql();
+#endif
+  if (HashTableLockingInstantiate(&sd_ptr->hashed_net_addresses.hashtable, (offsetof(Session, net_address_hash)), sizeof(unsigned long), HASH_ITEM_NOT_PTR_TYPE, "NetAddressHashTable", (ItemExtractor)GetClientContextData)) {
+    syslog(LOG_INFO, "%s: SUCCESS: NetAddresses HashTable Instantiated: key_offset: '%ld'. key_size: '%ld'", __func__, sd_ptr->hashed_net_addresses.hashtable.fKeyOffset, sd_ptr->hashed_net_addresses.hashtable.fKeySize);
+  } else {
+    syslog(LOG_ERR, "%s: ERROR (errno: '%d'): COULD NOT INITIALISE NetAddresses HashTable: TERMINATING...", __func__, errno);
+
+    exit(-1);
+  }
+
+  InitSfuSessionRecyclerTypePool();
+  InitSfuMmsgRecyclerTypePool();
+  InitMpscQueueNodeRecyclerTypePool();
+//  InitCoroutineRunContextRecyclerTypePool();
+
+#if 0
+   if (UfsrvConfigRegisterUfsrverInstance(masterptr->persistance_backend)) {
+     syslog(LOG_INFO, "%s: SUCCESS: Registered with Configuration Server", __func__);
+#if 0
+     Session sesn={0};
+     int ufsrv_group[10]={0};
+     sesn.persistance_backend=masterptr->persistance_backend;
+     sesn.geogroup=3;
+     UfsrvConfigGetGeoGroup (&sesn, &((CollectionDescriptor){(collection_t **)ufsrv_group, 0}));
+#endif
+   } else {
+     syslog(LOG_ERR, "%s: CRITICAL ERROR: COULD NOT REGISTER WITH CONFIGURATION SERVER: EXITING...", __func__);
+     _exit(-1);
+   }
+#endif
+
+ }  /**/
+
 /**
- *  executed in a ufsrv thread context, so issuing mysql lib call unsigned long mysql_thread_id(MYSQL *mysql) returns
+ *  @brief Executed in a ufsrv thread context, so issuing mysql lib call unsigned long mysql_thread_id(MYSQL *mysql) returns
  *  client thread associated with this ufsrv thread. or "SELECT CONNECTION_ID();"
  */
-struct _h_connection *InitialiseDbBackend (void)
+struct _h_connection *
+InitialiseDbBackend(void)
 {
-  struct _h_connection *db_ptr;
+  extern __thread ThreadContext ufsrv_thread_context;
+  BackoffAlgorithmStatus_t  retry_status = BackoffAlgorithmSuccess;
+  BackoffAlgorithmContext_t retry_params = {0};
+  uint16_t                  next_retry_backoff = 0;
+  BackoffAlgorithm_InitializeParamsWithoutJitter(&retry_params, EXPOBACKOFF_NOJITTER_MIN, EXPOBACKOFF_NOJITTER_MAX, EXPOBACKOFF_RETRY_MAX_ATTEMPTS);
 
 //ANNOTATE_IGNORE_READS_BEGIN();
   //__vdrd_AnnotateIgnoreReadsBegin();
-  db_ptr = h_connect_mariadb(masterptr->db_backend.address, masterptr->db_backend.username, masterptr->db_backend.password, CONFIG_DBBACKEND_DBNAME, masterptr->db_backend.port, NULL);
+  struct _h_connection *db_ptr = NULL;
 //ANNOTATE_IGNORE_READS_END();
   //__vdrd_AnnotateIgnoreReadsEnd();
-  if (db_ptr) {
-    SqlServerDisplayConnectedUsers (db_ptr);
-  }
 
-  return db_ptr;
+  do {
+    db_ptr = h_connect_mariadb(masterptr->db_backend.address, masterptr->db_backend.username, masterptr->db_backend.password, CONFIG_DBBACKEND_DBNAME, masterptr->db_backend.port, NULL);
+    if (IS_PRESENT(db_ptr)) {
+      BackoffAlgorithm_InitializeParamsWithoutJitter(&db_ptr->backoff_descriptor.retry_params, EXPOBACKOFF_NOJITTER_MIN, EXPOBACKOFF_NOJITTER_MAX, EXPOBACKOFF_RETRY_MAX_ATTEMPTS);
+      db_ptr->backoff_descriptor.on_sleep = ThreadSleep;
+      SqlServerDisplayConnectedUsers(db_ptr);
+      return db_ptr;
+    }
+
+    unsigned int random_input = rand_r(&(THREAD_CONTEXT.random_state));//TODO: remove
+    retry_status  = BackoffAlgorithm_GetNextBackoff(&retry_params, random_input, &next_retry_backoff);
+    syslog(LOG_WARNING, "%s (pid: '%lu', random_input: '%u', current_attempt: %d'): RETRYING DB CONNECTION IN %u seconds....", __func__, pthread_self(), random_input, retry_params.attemptsDone,  next_retry_backoff);
+    ThreadSleep(next_retry_backoff);
+  } while ((!IS_PRESENT(db_ptr)) && (retry_status != BackoffAlgorithmRetriesExhausted));
+
+  return NULL;
 
 }
 
 #define COPY_SOCKET_CONNECTED_ADDRESSES \
 				sesn_ptr->ssptr->sock = nsocket;\
-				strcpy (sesn_ptr->ssptr->haddress, (char *)inet_ntoa(hisaddr.sin_addr));\
-				strcpy (sesn_ptr->ssptr->address, masterptr->main_listener_address);\
+				strcpy(sesn_ptr->ssptr->haddress, (char *)inet_ntoa(hisaddr.sin_addr));\
+				strcpy(sesn_ptr->ssptr->address, masterptr->main_listener_address);\
 				sesn_ptr->ssptr->hport = ntohs(hisaddr.sin_port);\
 				sesn_ptr->ssptr->port = masterptr->listen_on_port;
 
 
 #define LOCK_NEW_CONNECTIONS_QUEUE \
-		if ((lock_status = pthread_mutex_lock (&(sessions_delegator_ptr->new_connections.queue_mutex)))) {\
+		if ((lock_status = pthread_mutex_lock(&(sessions_delegator_ptr->new_connections.queue_mutex)))) {\
 			syslog(LOG_WARNING, "%s: COULD NOT LOCK on connection_queue_mutex (errno=%d)", __func__, errno);\
 		}
 
 #define UNLOCK_NEW_CONNECTIONS_QUEUE \
-		if ((lock_status = pthread_mutex_unlock (&(sessions_delegator_ptr->new_connections.queue_mutex)))) {\
+		if ((lock_status = pthread_mutex_unlock(&(sessions_delegator_ptr->new_connections.queue_mutex)))) {\
 			syslog(LOG_WARNING, "AnswerTelnetRequest: COULD NOT UNLOCK on connection_queue_mutex (errno=%d)", errno);\
 		}
 
 
 static inline void
-InitHashTables ()
+InitHashTables()
 {// Hashtables
 	SessionsDelegator *const sd_ptr = sessions_delegator_ptr;
 
@@ -619,12 +820,23 @@ InitHashTables ()
 
 }
 
-static bool _IsRateLimitExceededForNewConnection (struct sockaddr_in *addr);
+/**
+ * @brief register a scheduled job to check for expired sessions.
+ */
+void
+InitialiseScheduledJobTypeForSessionsTimeouts()
+{
+  RegisterScheduledJobType(GetScheduledJobsStore(), GetScheduledJobTypeForSessionTimeout());
+  InsertScheduledJob(GetScheduledJobsStore(), GetScheduledJobForSessionTimeout());
+}
+
+static bool
+_IsRateLimitExceededForNewConnection(struct sockaddr_in *addr);
 
 #ifdef CONFIG_USE_LOCKLESS_NEW_CONNECTIONS_QUEUE
 
 int
-AnswerTelnetRequest (Socket *s_ptr_listening)
+AnswerTelnetRequest(Socket *s_ptr_listening, int interval)
 {
 	int	nsocket,
 			sin_size;
@@ -637,7 +849,7 @@ AnswerTelnetRequest (Socket *s_ptr_listening)
 	int this_errno = errno;
 
 	if ((nsocket < 0) && (this_errno != EWOULDBLOCK)) {
-		syslog (LOG_ERR, LOGSTR_MAINLISTENER_ACCEPT_ERROR,  __func__, masterptr->listen_on_port, this_errno, strerror(this_errno), LOGCODE_MAINLISTENER_ACCEPT_ERROR);
+		syslog(LOG_ERR, LOGSTR_MAINLISTENER_ACCEPT_ERROR,  __func__, masterptr->listen_on_port, this_errno, strerror(this_errno), LOGCODE_MAINLISTENER_ACCEPT_ERROR);
 
 		return 0;
 	}
@@ -650,9 +862,12 @@ AnswerTelnetRequest (Socket *s_ptr_listening)
 #endif
 
   int opt = 1;
-  setsockopt (nsocket, SOL_SOCKET, SO_KEEPALIVE, (void *)&opt, sizeof(int));
-
-  SetSocketFlags (nsocket, 1, O_NONBLOCK);
+  int val = 1;
+  setsockopt(nsocket, SOL_SOCKET, SO_KEEPALIVE, (void *)&opt, sizeof(int));
+  if (EXTRA_KEEPALIVE_OPTIONS_VALID(interval)) {
+    ConfigureSocketKeepAliveOptions(nsocket, interval);
+  }
+  SetSocketFlags(nsocket, 1, O_NONBLOCK);
 
    //up-to this point we have a fully connected socket
 
@@ -685,7 +900,7 @@ AnswerTelnetRequest (Socket *s_ptr_listening)
   const char *marshal_msg = PIPE_GO_MSG;
   ssize_t actual_written_size = 0;
 
-  ///syslog (LOG_INFO, "AnswerTelnetRequest: ATTEMPTING to write to 'New Connections Pipe'...");
+  //Signal to delegator via event loop that queue contains an entry for fetching
   Session *sesn_ptr_pipe = WORK_DELEGATOR_PIPE_SESSION;
   while (actual_written_size < (sizeof(PIPE_GO_MSG) - 1)) {
     ssize_t written = write(WORK_DELEGATOR_PIPE_WRITE_END(sesn_ptr_pipe), marshal_msg + actual_written_size, (sizeof(PIPE_GO_MSG) - 1) - actual_written_size);
@@ -849,11 +1064,11 @@ int AnswerTelnetRequest (Socket *s_ptr_listening)
 
 #endif	//_CONFIG_LISTENER_CONNECTION_QUEUE_SZ
 
-#include <ufsrv_core/ratelimit/ratelimit.h>
+#include <ratelimit/ratelimit.h>
 __unused static bool
-_IsRateLimitExceededForNewConnection (struct sockaddr_in *addr)
+_IsRateLimitExceededForNewConnection(struct sockaddr_in *addr)
 {
-  char ipstr[INET6_ADDRSTRLEN];
+  char ipstr[INET6_ADDRSTRLEN] = {0};
   __unused int port;
 
   if (((struct sockaddr_storage *)addr)->ss_family == AF_INET) {
@@ -873,7 +1088,7 @@ _IsRateLimitExceededForNewConnection (struct sockaddr_in *addr)
 //main processing port
 //
 Socket *
-InitMainListener (int protocol_id)
+InitMainListener(int protocol_id)
 {
 	if (_PROTOCOL_CLLBACKS_LISTENER_INIT(protocols_registry_ptr, protocol_id)) {
 		UFSRVResult *res_ptr=_PROTOCOL_CLLBACKS_LISTENER_INIT_INVOKE(protocols_registry_ptr, protocol_id);
@@ -885,7 +1100,7 @@ InitMainListener (int protocol_id)
 }
 
 void
-InitWorkersDelegator (int protocol_id)
+InitWorkersDelegator(int protocol_id)
 {
 	if (_PROTOCOL_CLLBACKS_WORKERS_DELEGATOR_INIT(protocols_registry_ptr, protocol_id))
 	{
@@ -897,20 +1112,20 @@ InitWorkersDelegator (int protocol_id)
 
 }//eo
 
-static UFSRVResult *_CacheBackendUfsrvConfigRegisterUfsrverInstance (PersistanceBackend	*pers_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_CacheBackendUfsrvConfigRegisterUfserverInstance (PersistanceBackend	*pers_ptr, UFSRVResult *res_ptr);
 static UFSRVResult * _CacheBackendSetUfsrvConfigReqid (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup);
-static UFSRVResult *_CacheBackendUfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, time_t activity_time, UFSRVResult *res_ptr);
-static UFSRVResult *_CacheBackendUfsrvConfigRegisterUfsrverActivityWithSession (Session *sesn_ptr, time_t activity_time);
+static UFSRVResult *_CacheBackendUfsrvConfigRegisterUfserverActivity (PersistanceBackend	*pers_ptr, time_t activity_time, UFSRVResult *res_ptr);
+static UFSRVResult *_CacheBackendUfsrvConfigRegisterUfserverActivityWithSession (Session *sesn_ptr, time_t activity_time);
 static UFSRVResult *_CacheBackendUfsrvConfigGetGeoGroup (Session *sesn_ptr, const char *server_class, unsigned, CollectionDescriptor *, CollectionDescriptor *);
 static UFSRVResult *_CacheBackendUfsrvConfigGetGeogroupSize (Session *sesn_ptr);
-static UFSRVResult *_CacheBackendUfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *server_class, int geo_group, int);
+static UFSRVResult *_CacheBackendUfsrvConfigGetUfserverActivityTime (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup, int serverid_by_user);
 
 /**
  * 	@brief: given a geogroup get a server instance to be used for request serving. server_class is the calls of
  * 	servers responsible for serving. ufsrvap --> ufsrv
  */
 UfsrvInstanceDescriptor *
-GetUfsrvInstance (Session *sesn_ptr, const char *server_class, unsigned ufsrv_geogroup, UfsrvInstanceDescriptor *instance_ptr_out)
+GetUfsrvInstance(Session *sesn_ptr, const char *server_class, unsigned ufsrv_geogroup, UfsrvInstanceDescriptor *instance_ptr_out)
 {
 	int 									collection_idxs[CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP]				=	{0};
 	time_t								collection_idxs_times[CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP]	=	{0};
@@ -919,20 +1134,20 @@ GetUfsrvInstance (Session *sesn_ptr, const char *server_class, unsigned ufsrv_ge
 
 	if (unlikely((ufsrv_geogroup == 0)))	ufsrv_geogroup = _CONFIGDEFAULT_DEFAULT_UFSRVGEOGROUP;
 
-	UfsrvConfigGetGeoGroup (sesn_ptr, server_class, ufsrv_geogroup, &collection_ufsrv_ids, &collection_ufsrv_times);
+	UfsrvConfigGetGeoGroup(sesn_ptr, server_class, ufsrv_geogroup, &collection_ufsrv_ids, &collection_ufsrv_times);
 
 	if (collection_ufsrv_ids.collection_sz > 0) {
 		size_t		counter		=	0;
 		time_t		last_activity_time,
 							time_now	=	time(NULL);
-		long long reqid			=	UfsrvConfigGetReqid (sesn_ptr, server_class, ufsrv_geogroup);
+		long long reqid			=	UfsrvConfigGetReqid(sesn_ptr, server_class, ufsrv_geogroup);
 
 		if (reqid > 0) {
 			int ufsrv_instance									=	reqid % collection_ufsrv_ids.collection_sz;
-			int ufsrv_instance_idx							=	ufsrv_instance < CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP?ufsrv_instance:CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP-1;
+			int ufsrv_instance_idx							=	ufsrv_instance < CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP? ufsrv_instance : CONFIF_MAX_UFSRV_INSTANCE_PER_GEOGROUP - 1;
 
 			do {
-				last_activity_time = UfsrvConfigGetUfsrverActivityTime (sesn_ptr, server_class, ufsrv_geogroup, collection_idxs[ufsrv_instance_idx]);
+				last_activity_time = UfsrvConfigGetUfsrverActivityTime(sesn_ptr, server_class, ufsrv_geogroup, collection_idxs[ufsrv_instance_idx]);
 				if (time_now - last_activity_time < _CONFIGDEDAULT_IDLE_TIME_INTERVAL_INTRA_REQUEST) {
 					instance_ptr_out->serverid_by_user	=	collection_idxs[ufsrv_instance_idx];
 					instance_ptr_out->reqid							=	reqid;
@@ -958,11 +1173,11 @@ GetUfsrvInstance (Session *sesn_ptr, const char *server_class, unsigned ufsrv_ge
 }
 
 bool
-UfsrvConfigRegisterUfsrverInstance (PersistanceBackend	*pers_ptr)
+UfsrvConfigRegisterUfsrverInstance(PersistanceBackend	*pers_ptr)
 {
-	UFSRVResult 	res={0};
-	_CacheBackendUfsrvConfigRegisterUfsrverInstance (pers_ptr, &res);
-	 if (res.result_type==RESULT_TYPE_SUCCESS)	return  true;
+	UFSRVResult 	res = {0};
+  _CacheBackendUfsrvConfigRegisterUfserverInstance(pers_ptr, &res);
+	 if (res.result_type == RESULT_TYPE_SUCCESS)	return  true;
 
 	 return false;
 }
@@ -973,9 +1188,9 @@ UfsrvConfigRegisterUfsrverInstance (PersistanceBackend	*pers_ptr)
   * 	@WARNING: This doesn't have Session linked to it so must use send_command_sessionless
   */
  static UFSRVResult *
-_CacheBackendUfsrvConfigRegisterUfsrverInstance (PersistanceBackend	*pers_ptr, UFSRVResult *res_ptr)
+_CacheBackendUfsrvConfigRegisterUfserverInstance(PersistanceBackend	*pers_ptr, UFSRVResult *res_ptr)
 {
-	int rescode;
+	int rescode = RESCODE_BACKEND_DATA;
 	redisReply 					*redis_ptr	=	NULL;
 
 	if (!(redis_ptr = (*pers_ptr->send_command_sessionless)(pers_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTRS_IDENTIFIERS_SET, masterptr->server_class, masterptr->ufsrv_geogroup, masterptr->serverid_by_user, getpid(), "0.0.0.0", masterptr->when, masterptr->serverid, masterptr->when)))	goto return_redis_error;
@@ -1021,9 +1236,9 @@ _CacheBackendUfsrvConfigRegisterUfsrverInstance (PersistanceBackend	*pers_ptr, U
  * 	@brief: wrapper routine
  */
 long long
-UfsrvConfigGetReqid (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup)
+UfsrvConfigGetReqid(Session *sesn_ptr, const char *server_class, int ufsrv_geogroup)
 {
- _CacheBackendSetUfsrvConfigReqid (sesn_ptr, server_class, ufsrv_geogroup);
+ _CacheBackendSetUfsrvConfigReqid(sesn_ptr, server_class, ufsrv_geogroup);
  if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	return  (long long)(intptr_t)SESSION_RESULT_USERDATA(sesn_ptr);
 
  return 0;
@@ -1033,9 +1248,9 @@ UfsrvConfigGetReqid (Session *sesn_ptr, const char *server_class, int ufsrv_geog
  * 	@brief: Increment and return the request counter
  */
  static UFSRVResult *
- _CacheBackendSetUfsrvConfigReqid (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup)
+ _CacheBackendSetUfsrvConfigReqid(Session *sesn_ptr, const char *server_class, int ufsrv_geogroup)
  {
- 	int rescode;
+ 	int rescode = RESCODE_BACKEND_DATA;
 
  	PersistanceBackend	*pers_ptr		=	sesn_ptr->persistance_backend;
  	redisReply 					*redis_ptr	=	NULL;
@@ -1069,9 +1284,9 @@ UfsrvConfigGetReqid (Session *sesn_ptr, const char *server_class, int ufsrv_geog
  }
 
  time_t
-UfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup, int serverid_by_user)
+UfsrvConfigGetUfsrverActivityTime(Session *sesn_ptr, const char *server_class, int ufsrv_geogroup, int serverid_by_user)
 {
-	_CacheBackendUfsrvConfigGetUfsrverActivityTime (sesn_ptr, server_class, ufsrv_geogroup, serverid_by_user);
+  _CacheBackendUfsrvConfigGetUfserverActivityTime(sesn_ptr, server_class, ufsrv_geogroup, serverid_by_user);
 	if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
 		return ((time_t)(intptr_t)SESSION_RESULT_USERDATA(sesn_ptr));
 	}
@@ -1080,9 +1295,9 @@ UfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *server_class, 
 }
 
  static UFSRVResult *
-_CacheBackendUfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup, int serverid_by_user)
+_CacheBackendUfsrvConfigGetUfserverActivityTime(Session *sesn_ptr, const char *server_class, int ufsrv_geogroup, int serverid_by_user)
 {
-	int rescode;
+	int rescode = RESCODE_BACKEND_DATA;
 
 	PersistanceBackend	*pers_ptr		=	sesn_ptr->persistance_backend;
 	redisReply 					*redis_ptr	=	NULL;
@@ -1119,18 +1334,18 @@ _CacheBackendUfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *s
   * 	@brief wrapper function
   */
  bool
- UfsrvConfigRegisterUfsrverActivityWithSession (Session *sesn_ptr, time_t activity_time)
+ UfsrvConfigRegisterUfserverActivityWithSession(Session *sesn_ptr, time_t activity_time)
  {
- 	_CacheBackendUfsrvConfigRegisterUfsrverActivityWithSession (sesn_ptr, activity_time);
+   _CacheBackendUfsrvConfigRegisterUfserverActivityWithSession(sesn_ptr, activity_time);
  	 if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	return  true;
 
  	 return false;
  }
 
  static UFSRVResult *
- _CacheBackendUfsrvConfigRegisterUfsrverActivityWithSession (Session *sesn_ptr, time_t activity_time)
+ _CacheBackendUfsrvConfigRegisterUfserverActivityWithSession(Session *sesn_ptr, time_t activity_time)
  {
- 	int rescode;
+ 	int rescode = RESCODE_BACKEND_DATA;
 
  	PersistanceBackend	*pers_ptr		=	sesn_ptr->persistance_backend;
  	redisReply 					*redis_ptr	=	NULL;
@@ -1164,10 +1379,10 @@ _CacheBackendUfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *s
  }
 
 bool
-UfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, time_t activity_time)
+UfsrvConfigRegisterUfsrverActivity(PersistanceBackend	*pers_ptr, time_t activity_time)
 {
 	UFSRVResult 	res = {0};
-	_CacheBackendUfsrvConfigRegisterUfsrverActivity (pers_ptr, activity_time, &res);
+  _CacheBackendUfsrvConfigRegisterUfserverActivity(pers_ptr, activity_time, &res);
 	 if (res.result_type == RESULT_TYPE_SUCCESS)	return  true;
 
 	 return false;
@@ -1180,9 +1395,9 @@ UfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, time_t activit
   * 	@WARNING: This doesn't have Session linked to it so must use send_command_sessionless
   */
  static UFSRVResult *
-_CacheBackendUfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, time_t activity_time, UFSRVResult *res_ptr)
+_CacheBackendUfsrvConfigRegisterUfserverActivity(PersistanceBackend	*pers_ptr, time_t activity_time, UFSRVResult *res_ptr)
 {
-	int rescode;
+	int rescode = RESCODE_BACKEND_DATA;
 	redisReply 					*redis_ptr	=	NULL;
 
 	if (!(redis_ptr = (*pers_ptr->send_command_sessionless)(pers_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_ATTR_LAST_SET, masterptr->server_class, masterptr->ufsrv_geogroup, masterptr->serverid_by_user, activity_time)))	goto redis_connectivity_error;
@@ -1221,11 +1436,11 @@ _CacheBackendUfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, t
  * 	@returns: collection of server id (integers)
  */
  CollectionDescriptor *
- UfsrvConfigGetGeoGroup (Session *sesn_ptr, const char *server_class, unsigned ufsrv_geogroup, CollectionDescriptor *collection_ptr_ids, CollectionDescriptor *collection_ptr_times)
+ UfsrvConfigGetGeoGroup(Session *sesn_ptr, const char *server_class, unsigned ufsrv_geogroup, CollectionDescriptor *collection_ptr_ids, CollectionDescriptor *collection_ptr_times)
  {
-	 _CacheBackendUfsrvConfigGetGeoGroup (sesn_ptr, server_class, ufsrv_geogroup, collection_ptr_ids, collection_ptr_times);
+	 _CacheBackendUfsrvConfigGetGeoGroup(sesn_ptr, server_class, ufsrv_geogroup, collection_ptr_ids, collection_ptr_times);
 
-	 if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	return  (CollectionDescriptor *)SESSION_RESULT_USERDATA(sesn_ptr);
+	 if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	return (CollectionDescriptor *)SESSION_RESULT_USERDATA(sesn_ptr);
 
 	 return NULL;
  }
@@ -1236,9 +1451,9 @@ _CacheBackendUfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, t
   *
   */
 static UFSRVResult *
-_CacheBackendUfsrvConfigGetGeoGroup (Session *sesn_ptr, const char *server_class, unsigned ufsrv_geogroup, CollectionDescriptor *collection_ptr_ids, CollectionDescriptor *collection_ptr_times_DEL)
+_CacheBackendUfsrvConfigGetGeoGroup(Session *sesn_ptr, const char *server_class, unsigned ufsrv_geogroup, CollectionDescriptor *collection_ptr_ids, CollectionDescriptor *collection_ptr_times_DEL)
 {
-	bool default_group_flagged=false;
+	bool default_group_flagged = false;
 	int rescode;
 
 	PersistanceBackend	*pers_ptr		=	sesn_ptr->persistance_backend;
@@ -1246,56 +1461,47 @@ _CacheBackendUfsrvConfigGetGeoGroup (Session *sesn_ptr, const char *server_class
 
 	run_command:
 
-	if (!(redis_ptr=(*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_GETALL, server_class, ufsrv_geogroup)))	goto return_redis_error;
+	if (!(redis_ptr = (*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_GETALL, server_class, ufsrv_geogroup)))	goto return_redis_error;
 
-	if (redis_ptr->type==REDIS_REPLY_ARRAY && redis_ptr->elements>0)
-	{
+	if (redis_ptr->type == REDIS_REPLY_ARRAY && redis_ptr->elements > 0) {
 		int 		*ufsrv_group_ids				=	(int *)collection_ptr_ids->collection;
 		//time_t	*ufsrv_group_times	=	(time_t *)collection_ptr_times->collection;
 
-		for (size_t i=0; i<redis_ptr->elements; i++)
-		{
-			ufsrv_group_ids[i]=atoi(redis_ptr->element[i]->str);
+		for (size_t i=0; i<redis_ptr->elements; i++) {
+			ufsrv_group_ids[i] = atoi(redis_ptr->element[i]->str);
 		}
 
-		collection_ptr_ids->collection_sz=redis_ptr->elements;
+		collection_ptr_ids->collection_sz = redis_ptr->elements;
 		freeReplyObject(redis_ptr);
 
 		_RETURN_RESULT_SESN(sesn_ptr, collection_ptr_ids, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
-	}
-	else
-	{
+	} else {
 		//group is empty (eg servers all died, or that group dosnt have assigned servers), reassign to known default group
 		if (unlikely(default_group_flagged))	goto return_default_group_flagged;
 
-		ufsrv_geogroup=_CONFIGDEFAULT_DEFAULT_UFSRVGEOGROUP;
-		default_group_flagged=true;//to avoid endless loop in case the default grous has also died
+		ufsrv_geogroup = _CONFIGDEFAULT_DEFAULT_UFSRVGEOGROUP;
+		default_group_flagged = true;//to avoid endless loop in case the default grous has also died
 		goto run_command;
 	}
 
-	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_redis_error;
-	if (redis_ptr->type==REDIS_REPLY_NIL)		goto return_redis_error;
-
 	return_redis_error:
-	if (IS_EMPTY(redis_ptr))
-	{
+	if (IS_EMPTY(redis_ptr)) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: CACHE BACKEND: NO REPLY RECEIVED...", __func__, pthread_self());
+    _RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_LOGIC_EMPTY_RESOURCE);
 	}
-	if (redis_ptr->type==REDIS_REPLY_ERROR)
-	{
+	if (redis_ptr->type == REDIS_REPLY_ERROR) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: REDIS RESULTSET. Error: '%s'", __func__, pthread_self(), redis_ptr->str);
-	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+	 rescode = RESCODE_BACKEND_DATA; goto return_error;
 	}
-	if (redis_ptr->type==REDIS_REPLY_NIL)
-	{
+	if (redis_ptr->type == REDIS_REPLY_NIL) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: NIL SET",  __func__, pthread_self());
-	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+	 rescode = RESCODE_BACKEND_DATA; goto return_error;
 	}
 
 	return_default_group_flagged:
 	syslog(LOG_ERR, "%s {pid:'%lu, o:'%p', ufsrv_geogroup_user:'%d', ufsrv_geogroup_default:'%d'}: DEFAULT GEO GROUP WAS FLAGGED UNAVAILABLE",  __func__, pthread_self(), sesn_ptr, SESSION_UFSRV_GEOGROUP(sesn_ptr), ufsrv_geogroup);
-	rescode=RESCODE_UFSRVGEOGROUP_DEFAULT;
-	collection_ptr_ids->collection_sz=0;
+	rescode = RESCODE_UFSRVGEOGROUP_DEFAULT;
+	collection_ptr_ids->collection_sz = 0;
 
 	return_error:
 	freeReplyObject(redis_ptr);
@@ -1312,46 +1518,41 @@ _CacheBackendUfsrvConfigGetGeoGroup (Session *sesn_ptr, const char *server_class
   * 	@returns: collection of server id (integers)
   */
  __unused static UFSRVResult *
- _CacheBackendUfsrvConfigGetGeoGroupInstances (Session *sesn_ptr, CollectionDescriptor *collection_ptr)
+ _CacheBackendUfsrvConfigGetGeoGroupInstances(Session *sesn_ptr, CollectionDescriptor *collection_ptr)
  {
- 	int rescode;
+ 	int rescode = RESCODE_BACKEND_DATA;
 
  	PersistanceBackend	*pers_ptr		=	sesn_ptr->persistance_backend;
  	redisReply 					*redis_ptr	=	NULL;
 
- 	if (!(redis_ptr=(*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_GETALL, masterptr->server_class, SESSION_UFSRV_GEOGROUP(sesn_ptr))))	goto return_redis_error;
+ 	if (!(redis_ptr = (*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBER_GETALL, masterptr->server_class, SESSION_UFSRV_GEOGROUP(sesn_ptr))))	goto return_redis_error;
 
- 	if (redis_ptr->type==REDIS_REPLY_ARRAY && redis_ptr->elements>0)
- 	{
- 		int *ufsrv_group=(int *)collection_ptr->collection;
- 		for (size_t i=0; i<redis_ptr->elements; i++)
-		{
+ 	if (redis_ptr->type == REDIS_REPLY_ARRAY && redis_ptr->elements > 0) {
+ 		int *ufsrv_group = (int *)collection_ptr->collection;
+ 		for (size_t i=0; i<redis_ptr->elements; i++) {
  			char *last_service_time;
- 			if ((last_service_time=strchr(redis_ptr->element[0]->str, ':')))	{*last_service_time++='\0';}
- 			ufsrv_group[i]=atoi(redis_ptr->element[i]->str);
+ 			if ((last_service_time = strchr(redis_ptr->element[0]->str, ':')))	{*last_service_time++='\0';}
+ 			ufsrv_group[i] = atoi(redis_ptr->element[i]->str);
 		}
- 		collection_ptr->collection_sz=redis_ptr->elements;
+ 		collection_ptr->collection_sz = redis_ptr->elements;
  		freeReplyObject(redis_ptr);
  		_RETURN_RESULT_SESN(sesn_ptr, collection_ptr, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
  	}
 
- 	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_redis_error;
- 	if (redis_ptr->type==REDIS_REPLY_NIL)		goto return_redis_error;
+ 	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_redis_error;
+ 	if (redis_ptr->type == REDIS_REPLY_NIL)		goto return_redis_error;
 
  	return_redis_error:
- 	if (IS_EMPTY(redis_ptr))
- 	{
+ 	if (IS_EMPTY(redis_ptr)) {
  	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: CACHE BACKEND: NO REPLY RECEIVED...", __func__, pthread_self());
  	}
- 	if (redis_ptr->type==REDIS_REPLY_ERROR)
- 	{
+ 	if (redis_ptr->type == REDIS_REPLY_ERROR) {
  	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: REDIS RESULTSET. Error: '%s'", __func__, pthread_self(), redis_ptr->str);
  	 rescode=RESCODE_BACKEND_DATA; goto return_error;
  	}
- 	if (redis_ptr->type==REDIS_REPLY_NIL)
- 	{
+ 	if (redis_ptr->type == REDIS_REPLY_NIL) {
  	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: NIL SET",  __func__, pthread_self());
- 	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+ 	 rescode = RESCODE_BACKEND_DATA; goto return_error;
  	}
 
  	return_error:
@@ -1365,9 +1566,9 @@ _CacheBackendUfsrvConfigGetGeoGroup (Session *sesn_ptr, const char *server_class
   * 	@brief: Wrapper routine to get the number of present servers within a give geogroup
   */
  size_t
- UfsrvConfigGetGeogroupSize (Session *sesn_ptr)
+ UfsrvConfigGetGeogroupSize(Session *sesn_ptr)
  {
-	 _CacheBackendUfsrvConfigGetGeogroupSize (sesn_ptr);
+	 _CacheBackendUfsrvConfigGetGeogroupSize(sesn_ptr);
 	 if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	return  (size_t)(intptr_t)SESSION_RESULT_USERDATA(sesn_ptr);
 
 	 return 0;
@@ -1377,39 +1578,36 @@ _CacheBackendUfsrvConfigGetGeoGroup (Session *sesn_ptr, const char *server_class
   * 	@brief: return the number of servers present in a given geogroup area
   */
  static UFSRVResult *
-_CacheBackendUfsrvConfigGetGeogroupSize (Session *sesn_ptr)
+_CacheBackendUfsrvConfigGetGeogroupSize(Session *sesn_ptr)
 {
-	int rescode;
+	int rescode = RESCODE_BACKEND_DATA;
 
 	PersistanceBackend	*pers_ptr		=	sesn_ptr->persistance_backend;
 	redisReply 					*redis_ptr	=	NULL;
 
-	if (!(redis_ptr=(*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBERS_SZ, masterptr->server_class, SESSION_UFSRV_GEOGROUP(sesn_ptr))))	goto return_redis_error;
+	if (!(redis_ptr = (*pers_ptr->send_command)(sesn_ptr, REDIS_CMD_CONFIG_UFSRV_MEMBERS_SZ, masterptr->server_class, SESSION_UFSRV_GEOGROUP(sesn_ptr))))	goto return_redis_error;
 
-	if (redis_ptr->type==REDIS_REPLY_INTEGER)// && redis_ptr->integer==1) //it can still suceed with 0 if the element is already in the set
+	if (redis_ptr->type == REDIS_REPLY_INTEGER)// && redis_ptr->integer==1) //it can still suceed with 0 if the element is already in the set
 	{
-		long long group_sz=redis_ptr->integer;
+		long long group_sz = redis_ptr->integer;
 		freeReplyObject(redis_ptr);
 		_RETURN_RESULT_SESN(sesn_ptr, (void *) (uintptr_t)group_sz, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA);
 	}
 
-	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_redis_error;
-	if (redis_ptr->type==REDIS_REPLY_NIL)		goto return_redis_error;
+	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_redis_error;
+	if (redis_ptr->type == REDIS_REPLY_NIL)		goto return_redis_error;
 
 	return_redis_error:
-	if (IS_EMPTY(redis_ptr))
-	{
+	if (IS_EMPTY(redis_ptr)) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: CACHE BACKEND: NO REPLY RECEIVED...", __func__, pthread_self());
 	}
-	if (redis_ptr->type==REDIS_REPLY_ERROR)
-	{
+	if (redis_ptr->type == REDIS_REPLY_ERROR) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: REDIS RESULTSET. Error: '%s'", __func__, pthread_self(), redis_ptr->str);
-	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+	 rescode = RESCODE_BACKEND_DATA; goto return_error;
 	}
-	if (redis_ptr->type==REDIS_REPLY_NIL)
-	{
+	if (redis_ptr->type == REDIS_REPLY_NIL) {
 	 syslog(LOG_DEBUG, "%s {pid:'%lu}: ERROR: NIL SET",  __func__, pthread_self());
-	 rescode=RESCODE_BACKEND_DATA; goto return_error;
+	 rescode = RESCODE_BACKEND_DATA; goto return_error;
 	}
 
 	return_error:

@@ -1,5 +1,5 @@
 /**
-* Copyright (C) 2015-2020 unfacd works
+* Copyright (C) 2015-2021 unfacd works
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU Affero General Public License as published by
@@ -53,7 +53,7 @@ int decode_hixie(char *, size_t, u_char *, size_t, unsigned int *, unsigned int 
 int encode_hybi(SocketMessage *, const unsigned char *, size_t, unsigned char *, size_t, unsigned int);
 int decode_hybi(SocketMessage *, unsigned char *, ssize_t, unsigned char *, ssize_t, unsigned int *, unsigned int *);
 int
-encode_hybi_client	(SocketMessage *sm_ptr, const unsigned char *src, size_t srclength, unsigned char *target, size_t targsize, unsigned int opcode);
+encode_hybi_client(SocketMessage *sm_ptr, const unsigned char *src, size_t srclength, unsigned char *target, size_t targsize, unsigned int opcode);
 int decode_hybi_client(SocketMessage *, unsigned char *, ssize_t, unsigned char *, ssize_t, unsigned int *, unsigned int *);
 int parse_hixie76_key(char * );
 int gen_md5(Socket *, char *);

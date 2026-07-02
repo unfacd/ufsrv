@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -21,17 +21,17 @@
 
 #include <main.h>
 #include <state_command_controller.h>
-#include <fence.h>
-#include <ufsrv_core/fence/fence_state.h>
-#include <ufsrv_core/fence/fence_utils.h>
-#include <fence_proto.h>
-#include <ufsrv_core/user/user_backend.h>
-#include <ufsrv_core/user/users_protobuf.h>
+#include <ufsrvmsg_core/fence/fence.h>
+#include <ufsrvmsg_core/fence/fence_state.h>
+#include <ufsrvmsg_core/fence/fence_utils.h>
+#include <ufsrvmsg_core/fence/fence_proto.h>
+#include <ufsrvmsg_core/user/user_backend.h>
+#include <ufsrvmsg_core/user/users_protobuf.h>
 #include <ufsrvwebsock/include/protocol_websocket.h>
 #include <ufsrvcmd_user_callbacks.h>
 #include <ufsrvcmd_callbacks.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
-#include <ufsrvuid.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <uflib/ufsrvuid.h>
 
 extern ufsrv							*const masterptr;
 extern __thread ThreadContext ufsrv_thread_context;
@@ -53,12 +53,12 @@ extern __thread ThreadContext ufsrv_thread_context;
          } \
  }; \
 
-inline static UFSRVResult *_CommandControllerStateTyping (InstanceContextForSession *, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr);
+inline static UFSRVResult *_CommandControllerStateTyping(InstanceContextForSession *, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr);
 
 inline static UFSRVResult *_MarshalStateForTyping(CommandBaseContext *cmd_base_ctx_ptr);
 
-static UFSRVResult *_HandleStateCommandError (InstanceHolderForSession *, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_receivedinator, int rescode, int command_type);
-static void	_BuildErrorHeaderForStateCommand (CommandHeader *header_ptr, CommandHeader *header_ptr_originator, int errcode, int command_type);
+static UFSRVResult *_HandleStateCommandError(InstanceHolderForSession *, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_receivedinator, int rescode, int command_type);
+static void	_BuildErrorHeaderForStateCommand(CommandHeader *header_ptr, CommandHeader *header_ptr_originator, int errcode, int command_type);
 
 
 UFSRVResult *IsUserAllowedToGenerateState(CommandBaseContext *cmd_ctx, CommandMarshallerCallback command_marshaller, unsigned long call_flags);
@@ -89,10 +89,10 @@ typedef struct MarshalMessageEnvelopeForState MarshalMessageEnvelopeForState;
 			.user_record_originator	=	&user_record_originator	\
 	}
 
-inline static void _PrepareMarshalMessageForState (MarshalMessageEnvelopeForState *envelope_ptr, StateCommandContext *cmd_ctx_ptr, enum _StateCommand__CommandTypes, enum _CommandArgs command_arg);
+inline static void _PrepareMarshalMessageForState(MarshalMessageEnvelopeForState *envelope_ptr, StateCommandContext *cmd_ctx_ptr, enum _StateCommand__CommandTypes, enum _CommandArgs command_arg);
 
 inline static void
-_PrepareMarshalMessageForState (MarshalMessageEnvelopeForState *envelope_ptr, StateCommandContext *cmd_ctx_ptr, enum _StateCommand__CommandTypes command_type, enum _CommandArgs command_arg)
+_PrepareMarshalMessageForState(MarshalMessageEnvelopeForState *envelope_ptr, StateCommandContext *cmd_ctx_ptr, enum _StateCommand__CommandTypes command_type, enum _CommandArgs command_arg)
 {
   envelope_ptr->envelope->ufsrvcommand								=	envelope_ptr->ufsrv_command_wire;
 
@@ -138,7 +138,7 @@ _PrepareMarshalMessageForState (MarshalMessageEnvelopeForState *envelope_ptr, St
  * 	@unlocks NONE:
  */
 UFSRVResult *
-CommandCallbackControllerStateCommand (InstanceContextForSession *ctx_ptr_local_user, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr)
+CommandCallbackControllerStateCommand(InstanceContextForSession *ctx_ptr_local_user, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr)
 {
   CommandHeader *command_header = data_msg_ptr->ufsrvcommand->statecommand->header;
 
@@ -150,10 +150,6 @@ CommandCallbackControllerStateCommand (InstanceContextForSession *ctx_ptr_local_
 
     default:
       syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', command:'%d'}: RECEIVED UNKNOWN STATE COMMAND", __func__, pthread_self(), ctx_ptr_local_user->sesn_ptr, command_header->command);
-  }
-
-  if (IS_PRESENT(wsm_ptr_received)) {
-    UfsrvCommandInvokeUserCommand(ctx_ptr_local_user, NULL, wsm_ptr_received, NULL, NULL, uOK_V1_IDX);
   }
 
   exit_release:
@@ -173,7 +169,7 @@ CommandCallbackControllerStateCommand (InstanceContextForSession *ctx_ptr_local_
  * 	@unlocks f_ptr:
  */
 inline static UFSRVResult *
-_CommandControllerStateTyping (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerStateTyping(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
   _BUILD_COMMAND_CONTEXT();
 
@@ -206,7 +202,7 @@ _CommandControllerStateTyping (InstanceContextForSession *ctx_ptr, WebSocketMess
  *  @dynamic_memory fence_records_ptr: array of FenceRecord initiated with dynamic values. Must be freed with DestructFenceRecordProto (FenceRecord **fence_records_ptr, unsigned count)
  */
 inline static UFSRVResult *
-_MarshalStateForTyping (CommandBaseContext *cmd_base_ctx_ptr)
+_MarshalStateForTyping(CommandBaseContext *cmd_base_ctx_ptr)
 {
   StateCommandContext *cmd_ctx_ptr = (StateCommandContext *)cmd_base_ctx_ptr;
   StateCommand *cmd_ptr_received = CMDCTX_DATA_MESSAGE(cmd_ctx_ptr)->ufsrvcommand->statecommand;
@@ -214,7 +210,8 @@ _MarshalStateForTyping (CommandBaseContext *cmd_base_ctx_ptr)
   _GENERATE_STATE_COMMAND_ENVELOPE_INITIALISATION();
 
   _PrepareMarshalMessageForState (&envelope_marshal, cmd_ctx_ptr, STATE_COMMAND__COMMAND_TYPES__TYPING, COMMAND_ARGS__SYNCED);
-  MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(CMDCTX_SESN_ORIGINATOR(cmd_ctx_ptr)), &(state_command.uid_originator), true);
+  ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(CMDCTX_SESN_ORIGINATOR(cmd_ctx_ptr)), &(state_command.uid_originator),
+                         true);
   state_command.has_uid_originator  = 1;
   state_command.fid                 = cmd_ptr_received->fid; state_command.has_fid = 1;
   state_command.type                = cmd_ptr_received->type;
@@ -235,7 +232,7 @@ _MarshalStateForTyping (CommandBaseContext *cmd_base_ctx_ptr)
  * 	@brief: Generalised command sending
  */
 inline static UFSRVResult *
-_MarshalCommandToUser	(InstanceHolderForSession *instance_sesn_ptr, InstanceHolderForSession *instance_sesn_ptr_target, Fence *f_ptr, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
+_MarshalCommandToUser(InstanceHolderForSession *instance_sesn_ptr, InstanceHolderForSession *instance_sesn_ptr_target, Fence *f_ptr, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
   Session *sesn_ptr_target = IS_PRESENT(instance_sesn_ptr_target)?SessionOffInstanceHolder(instance_sesn_ptr_target):NULL;
@@ -264,7 +261,7 @@ _MarshalCommandToUser	(InstanceHolderForSession *instance_sesn_ptr, InstanceHold
  *
  */
 static void
-_BuildErrorHeaderForStateCommand (CommandHeader *header_ptr, CommandHeader *header_ptr_originator, int errcode, int command_type)
+_BuildErrorHeaderForStateCommand(CommandHeader *header_ptr, CommandHeader *header_ptr_originator, int errcode, int command_type)
 {
   switch (errcode)
   {
@@ -273,7 +270,7 @@ _BuildErrorHeaderForStateCommand (CommandHeader *header_ptr, CommandHeader *head
       header_ptr->args				=	COMMAND_ARGS__REJECTED;									header_ptr->has_args				=	1;
       break;
 
-    case RESCODE_FENCE_FENCE_MEMBERSHIP:
+    case RESCODE_FENCE_MEMBERSHIP:
       header_ptr->args_error	=	FENCE_COMMAND__ERRORS__NOT_MEMBER; 			header_ptr->has_args_error	=	1;
       header_ptr->args				=	COMMAND_ARGS__REJECTED;									header_ptr->has_args				=	1;
       break;
@@ -321,7 +318,7 @@ _BuildErrorHeaderForStateCommand (CommandHeader *header_ptr, CommandHeader *head
  * 	@unlocks: none
  */
 __unused static UFSRVResult *
-_HandleStateCommandError (InstanceHolderForSession *instance_sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, int rescode, int command_type)
+_HandleStateCommandError(InstanceHolderForSession *instance_sesn_ptr, FenceStateDescriptor *fence_state_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received, int rescode, int command_type)
 {
   Envelope 					command_envelope	= ENVELOPE__INIT;
   CommandHeader 		header						= COMMAND_HEADER__INIT;
@@ -351,7 +348,7 @@ _HandleStateCommandError (InstanceHolderForSession *instance_sesn_ptr, FenceStat
   header.when													=	command_envelope.timestamp; header.has_when		=	1;
   header.cid													=	SESSION_ID(sesn_ptr);				header.has_cid		=	1;
 
-  _BuildErrorHeaderForStateCommand (&header, data_msg_ptr_received->ufsrvcommand->statecommand->header, rescode, command_type);
+  _BuildErrorHeaderForStateCommand(&header, data_msg_ptr_received->ufsrvcommand->statecommand->header, rescode, command_type);
 
 #ifdef __UF_TESTING
   syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', uid:'%lu', cid:'%lu', arg_error:'%d', rescode:'%d'}: Marshaling Error response message...", __func__, pthread_self(), sesn_ptr, SESSION_USERID(sesn_ptr), SESSION_ID(sesn_ptr), header.args_error, rescode);
@@ -373,7 +370,7 @@ _HandleStateCommandError (InstanceHolderForSession *instance_sesn_ptr, FenceStat
  * 	@unlocks sesn_ptr_originator: on error or just before exit
  */
 UFSRVResult *
-IsUserAllowedToGenerateState (CommandBaseContext *cmd_base_ctx, CommandMarshallerCallback command_marshaller, unsigned long call_flags)
+IsUserAllowedToGenerateState(CommandBaseContext *cmd_base_ctx, CommandMarshallerCallback command_marshaller, unsigned long call_flags)
 {
   StateCommandContext *cmd_ctx = (StateCommandContext *)cmd_base_ctx;
 
@@ -437,7 +434,7 @@ IsUserAllowedToGenerateState (CommandBaseContext *cmd_base_ctx, CommandMarshalle
       }
     }
 
-    DestructFenceRawSessionList (&raw_session_list, false);
+    DestructFenceRawSessionList(&raw_session_list, false);
   }
 
   return_success:
