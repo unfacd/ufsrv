@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -21,7 +21,7 @@
 
 #include <main.h>
 #include <nportredird.h>
-#include <ufsrv_core/location/location.h>
+#include <ufsrvmsg_core/location/location.h>
 #include <ufsrvwebsock/include/protocol_websocket.h>
 #include <ufsrvcmd_user_callbacks.h>
 
@@ -95,13 +95,13 @@ UFSRV_USER_COMMAND(uOK_V1)
 		wsmsg_r.status = 200; wsmsg_r.has_status = 1;
 		wsmsg.response = &wsmsg_r;
 
-		wsmsg.command = wsm_ptr_received->command;
+		wsmsg.command = wsm_ptr_received->command; //AA note: reuses the previous command to respond
 		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE; wsmsg.has_type = 1;
 
 		tmsg.msg = (void *)&wsmsg;
 		tmsg.type = TRANSMSG_PROTOBUF;
 
-		if (UfsrvCommandMarshalTransmission (ctx_ptr, NULL, &tmsg, 0) >= 0) {
+		if (UfsrvCommandMarshalTransmission(ctx_ptr, NULL, &tmsg, 0) >= 0) {
 			_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 		}
 	}
@@ -133,15 +133,18 @@ UFSRV_USER_COMMAND(uACCOUNT_VERIFIED_V1)
 UFSRV_USER_COMMAND(uSETACCOUNT_ATTRS_V1)
 {
 	UfsrvCommandMarshallingDescriptor	*ufsrv_descpription_ptr	= (UfsrvCommandMarshallingDescriptor *)msgload;
-	TransmissionMessage					tmsg          = {0};
-	WebSocketMessage__Type			type;
-	WebSocketMessage						wsmsg					= WEB_SOCKET_MESSAGE__INIT;
+	TransmissionMessage				tmsg          = {0};
+	WebSocketMessage__Type		type;
+	WebSocketMessage					wsmsg					= WEB_SOCKET_MESSAGE__INIT;
+  WebSocketResponseMessage  wsmsg_r, *wsmsg_r_ptr = &wsmsg_r;
+  WebSocketRequestMessage   wsmsg_rq, *wsmsg_rq_ptr = &wsmsg_rq;
 
-	wsmsg.command="ufsrv://v1/Receipt";
+	wsmsg.command = "ufsrv://v1/Receipt";
 
 	tmsg.msg = (void *)&wsmsg;
 	tmsg.type = TRANSMSG_PROTOBUF;
 	tmsg.eid = ufsrv_descpription_ptr->eid;
+  tmsg.gid = ufsrv_descpription_ptr->gid;
 	tmsg.fid = ufsrv_descpription_ptr->fid;
 	tmsg.timestamp = ufsrv_descpription_ptr->timestamp;
 
@@ -149,7 +152,7 @@ UFSRV_USER_COMMAND(uSETACCOUNT_ATTRS_V1)
 	else					type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE;
 
 	if (type == WEB_SOCKET_MESSAGE__TYPE__RESPONSE) {
-		WebSocketResponseMessage wsmsg_r = WEB_SOCKET_RESPONSE_MESSAGE__INIT;
+    web_socket_response_message__init(wsmsg_r_ptr);
 
 		wsmsg.response = &wsmsg_r;
 		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE; wsmsg.has_type=1;
@@ -161,7 +164,7 @@ UFSRV_USER_COMMAND(uSETACCOUNT_ATTRS_V1)
 			wsmsg_r.has_body = 1;
 		}
 	} else if (type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {
-		WebSocketRequestMessage wsmsg_rq = WEB_SOCKET_REQUEST_MESSAGE__INIT;
+    web_socket_request_message__init(wsmsg_rq_ptr);
 
 		wsmsg.request = &wsmsg_rq;
 		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type=1;
@@ -191,9 +194,11 @@ UFSRV_USER_COMMAND(uSETACCOUNT_ATTRS_V1)
 UFSRV_USER_COMMAND(uSYNC_V1)
 {
   UfsrvCommandMarshallingDescriptor	*ufsrv_description_ptr	= (UfsrvCommandMarshallingDescriptor *)msgload;
-  TransmissionMessage					tmsg				= {0};
-  WebSocketMessage__Type				type;
-  WebSocketMessage					wsmsg					= WEB_SOCKET_MESSAGE__INIT;
+  TransmissionMessage				tmsg				= {0};
+  WebSocketMessage__Type		type;
+  WebSocketMessage					wsmsg				= WEB_SOCKET_MESSAGE__INIT;
+  WebSocketResponseMessage  wsmsg_r, *wsmsg_r_ptr = &wsmsg_r;
+  WebSocketRequestMessage   wsmsg_rq, *wsmsg_rq_ptr = &wsmsg_rq;
 
   wsmsg.command = "ufsrv://v1/Sync";
 
@@ -207,7 +212,7 @@ UFSRV_USER_COMMAND(uSYNC_V1)
   else	type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE;
 
   if (type == WEB_SOCKET_MESSAGE__TYPE__RESPONSE) {
-    WebSocketResponseMessage wsmsg_r = WEB_SOCKET_RESPONSE_MESSAGE__INIT;
+    web_socket_response_message__init(wsmsg_r_ptr);
 
     wsmsg.response = &wsmsg_r;
     wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE; wsmsg.has_type = 1;
@@ -219,7 +224,7 @@ UFSRV_USER_COMMAND(uSYNC_V1)
       wsmsg_r.has_body = 1;
     }
   } else if (type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {
-    WebSocketRequestMessage wsmsg_rq = WEB_SOCKET_REQUEST_MESSAGE__INIT;
+    web_socket_request_message__init(wsmsg_rq_ptr);
 
     wsmsg.request = &wsmsg_rq;
     wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type = 1;
@@ -251,8 +256,9 @@ UFSRV_USER_COMMAND(uSTATE_V1)
   TransmissionMessage					tmsg					= {0};
   WebSocketMessage__Type			type;
   WebSocketMessage						wsmsg					= WEB_SOCKET_MESSAGE__INIT;
+  WebSocketRequestMessage     wsmsg_rq, *wsmsg_rq_ptr = &wsmsg_rq;
 
-  wsmsg.command="ufsrv://v1/ActivityState";
+  wsmsg.command = "ufsrv://v1/ActivityState";
 
   tmsg.msg = (void *)&wsmsg;
   tmsg.type = TRANSMSG_PROTOBUF;
@@ -264,7 +270,7 @@ UFSRV_USER_COMMAND(uSTATE_V1)
   else	type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE;
 
   if (type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {
-    WebSocketRequestMessage wsmsg_rq = WEB_SOCKET_REQUEST_MESSAGE__INIT;
+    web_socket_request_message__init(wsmsg_rq_ptr);
 
     wsmsg.request = &wsmsg_rq;
     wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type = 1;
@@ -302,12 +308,14 @@ UFSRV_USER_COMMAND(uSETKEYS_V1)
 	TransmissionMessage					tmsg					= {0};
 	WebSocketMessage__Type			type;
 	WebSocketMessage						wsmsg					= WEB_SOCKET_MESSAGE__INIT;
+  WebSocketRequestMessage     wsmsg_rq, *wsmsg_rq_ptr = &wsmsg_rq;
 
 	wsmsg.command="ufsrv://v1/Call";
 
 	tmsg.msg = (void *)&wsmsg;
 	tmsg.type = TRANSMSG_PROTOBUF;
 	tmsg.eid = ufsrv_description_ptr->eid;
+  tmsg.gid = ufsrv_description_ptr->gid;
 	tmsg.fid = ufsrv_description_ptr->fid;
 	tmsg.timestamp = ufsrv_description_ptr->timestamp;
 
@@ -315,7 +323,7 @@ UFSRV_USER_COMMAND(uSETKEYS_V1)
 	else	type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE;
 
 	if (type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {
-		WebSocketRequestMessage wsmsg_rq = WEB_SOCKET_REQUEST_MESSAGE__INIT;
+    web_socket_request_message__init(wsmsg_rq_ptr);
 
 		wsmsg.request = &wsmsg_rq;
 		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type = 1;
@@ -364,6 +372,8 @@ UFSRV_USER_COMMAND(uGETKEYS_V1)
 	TransmissionMessage										tmsg 										= {0};
 	WebSocketMessage__Type								type;
 	WebSocketMessage											wsmsg										= WEB_SOCKET_MESSAGE__INIT;
+  WebSocketResponseMessage              wsmsg_r, *wsmsg_r_ptr = &wsmsg_r;
+  WebSocketRequestMessage               wsmsg_rq, *wsmsg_rq_ptr = &wsmsg_rq;
 
 
 	wsmsg.command="ufsrv://v1/User";
@@ -371,13 +381,14 @@ UFSRV_USER_COMMAND(uGETKEYS_V1)
 	tmsg.msg = (void *)&wsmsg;
 	tmsg.type = TRANSMSG_PROTOBUF;
 	tmsg.eid = ufsrv_descpription_ptr->eid;
+  tmsg.gid = ufsrv_descpription_ptr->gid;
 	tmsg.timestamp = ufsrv_descpription_ptr->timestamp;
 
 	if (wsm_ptr_received)	type = wsm_ptr_received->type;
 	else	type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE;
 
 	if (type == WEB_SOCKET_MESSAGE__TYPE__RESPONSE) {
-		WebSocketResponseMessage wsmsg_r = WEB_SOCKET_RESPONSE_MESSAGE__INIT;
+    web_socket_response_message__init(wsmsg_r_ptr);
 
 		wsmsg.response = &wsmsg_r;
 		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE; wsmsg.has_type=1;
@@ -389,10 +400,10 @@ UFSRV_USER_COMMAND(uGETKEYS_V1)
 			wsmsg_r.has_body = 1;
 		}
 	} else if (type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {
-		WebSocketRequestMessage wsmsg_rq=WEB_SOCKET_REQUEST_MESSAGE__INIT;
+    web_socket_request_message__init(wsmsg_rq_ptr);
 
 		wsmsg.request = &wsmsg_rq;
-		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type=1;
+		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type = 1;
 
 		if (msgload) {
 			wsmsg_rq.body.len = (*ufsrv_descpription_ptr->metadata->sizer)(ufsrv_descpription_ptr->payload);
@@ -420,16 +431,23 @@ UFSRV_USER_COMMAND(uGETKEYS_V1)
 UFSRV_USER_COMMAND(uMSG_V1)
 {
 	UfsrvCommandMarshallingDescriptor	*ufsrv_descpription_ptr	= (UfsrvCommandMarshallingDescriptor *)msgload;
-	TransmissionMessage					tmsg				= {0};
-	WebSocketMessage__Type				type;
-	WebSocketMessage					wsmsg					= WEB_SOCKET_MESSAGE__INIT;
+	TransmissionMessage				tmsg				= {0};
+	WebSocketMessage__Type		type;
+	WebSocketMessage					wsmsg				= WEB_SOCKET_MESSAGE__INIT;
+  WebSocketResponseMessage  wsmsg_r, *wsmsg_r_ptr = &wsmsg_r;
+  WebSocketRequestMessage   wsmsg_rq, *wsmsg_rq_ptr = &wsmsg_rq;
 
+  char header_timestamp[sizeof(HTTP_HEADER_TIMESTAMP) + UINT64_LONGEST_STR_SZ + 1] = {0};
+  snprintf(header_timestamp, sizeof(header_timestamp), "%s:%lld", HTTP_HEADER_TIMESTAMP, GetTimeNowInMillis());
+  char *headers[1]; headers[0] = header_timestamp;
 
 	wsmsg.command = "ufsrv://v1/Message";
+  wsmsg.headers = headers; wsmsg.n_headers = 1;
 
 	tmsg.msg = (void *)&wsmsg;
 	tmsg.type = TRANSMSG_PROTOBUF;
 	tmsg.eid = ufsrv_descpription_ptr->eid;
+  tmsg.gid = ufsrv_descpription_ptr->gid;
 	tmsg.fid = ufsrv_descpription_ptr->fid;
 	tmsg.timestamp = ufsrv_descpription_ptr->timestamp;
 
@@ -437,10 +455,10 @@ UFSRV_USER_COMMAND(uMSG_V1)
 	else	type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE;
 
 	if (type == WEB_SOCKET_MESSAGE__TYPE__RESPONSE) {
-		WebSocketResponseMessage wsmsg_r = WEB_SOCKET_RESPONSE_MESSAGE__INIT;
+    web_socket_response_message__init(wsmsg_r_ptr);
 
 		wsmsg.response = &wsmsg_r;
-		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE; wsmsg.has_type=1;
+		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE; wsmsg.has_type = 1;
 
 		if (msgload) {
 			wsmsg_r.body.len = (*ufsrv_descpription_ptr->metadata->sizer)(ufsrv_descpription_ptr->payload);
@@ -449,16 +467,16 @@ UFSRV_USER_COMMAND(uMSG_V1)
 			wsmsg_r.has_body = 1;
 		}
 	} else if (type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {
-		WebSocketRequestMessage wsmsg_rq = WEB_SOCKET_REQUEST_MESSAGE__INIT;
+    web_socket_request_message__init(wsmsg_rq_ptr);
 
 		wsmsg.request = &wsmsg_rq;
-		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type=1;
+		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type = 1;
 
 		if (msgload) {
-			wsmsg_rq.body.len=(*ufsrv_descpription_ptr->metadata->sizer)(ufsrv_descpription_ptr->payload);
-			wsmsg_rq.body.data=calloc(1, wsmsg_rq.body.len);
+			wsmsg_rq.body.len = (*ufsrv_descpription_ptr->metadata->sizer)(ufsrv_descpription_ptr->payload);
+			wsmsg_rq.body.data = calloc(1, wsmsg_rq.body.len);
 			ufsrv_descpription_ptr->metadata->packer(ufsrv_descpription_ptr->payload, wsmsg_rq.body.data);
-			wsmsg_rq.has_body=1;
+			wsmsg_rq.has_body = 1;
 		}
 	} else {
 		_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
@@ -494,17 +512,20 @@ UFSRV_USER_COMMAND(uLOCATION_V1)
 
 	_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)*/
 
-	//current semantics for Location involves responding to locatio for changes initiated (REQUEST) by clients
+	//current semantics for Location involves responding to location for changes initiated (REQUEST) by clients
   UfsrvCommandMarshallingDescriptor	*ufsrv_descpription_ptr	= (UfsrvCommandMarshallingDescriptor *)msgload;
   TransmissionMessage					tmsg          = {0};
   WebSocketMessage__Type			type;
   WebSocketMessage						wsmsg					= WEB_SOCKET_MESSAGE__INIT;
+  WebSocketResponseMessage    wsmsg_r,  *wsmsg_r_ptr  = &wsmsg_r;
+  WebSocketRequestMessage     wsmsg_rq, *wsmsg_rq_ptr = &wsmsg_rq;
 
   wsmsg.command = "ufsrv://v1/Location"; //note no 'ufsrv://' prefix
 
   tmsg.msg = (void *)&wsmsg;
   tmsg.type = TRANSMSG_PROTOBUF;
   tmsg.eid = ufsrv_descpription_ptr->eid;
+  tmsg.gid = ufsrv_descpription_ptr->gid;
   tmsg.fid = ufsrv_descpription_ptr->fid;
   tmsg.timestamp = ufsrv_descpription_ptr->timestamp;
 
@@ -513,7 +534,7 @@ UFSRV_USER_COMMAND(uLOCATION_V1)
 
   //The logic here is inverted. If original type was request, reply with 'response'
   if (type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {
-    WebSocketResponseMessage wsmsg_r = WEB_SOCKET_RESPONSE_MESSAGE__INIT;
+    web_socket_response_message__init(wsmsg_r_ptr);
 
     wsmsg.response = &wsmsg_r;
     wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE; wsmsg.has_type = 1;
@@ -527,7 +548,7 @@ UFSRV_USER_COMMAND(uLOCATION_V1)
       wsmsg_r.has_body = 1;
     }
   } else if (type == WEB_SOCKET_MESSAGE__TYPE__RESPONSE) {
-    WebSocketRequestMessage wsmsg_rq = WEB_SOCKET_REQUEST_MESSAGE__INIT;
+    web_socket_request_message__init(wsmsg_rq_ptr);
 
     wsmsg.request = &wsmsg_rq;
     wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type = 1;
@@ -563,12 +584,17 @@ UFSRV_USER_COMMAND(uFENCE_V1)
 	TransmissionMessage					tmsg        = {0};
 	WebSocketMessage__Type			type;
 	WebSocketMessage					  wsmsg				= WEB_SOCKET_MESSAGE__INIT;
+  WebSocketResponseMessage    wsmsg_r;
+  WebSocketResponseMessage   *wsmsg_r_ptr = &wsmsg_r;
+  WebSocketRequestMessage     wsmsg_rq;
+  WebSocketRequestMessage    *wsmsg_rq_ptr = &wsmsg_rq;
 
 	wsmsg.command = "ufsrv://v1/Fence";
 
 	tmsg.msg = (void *)&wsmsg;
 	tmsg.type = TRANSMSG_PROTOBUF;
 	tmsg.eid = ufsrv_descpription_ptr->eid;
+  tmsg.gid = ufsrv_descpription_ptr->gid;
 	tmsg.fid = ufsrv_descpription_ptr->fid;
 	tmsg.timestamp = ufsrv_descpription_ptr->timestamp;
 
@@ -578,7 +604,7 @@ UFSRV_USER_COMMAND(uFENCE_V1)
 	else	type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE;
 
 	if (type == WEB_SOCKET_MESSAGE__TYPE__RESPONSE) {
-		WebSocketResponseMessage wsmsg_r = WEB_SOCKET_RESPONSE_MESSAGE__INIT;
+    web_socket_response_message__init(wsmsg_r_ptr);
 
 		wsmsg.response = &wsmsg_r;
 		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__RESPONSE; wsmsg.has_type = 1;
@@ -597,7 +623,7 @@ UFSRV_USER_COMMAND(uFENCE_V1)
 			wsmsg_r.has_body = 1;
 		}
 	} else if (type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {
-		WebSocketRequestMessage wsmsg_rq = WEB_SOCKET_REQUEST_MESSAGE__INIT;
+    web_socket_request_message__init(wsmsg_rq_ptr);
 
 		wsmsg.request = &wsmsg_rq;
 		wsmsg.type = WEB_SOCKET_MESSAGE__TYPE__REQUEST; wsmsg.has_type = 1;
@@ -629,7 +655,7 @@ UFSRV_USER_COMMAND(uFENCE_V1)
 UFSRV_USER_COMMAND(uSTATESYNC_V1)
 {
 	if (IS_PRESENT(JsonFormatStateSync(ctx_ptr->sesn_ptr, DIGESTMODE_BRIEF, false, jobj))) {
-		char *json_str = (char *)json_object_to_json_string(jobj);//this str gets automatically deleted when jobj is 'put'
+		char *json_str = (char *)json_object_to_json_string(jobj);//this str gets automatically deleted when jobj is 'put' in the calling function
 
 		//client can request this anytime to sync its own state
 		if (wsm_ptr_received && wsm_ptr_received->type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {

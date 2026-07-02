@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -23,12 +23,12 @@
 #include <ufsrvresult_type.h>
 #include <sockets.h>
 #include <session.h>
-#include <ufsrv_core/protocol/protocol_io.h>
+#include <ufsrvmsg_core/protocol/protocol_io.h>
 #include <ufsrvwebsock/include/protocol_websocket_routines.h>
 #include <ufsrvwebsock/include/protocol_websocket_io.h>
 #include <ufsrv_core/instrumentation/instrumentation_backend.h>
 #include <hiredis/hiredis.h>
-#include <ufsrvuid.h>
+#include <uflib/ufsrvuid.h>
 
 #define _RESET_BUFFERS\
 	sm_ptr->processed_msg_size=0;\
@@ -46,33 +46,29 @@
  * Otherwise they must be freed when the handshake is successful by   ProcessOutgoingWsHandshake
  */
 UFSRVResult *
-ProcessIncomingWsHandshake (Session *sesnptr, SocketMessage *sock_msg_ptr)
+ProcessIncomingWsHandshake(Session *sesnptr, SocketMessage *sock_msg_ptr)
 {
     SocketMessage *sm_ptr;
 
-	if (sock_msg_ptr) sm_ptr=sock_msg_ptr;
-	else sm_ptr=&(sesnptr->ssptr->socket_msg);//default to incoming
+	if (sock_msg_ptr) sm_ptr = sock_msg_ptr;
+	else sm_ptr = &(sesnptr->ssptr->socket_msg);//default to incoming
 
 	//when successful deallocate in ProcessOutgoingHandshake
-	sm_ptr->_processed_msg=calloc(1, XLBUF);
-	sm_ptr->_raw_msg=calloc(1, XLBUF);
+	sm_ptr->_processed_msg = calloc(1, XLBUF);
+	sm_ptr->_raw_msg = calloc(1, XLBUF);
 
 	//if (!sock_msg_ptr)
 	{
-		sm_ptr->raw_msg_size=recv(sesnptr->ssptr->sock, sm_ptr->_raw_msg, XLBUF, 0);//masterptr->buffer_size
+		sm_ptr->raw_msg_size = recv(sesnptr->ssptr->sock, sm_ptr->_raw_msg, XLBUF, 0);//masterptr->buffer_size
 
-		if (sm_ptr->raw_msg_size==-1)
-		{
-			if (!(errno==EAGAIN) || !(errno==EWOULDBLOCK))
-			{
+		if (sm_ptr->raw_msg_size == -1) {
+			if (!(errno == EAGAIN) || !(errno == EWOULDBLOCK)) {
 				syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): REMOTE END CLOSED connection during handshake.", __func__, pthread_self(), SESSION_ID(sesnptr));
 
 				_RESET_BUFFERS;
 
 				_RETURN_RESULT_SESN(sesnptr, NULL, RESULT_TYPE_ERR, RESCODE_IO_CONNECTIONCLOSED);//suspend
-			}
-			else
-			{
+			} else {
 				//blocking
 				syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): COULD NOT READ INCOMING BUFFER: WOULD BLOCK", __func__, pthread_self(), SESSION_ID(sesnptr));
 
@@ -81,10 +77,7 @@ ProcessIncomingWsHandshake (Session *sesnptr, SocketMessage *sock_msg_ptr)
 
 				_RETURN_RESULT_SESN(sesnptr, NULL, RESULT_TYPE_ERR, RESCODE_IO_WOULDBLOCK);//we also suspend for this
 			}
-		}
-		else
-		if (sm_ptr->raw_msg_size==0)
-		{
+		} else if (sm_ptr->raw_msg_size == 0) {
 			syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): REMOTE END CLOSED connection during handshake.", __func__, pthread_self(), SESSION_ID(sesnptr));
 
 			_RESET_BUFFERS;
@@ -92,15 +85,12 @@ ProcessIncomingWsHandshake (Session *sesnptr, SocketMessage *sock_msg_ptr)
 			_RETURN_RESULT_SESN(sesnptr, NULL, RESULT_TYPE_ERR, RESCODE_IO_CONNECTIONCLOSED);//suspend
 		}
 
-		sm_ptr->_raw_msg[sm_ptr->raw_msg_size]=0;
+		sm_ptr->_raw_msg[sm_ptr->raw_msg_size] = 0;
 
-		if (strstr((char *)sm_ptr->_raw_msg, "\r\n\r\n"))
-		{
+		if (strstr((char *)sm_ptr->_raw_msg, "\r\n\r\n")) {
 			//syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): SUCCESS: FOUND HANDSHKE TERMINATION TOKEN", __func__, pthread_self(), SESSION_ID(sesnptr));
 			//break;//end of stream
-		}
-		else
-		{
+		} else {
 			syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): ERROR: COULD NOT FIND HANDSHKE TERMINATION TOKEN", __func__, pthread_self(), SESSION_ID(sesnptr));
 
 			_RESET_BUFFERS;
@@ -109,8 +99,7 @@ ProcessIncomingWsHandshake (Session *sesnptr, SocketMessage *sock_msg_ptr)
 		}
 	}
 
-    if ((memcmp(sm_ptr->_raw_msg, "\x16", 1) == 0) || (bcmp(sm_ptr->_raw_msg, "\x80", 1) == 0))
-    {
+    if ((memcmp(sm_ptr->_raw_msg, "\x16", 1) == 0) || (bcmp(sm_ptr->_raw_msg, "\x80", 1) == 0)) {
 		syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): SSL connection request. Terminating: not supported.", __func__, pthread_self(), SESSION_ID(sesnptr));
 
 		//TODO: remove the following 2 statements when SSL is ready
@@ -118,23 +107,20 @@ ProcessIncomingWsHandshake (Session *sesnptr, SocketMessage *sock_msg_ptr)
 
 		//remove above wne SSL is READy
 		_RETURN_RESULT_SESN(sesnptr, NULL, RESULT_TYPE_ERR, RESCODE_PROTOCOL_NOSSL);//suspend
-    }
-    else
-    {
+    } else {
 		//syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): USING NON-SSL connection.", pthread_self(), SESSION_ID(sesnptr));
     }
 
 
 //parse handshake
 //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	if (!parse_handshake(sesnptr, (char *)sm_ptr->_raw_msg))
-	{
+	if (!parse_handshake(sesnptr, (char *)sm_ptr->_raw_msg)) {
 		syslog(LOG_NOTICE, "%s (pid:'%lu' cid:'%lu'): ERROR: COULD NOT PARSE Websocket handshake: Termination.", __func__, pthread_self(), SESSION_ID(sesnptr));
 
 		_RESET_BUFFERS;
 
 		_RETURN_RESULT_SESN(sesnptr, NULL, RESULT_TYPE_ERR, RESCODE_PROTOCOL_WSHANDSHAKE);//suspend
-    }
+  }
 //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	//DONT DO THIS HERE. SHOULD BE DONE IN ProcessOutgoingWsHandshake
@@ -142,7 +128,7 @@ ProcessIncomingWsHandshake (Session *sesnptr, SocketMessage *sock_msg_ptr)
 
 	//this is no longer needed
 	free (sm_ptr->_raw_msg);
-	sm_ptr->raw_msg_size=0;
+	sm_ptr->raw_msg_size = 0;
 
 	_RETURN_RESULT_SESN(sesnptr, sesnptr, RESULT_TYPE_SUCCESS, RESCODE_PROTOCOL_WSHANDSHAKE);
 
@@ -153,7 +139,7 @@ ProcessIncomingWsHandshake (Session *sesnptr, SocketMessage *sock_msg_ptr)
  * to ascertain its status and retrieve additional info to be included in the response header
  */
 UFSRVResult *
-ProcessOutgoingWsHandshake (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr)
+ProcessOutgoingWsHandshake(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr)
 {
 	char  sha1[29];
 	Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
@@ -166,7 +152,7 @@ ProcessOutgoingWsHandshake (InstanceHolderForSession *instance_sesn_ptr, SocketM
 	else sm_ptr = &(sesn_ptr->ssptr->socket_msg);//default to incoming
 
 	if (1) {//headers->hybi>0)
-    WebSocketSession *ws_ptr = (WebSocketSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
+    WebSocketSession *ws_ptr = (WebSocketSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr);
     gen_sha1(ws_ptr->protocol_header.key1, sha1);
 
     //construct the WS reply header. Append the session id if not present
@@ -210,23 +196,23 @@ HTTP/1.1 101 Switching Protocols#015#012Upgrade: websocket#015#012Connection: Up
  * 	@brief: Parses the server's return-WS-handshake as seen by a connecting client. Not used by the server.
  */
 UFSRVResult *
-ProcessIncomingWsHandshakeAsClient (Session *sesnptr, SocketMessage *sock_msg_ptr)
+ProcessIncomingWsHandshakeAsClient(Session *sesnptr, SocketMessage *sock_msg_ptr)
 {
   SocketMessage *sm_ptr;
   unsigned char 			*handshake_end_pos;
-  size_t 		layered_msg_sz=0;
+  size_t 		layered_msg_sz = 0;
 
-  if (sock_msg_ptr) sm_ptr=sock_msg_ptr;
-  else sm_ptr=&(sesnptr->ssptr->socket_msg);//default to incoming
+  if (sock_msg_ptr) sm_ptr = sock_msg_ptr;
+  else sm_ptr = &(sesnptr->ssptr->socket_msg);//default to incoming
 
   //when successful deallocate in ProcessOutgoingHandshake
-  sm_ptr->_processed_msg=calloc(1, XLBUF);
-  sm_ptr->_raw_msg=calloc(1, XLBUF);
+  sm_ptr->_processed_msg = calloc(1, XLBUF);
+  sm_ptr->_raw_msg = calloc(1, XLBUF);
 
   sm_ptr->raw_msg_size=read(sesnptr->ssptr->sock, sm_ptr->_raw_msg, XLBUF);//, 0);//masterptr->buffer_size
 
-  if (sm_ptr->raw_msg_size==-1) {
-    if (!(errno==EAGAIN) || !(errno==EWOULDBLOCK)) {
+  if (sm_ptr->raw_msg_size == -1) {
+    if (!(errno == EAGAIN) || !(errno == EWOULDBLOCK)) {
       syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): REMOTE END CLOSED connection during handshake.", __func__, pthread_self(), SESSION_ID(sesnptr));
 
       _RESET_BUFFERS;
@@ -241,7 +227,7 @@ ProcessIncomingWsHandshakeAsClient (Session *sesnptr, SocketMessage *sock_msg_pt
 
       _RETURN_RESULT_SESN(sesnptr, NULL, RESULT_TYPE_ERR, RESCODE_IO_WOULDBLOCK);//we also suspend for this
     }
-  } else if (sm_ptr->raw_msg_size==0) {
+  } else if (sm_ptr->raw_msg_size == 0) {
     syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): REMOTE END CLOSED connection during handshake.", __func__, pthread_self(), SESSION_ID(sesnptr));
 
     _RESET_BUFFERS;
@@ -251,8 +237,8 @@ ProcessIncomingWsHandshakeAsClient (Session *sesnptr, SocketMessage *sock_msg_pt
 
   //sm_ptr->_raw_msg[sm_ptr->raw_msg_size]=0;
 
-  if ((handshake_end_pos=(unsigned char *)strstr((char *)sm_ptr->_raw_msg, "\r\n\r\n"))) {
-    layered_msg_sz=sm_ptr->raw_msg_size-((handshake_end_pos+4)-sm_ptr->_raw_msg);
+  if ((handshake_end_pos = (unsigned char *)strstr((char *)sm_ptr->_raw_msg, "\r\n\r\n"))) {
+    layered_msg_sz = sm_ptr->raw_msg_size-((handshake_end_pos+4)-sm_ptr->_raw_msg);
     syslog(LOG_DEBUG, "%s (pid:'%lu' cid:'%lu'): SUCCESS: FOUND HANDSHKE TERMINATION TOKEN (handshake size:'%lu', layerd_sz:'%lu')", __func__, pthread_self(), SESSION_ID(sesnptr), (handshake_end_pos+4)-sm_ptr->_raw_msg, layered_msg_sz);
     //break;//end of stream
   } else {
@@ -265,12 +251,12 @@ ProcessIncomingWsHandshakeAsClient (Session *sesnptr, SocketMessage *sock_msg_pt
 
   //[handshake\r\n\r\nxxxxxxxx0]
   //..........+ location of handshake_end_pos
-  handshake_end_pos+=4; //skip the'\r\n\r\n'
-  if (layered_msg_sz>0) {
+  handshake_end_pos += 4; //skip the'\r\n\r\n'
+  if (layered_msg_sz > 0) {
     //we have some text to extract pas the handshake: shovel it into holding buffer
-    SocketMessage *sm_ptr=calloc(1, sizeof(SocketMessage));
+    SocketMessage *sm_ptr = calloc(1, sizeof(SocketMessage));
 
-    sm_ptr->raw_msg_size=layered_msg_sz;
+    sm_ptr->raw_msg_size = layered_msg_sz;
     sm_ptr->_raw_msg=(unsigned char *)strndup((char *)handshake_end_pos, layered_msg_sz);
     AddToQueue(&(sesnptr->message_queue_in.queue), sm_ptr);
 
@@ -281,10 +267,10 @@ ProcessIncomingWsHandshakeAsClient (Session *sesnptr, SocketMessage *sock_msg_pt
       pthread_self(), SESSION_ID(sesnptr), sm_ptr->raw_msg_size, (int)sm_ptr->raw_msg_size, sm_ptr->_raw_msg);
   }
 
-  sock_msg_ptr->raw_msg_size=0;
-  free (sock_msg_ptr->_raw_msg);
-  free (sm_ptr->_processed_msg);
-  sesnptr->stat|=SESNSTATUS_HANDSHAKED;
+  sock_msg_ptr->raw_msg_size = 0;
+  free(sock_msg_ptr->_raw_msg);
+  free(sm_ptr->_processed_msg);
+  sesnptr->stat |= SESNSTATUS_HANDSHAKED;
 
   _RETURN_RESULT_SESN(sesnptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROTOCOL_WSHANDSHAKE);
 
@@ -295,7 +281,7 @@ ProcessIncomingWsHandshakeAsClient (Session *sesnptr, SocketMessage *sock_msg_pt
  //static int _p_ReadFromSocket (Session *sesnptr, Socket *sptr)
  //
   int
-  ReadFromSocketRaw (Session *sesn_ptr, SocketMessage *sock_msg_ptr)
+  ReadFromSocketRaw(Session *sesn_ptr, SocketMessage *sock_msg_ptr)
   {
 	  return 0;
 #if 0
