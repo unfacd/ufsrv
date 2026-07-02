@@ -1,10 +1,19 @@
-/*
- * thread_context_type.h
+/**
+ * Copyright (C) 2015-2021 unfacd works
  *
- *  Created on: 29Nov.,2017
- *      Author: ayman
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 #ifndef SRC_INCLUDE_THREAD_CONTEXT_TYPE_H_
 #define SRC_INCLUDE_THREAD_CONTEXT_TYPE_H_
 
@@ -14,11 +23,16 @@
 #include <ufsrv_core/cache_backend/persistance_type.h>
 #include <uflib/db/db_sql.h>
 #include <ufsrv_core/instrumentation/instrumentation_backend.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue_type.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvmsgqueue_type.h>
 #include <http_request_context_type.h>
-#include <ufsrv_core/ratelimit/ratelimit_type.h>
+#include <ratelimit/ratelimit_type.h>
 
+/**
+ * Thread specific context variables that are uniquely instantiated for each thread and then multiplexed through "thread_local" storage scope.
+ * Each thread can then refer to the thread_local reference by name and that will reference local instance of the ThreadContext.
+ */
 typedef struct ThreadContext {
+  unsigned int                    random_state; /** @brief thread specific random state */
 	HopscotchHashtableConfigurable 			*ht_ptr;
 	PersistanceBackend 			*persistance_backend;//loaded from thread-specific data at service time
 	InstrumentationBackend 	*instrumentation_backend;//loaded from thread-specific data at service time
@@ -30,6 +44,7 @@ typedef struct ThreadContext {
 	HttpRequestContext 			*http_request_context;
 	RequestRateLimitStatus   *ratelimit_status;
 
+	//todo these are to be removed oce thread_local implementation is complete
 	pthread_key_t worker_persistance_key;//each thread gets its own instance of persistance object
 	pthread_key_t	worker_usrmsg_cachebackend_key; //redis cachbackend
 	pthread_key_t	worker_fence_cachebackend_key; //redis cachbackend
@@ -43,6 +58,8 @@ typedef struct ThreadContext {
 #define THREAD_CONTEXT									(ufsrv_thread_context)
 #define THREAD_CONTEXT_PTR							&(ufsrv_thread_context)
 #define THREAD_CONTEXT_OBJECT_STORE(x) 	(x.ht_ptr)
+#define THREAD_CONTEXT_UFSRV_RESULT_PTR	(THREAD_CONTEXT.res_ptr)
+#define THREAD_CONTEXT_UFSRV_RESULT(x)	(x.res_ptr)
 #define THREAD_CONTEXT_UFSRV_RESULT_TYPE(x)	(THREAD_CONTEXT_UFSRV_RESULT(x)->result_type)
 #define THREAD_CONTEXT_UFSRV_RESULT_TYPE_	(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT)->result_type)
 #define THREAD_CONTEXT_UFSRV_RESULT_USERDATA  (THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT)->result_user_data)
@@ -51,7 +68,7 @@ typedef struct ThreadContext {
 #define THREAD_CONTEXT_UFSRV_RESULT_CODE_	(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT)->result_code)
 #define THREAD_CONTEXT_UFSRV_RESULT_CODE_EQUAL(x, y)	(THREAD_CONTEXT_UFSRV_RESULT_CODE(x) == y)
 #define THREAD_CONTEXT_UFSRV_RESULT_CODE_EQUAL_(x)	(THREAD_CONTEXT_UFSRV_RESULT_CODE_ == x)
-#define THREAD_CONTEXT_UFSRV_RESULT(x)	(x.res_ptr)
+
 #define THREAD_CONTEXT_UFSRV_RESULT_TYPE_SUCCESS	(THREAD_CONTEXT_UFSRV_RESULT_TYPE(THREAD_CONTEXT) == RESULT_TYPE_SUCCESS)
 #define THREAD_CONTEXT_UFSRV_RESULT_IS_SUCCESS_WITH_BACKEND_DATA (THREAD_CONTEXT_UFSRV_RESULT_TYPE(THREAD_CONTEXT) == RESULT_TYPE_SUCCESS && THREAD_CONTEXT_UFSRV_RESULT_CODE(THREAD_CONTEXT) == RESCODE_BACKEND_DATA)
 #define THREAD_CONTEXT_UFSRV_RESULT_IS_SUCCESS_WITH_EMPTYSET_DATA (THREAD_CONTEXT_UFSRV_RESULT_TYPE(THREAD_CONTEXT) == RESULT_TYPE_SUCCESS && THREAD_CONTEXT_UFSRV_RESULT_CODE(THREAD_CONTEXT) == RESCODE_BACKEND_DATA_EMPTYSET)
@@ -59,6 +76,8 @@ typedef struct ThreadContext {
 #define THREAD_CONTEXT_UFSRV_RESULT_TYPE_ERR	(THREAD_CONTEXT_UFSRV_RESULT_TYPE(THREAD_CONTEXT) == RESULT_TYPE_ERR)
 #define THREAD_CONTEXT_DB_BACKEND		(THREAD_CONTEXT.db_backend)
 #define THREAD_CONTEXT_PERSISTANCE_CACHEBACKEND(x)		(x.persistance_backend)
+
+#define THREAD_CONTEXT_SESSION_CACHEBACKEND					(THREAD_CONTEXT.persistance_backend)
 #define THREAD_CONTEXT_FENCE_CACHEBACKEND					(THREAD_CONTEXT.fence_cachebackend)
 #define THREAD_CONTEXT_USRMSG_CACHEBACKEND					(THREAD_CONTEXT.usrmsg_cachebackend)
 #define THREAD_CONTEXT_MSGQUEUE_CACHEBACKEND					(THREAD_CONTEXT.msgqueue_backend)
@@ -67,9 +86,9 @@ typedef struct ThreadContext {
 
 #define THREAD_CONTEXT_RETURN_RESULT_SUCCESS(x, y)    \
 {\
-	THREAD_CONTEXT.res_ptr->result_user_data=(void *)x;\
-	THREAD_CONTEXT.res_ptr->result_type=RESULT_TYPE_SUCCESS;\
-	THREAD_CONTEXT.res_ptr->result_code=y;\
+	THREAD_CONTEXT.res_ptr->result_user_data = (void *)x;\
+	THREAD_CONTEXT.res_ptr->result_type = RESULT_TYPE_SUCCESS;\
+	THREAD_CONTEXT.res_ptr->result_code = y;\
 	return THREAD_CONTEXT.res_ptr;\
 }
 

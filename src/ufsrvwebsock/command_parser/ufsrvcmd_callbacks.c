@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -23,9 +23,9 @@
 #include "protocol_websocket.h"
 #include <ufsrvcmd_user_callbacks.h>
 #include <ufsrvcmd_callbacks.h>
-#include <ufsrv_core/SignalService.pb-c.h>
+#include <ufsrvmsg_core/SignalService.pb-c.h>
 #include <command_controllers.h>
-#include <recycler/recycler.h>
+#include <uflib/recycler/recycler.h>
 
 /**
  * These are server bound commands invoked by users via the WebSocket channel. This is in contrast to user bound commands
@@ -54,6 +54,10 @@ UFSRV_COMMAND(sCALL_V1) {
 
   SESSION_WHEN_SERVICE_STARTED(sesn_ptr) = time(NULL);
   //>>>>>>>>><<<<<<<<<<
+  if (IS_PRESENT(wsm_ptr)) {//acknowledge receipt of command with status=200
+    UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr, NULL, NULL, uOK_V1_IDX);
+  }
+
   CommandCallbackControllerCallCommand (ctx_ptr, wsm_ptr, dm_ptr);
   //>>>>>>>>><<<<<<<<<<
   SESSION_WHEN_SERVICED(sesn_ptr) = time(NULL);
@@ -117,7 +121,11 @@ UFSRV_COMMAND(sACTIVITY_STATE_V1)
 
   SESSION_WHEN_SERVICE_STARTED(sesn_ptr) = time(NULL);
   //>>>>>>>>><<<<<<<<<<
-  CommandCallbackControllerStateCommand (ctx_ptr, wsm_ptr, dm_ptr);
+  if (IS_PRESENT(wsm_ptr)) {//acknowledge receipt of command with status=200
+    UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr, NULL, NULL, uOK_V1_IDX);
+  }
+
+  CommandCallbackControllerStateCommand(ctx_ptr, wsm_ptr, dm_ptr);
   //>>>>>>>>><<<<<<<<<<
   SESSION_WHEN_SERVICED(sesn_ptr) = time(NULL);
 
@@ -172,7 +180,7 @@ UFSRV_COMMAND(sMSG_V1)
 {
   Session *sesn_ptr = ctx_ptr->sesn_ptr;
 
-	syslog (LOG_DEBUG, "%s: CALLBACK: ...", __func__);
+	syslog(LOG_DEBUG, "%s: CALLBACK: ...", __func__);
 
 	//we are responding to a request
 	if (wsm_ptr->type == WEB_SOCKET_MESSAGE__TYPE__REQUEST) {
@@ -214,7 +222,7 @@ UFSRV_COMMAND(sLOCATION_V1)
 
   SESSION_WHEN_SERVICE_STARTED(sesn_ptr) = time(NULL);
   //>>>>>>>>><<<<<<<<<<
-  CommandCallbackControllerLocationCommand (ctx_ptr, wsm_ptr, dm_ptr);
+  CommandCallbackControllerLocationCommand(ctx_ptr, wsm_ptr, dm_ptr);
   //>>>>>>>>><<<<<<<<<<
   SESSION_WHEN_SERVICED(sesn_ptr) = time(NULL);
 
@@ -246,7 +254,7 @@ UFSRV_COMMAND(sLOCATION_V1)
 //		_CLEANUP_LOCTION_JSON_OBJECT;
 //
 //		//creates a base fence if one doesn't not already exist
-//	   switch (ProcessUserLocation(ctx_ptr->instance_sesn_ptr, loc_ptr, origin))
+//	   switch (ProcessUserLocationRoaming(ctx_ptr->instance_sesn_ptr, loc_ptr, origin))
 //	   {
 //		   case LOCATION_STATE_UNCHANGED:
 //			   //do nothing
@@ -295,6 +303,10 @@ UFSRV_COMMAND(sFENCE_V1)
 
   SESSION_WHEN_SERVICE_STARTED(sesn_ptr) = time(NULL);
   //>>>>>>>>><<<<<<<<<<
+  if (IS_PRESENT(wsm_ptr)) {//acknowledge receipt of command with status=200
+    UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr, NULL, NULL, uOK_V1_IDX);
+  }
+
   CommandCallbackControllerFenceCommand(ctx_ptr->instance_sesn_ptr, wsm_ptr, dm_ptr);
   //>>>>>>>>><<<<<<<<<<
   SESSION_WHEN_SERVICED(sesn_ptr) = time(NULL);
@@ -305,7 +317,7 @@ UFSRV_COMMAND(sFENCE_V1)
 
 }
 
-//10
+//10 unused
 UFSRV_COMMAND(sSTATESYNC_V1)
 {
   Session *sesn_ptr = ctx_ptr->sesn_ptr;

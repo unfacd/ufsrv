@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,19 +20,20 @@
 #endif
 
 #include <main.h>
-#include <ufsrv_core/fence/fence_state.h>
-#include <ufsrv_core/user/user_preferences.h>
-#include <ufsrv_core/location/location.h>
+#include <ufsrvmsg_core/fence/fence_state.h>
+#include <ufsrvmsg_core/user/user_preferences.h>
+#include <ufsrvmsg_core/location/location.h>
 #include <share_list.h>
 #include <ufsrv_core/cache_backend/persistance.h>
 #include <nportredird.h>
 #include <ufsrvwebsock/include/protocol_websocket_session.h>
 #include <protocol_http.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvcmd_broadcast.h>
 #include <user_broadcast.h>
 #include <command_controllers.h>
-#include <ufsrvuid.h>
-#include <ufsrv_core/user/users_protobuf.h>
+#include <uflib/ufsrvuid.h>
+#include <ufsrvmsg_core/user/users_protobuf.h>
+#include "ufsrv_core/include/delegator_session_worker_thread.h"
 
 extern ufsrv 							*const masterptr;
 extern SessionsDelegator 	*const sessions_delegator_ptr;
@@ -53,20 +54,22 @@ struct BroadcastMessageEnvelopeForUser {
 typedef struct BroadcastMessageEnvelopeForUser BroadcastMessageEnvelopeForUser;
 
 inline static void _PrepareInterBroadcastMessageForUser(BroadcastMessageEnvelopeForUser *envelope_ptr, Session *sesn_ptr, UfsrvEvent *event_ptr, enum _CommandArgs command_arg);
-static inline UFSRVResult *_PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, ShareListContextData *, UFSRVResult *res_ptr, int);
+static inline UFSRVResult *_PrepareForInterBroadcastHandling(MessageQueueMessage *mqm_ptr, ShareListContextData *, UFSRVResult *res_ptr, int);
 
 ////// INTER \\\\\\
 
-static UFSRVResult *_HandleInterBroadcastUserPrefs (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastUserPrefsDefaultBooleans (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastUserPrefsNickname (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastUserPrefsAvatar (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastShareListProfile (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastForShareList(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr,
-                                                      UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserPrefs(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserPrefsDefaultBooleans(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserPrefsNickname(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserPrefsAvatar(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastShareListProfile(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastForShareList(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastForShareListBlockedFence(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
 
-static UFSRVResult *_HandleInterBroadcastFenceUserPrefs (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastFenceUserPrefs(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
 static UFSRVResult *_HandleInterBroadcastFenceUserPrefsDefaultBooleans(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserPrefsDefaultInteger(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserPrefsDefaultString(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
 //static UFSRVResult *_HandleInterBroadcastFenceUserPrefsProfileSharing (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
 //static UFSRVResult *_HandleInterBroadcastFenceUserPrefsStickyGroups (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
 //static UFSRVResult *_HandleInterBroadcastFenceUserPrefsIgnoring (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
@@ -150,15 +153,15 @@ _PrepareInterBroadcastMessageForUser(BroadcastMessageEnvelopeForUser *envelope_p
 
 	//sometimes headers are already included whole-sale assignment of usercommand
 	if (IS_PRESENT(envelope_ptr->header)) {
-		envelope_ptr->header->args											=	command_arg;							envelope_ptr->header->has_args=1;
+		envelope_ptr->header->args											=	command_arg;							envelope_ptr->header->has_args = 1;
 		envelope_ptr->user_command->header							=	envelope_ptr->header;
-		envelope_ptr->header->when											=	GetTimeNowInMillis(); 		envelope_ptr->header->has_when=1;
-		envelope_ptr->header->cid												=	SESSION_ID(sesn_ptr); 		envelope_ptr->header->has_cid=1;
-		MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid = 1;
+		envelope_ptr->header->when											=	GetTimeNowInMillis(); 		envelope_ptr->header->has_when = 1;
+		envelope_ptr->header->cid												=	SESSION_ID(sesn_ptr); 		envelope_ptr->header->has_cid = 1;
+    ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid = 1;
 
 		if (IS_PRESENT(event_ptr)) {
-			envelope_ptr->header->when_eid								=	event_ptr->when; 					envelope_ptr->header->has_when_eid=1;
-			envelope_ptr->header->eid											=	event_ptr->eid; 					envelope_ptr->header->has_eid=1;
+			envelope_ptr->header->when_eid								=	event_ptr->when; 					envelope_ptr->header->has_when_eid = 1;
+			envelope_ptr->header->eid											=	event_ptr->eid; 					envelope_ptr->header->has_eid = 1;
 		}
 	}
 }
@@ -173,15 +176,15 @@ _PrepareInterBroadcastMessageForUser(BroadcastMessageEnvelopeForUser *envelope_p
  * 	@worker: ufsrv
  */
 int
-HandleInterBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleInterBroadcastForUser(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int 										rescode					=	0;
 
-	ShareListContextData	context_data			=	{0};//convenient type. command maynot be sharelist related
+	ShareListContextData	context_data			=	{.key_store_value=&(ShareListItemKeyStoreValue){0}};//convenient type. command maynot be sharelist related
 	UFSRVResult 			result								=	{0};
 	CommandHeader 		*command_header_ptr		=	mqm_ptr->user->header;
 
-	_PrepareForInterBroadcastHandling (mqm_ptr, &context_data, &result, command_header_ptr->command);
+	_PrepareForInterBroadcastHandling(mqm_ptr, &context_data, &result, command_header_ptr->command);
 
 	if (_RESULT_TYPE_ERROR(&result))	goto return_error_nonlocal_user;
 
@@ -193,11 +196,11 @@ HandleInterBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 	switch (command_header_ptr->command)
 	{
 		case USER_COMMAND__COMMAND_TYPES__PREFERENCE:
-			_HandleInterBroadcastUserPrefs ((ClientContextData *)&context_data, mqm_ptr, &result, call_flags);
+			_HandleInterBroadcastUserPrefs((ClientContextData *)&context_data, mqm_ptr, &result, call_flags);
 			break;
 
 		case USER_COMMAND__COMMAND_TYPES__FENCE_PREFERENCE:
-			_HandleInterBroadcastFenceUserPrefs ((ClientContextData *)&context_data, mqm_ptr, &result, call_flags);
+			_HandleInterBroadcastFenceUserPrefs((ClientContextData *)&context_data, mqm_ptr, &result, call_flags);
 			break;
 
 		default:
@@ -215,11 +218,11 @@ HandleInterBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 	return rescode;
 
 	return_error_nonlocal_user:
-	rescode=-1;
+	rescode = -1;
 	goto return_final;
 
 	return_error_unknown_command:
-	rescode=-1;
+	rescode = -1;
 
 	return_final:
 	return rescode;
@@ -227,7 +230,7 @@ HandleInterBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 }
 
 static UFSRVResult *
-_HandleInterBroadcastUserPrefs (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserPrefs(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	ShareListContextData *ctx_ptr				=	(ShareListContextData *)context_ptr;
 
@@ -274,11 +277,22 @@ _HandleInterBroadcastUserPrefs (ClientContextData *context_ptr, MessageQueueMess
       ctx_ptr->shlist_ptr = SESSION_USERPREF_SHLIST_BLOCKED_PTR(ctx_ptr->sesn_ptr);
       return (_HandleInterBroadcastForShareList(context_ptr, mqm_ptr, res_ptr, call_flags));
 
+    case USER_PREFS__BLOCKED_FENCE:
+      ctx_ptr->shlist_ptr = SESSION_USERPREF_SHLIST_BLOCKED_FENCE_PTR(ctx_ptr->sesn_ptr);
+      return (_HandleInterBroadcastForShareListBlockedFence(context_ptr, mqm_ptr, res_ptr, call_flags));
+
+    case USER_PREFS__GEOLOC_TRIGGER:
+    case USER_PREFS__BASELOC_ANCHOR_ZONE:
+      return (_HandleInterBroadcastUserPrefsDefaultInteger(context_ptr, mqm_ptr, res_ptr, call_flags));
+
+      case USER_PREFS__HOMEBASE_GEOLOC:
+      return (_HandleInterBroadcastUserPrefsDefaultString(context_ptr, mqm_ptr, res_ptr, call_flags));
+
 		default:
-			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', prefid:'%d'}: ERROR: UNKNOWN PEREFERENCE TYPE", __func__, pthread_self(), ctx_ptr->sesn_ptr, SESSION_ID(ctx_ptr->sesn_ptr), mqm_ptr->user->prefs[0]->pref_id);
+			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', prefid:'%d'}: ERROR: UNKNOWN PREFERENCE TYPE", __func__, pthread_self(), ctx_ptr->sesn_ptr, SESSION_ID(ctx_ptr->sesn_ptr), mqm_ptr->user->prefs[0]->pref_id);
 	}
 
-	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_FENCE_MEMBERSHIP);
+	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_MEMBERSHIP);
 }
 
 UFSRVResult *
@@ -288,7 +302,7 @@ InterBroadcastUserMessageUserPrefsBoolean(Session *sesn_ptr, ClientContextData *
 
   _GENERATE_ENVELOPE_INITIALISATION_FENCE_USERPREF();
 
-  _PrepareInterBroadcastMessageForUser (&envelope_broadcast, sesn_ptr,  event_ptr, command_arg);
+  _PrepareInterBroadcastMessageForUser(&envelope_broadcast, sesn_ptr,  event_ptr, command_arg);
 
   header.command										=	USER_COMMAND__COMMAND_TYPES__PREFERENCE;
 
@@ -301,17 +315,45 @@ InterBroadcastUserMessageUserPrefsBoolean(Session *sesn_ptr, ClientContextData *
 
 }
 
+/**
+ * Generic broadcaster for simple integer based pref values
+ * @param sesn_ptr User for which the value is changed
+ * @context_ptr prefs data structure
+ * @param event_ptr pregenerated event
+ * @param command_arg
+ * @return
+ */
+UFSRVResult *
+InterBroadcastUserMessageUserPrefsInteger(Session *sesn_ptr, ClientContextData *context_ptr, UfsrvEvent *event_ptr, enum _CommandArgs command_arg)
+{
+  UserPreferenceDescriptor 	*pref_ptr	=	(UserPreferenceDescriptor *)context_ptr;
+
+  _GENERATE_ENVELOPE_INITIALISATION();
+
+  _PrepareInterBroadcastMessageForUser(&envelope_broadcast, sesn_ptr,  event_ptr, command_arg);
+
+  header.command										=	USER_COMMAND__COMMAND_TYPES__PREFERENCE;
+
+  //actual delta TODO: currently assume boolean
+  userpref_record.pref_id						=	pref_ptr->pref_id;
+  userpref_record.values_int				=	pref_ptr->value.pref_value_int;
+  userpref_record.has_values_int		=	1;
+
+  return (UfsrvInterBroadcastMessage(sesn_ptr, &msgqueue_msg, UFSRV_USER));
+
+}
+
 static UFSRVResult *
-_HandleInterBroadcastUserPrefsDefaultBooleans (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserPrefsDefaultBooleans(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
   ShareListContextData 			*ctx_ptr		=	(ShareListContextData *)context_ptr;
   UserPreferenceDescriptor 	pref				=	{0};
 
-  const UserPreferenceDescriptor *prefdef_ptr=GetPrefDescriptorById (mqm_ptr->user->prefs[0]->pref_id);
+  const UserPreferenceDescriptor *prefdef_ptr = GetPrefDescriptorById(AS_USER_PREFS_OFFSETS(mqm_ptr->user->prefs[0]->pref_id));
   if (IS_EMPTY(prefdef_ptr)) goto return_error;
 
   //prefill with data
-  pref=*prefdef_ptr;
+  pref = *prefdef_ptr;
   pref.value.pref_value_bool = mqm_ptr->user->fence_prefs[0]->values_int;
 
   if (IS_PRESENT(prefdef_ptr->pref_validate))	(*prefdef_ptr->pref_validate)(ctx_ptr->sesn_ptr, &pref);
@@ -320,18 +362,18 @@ _HandleInterBroadcastUserPrefsDefaultBooleans (ClientContextData *context_ptr, M
 
   if (mqm_ptr->user->header->has_eid) SESSION_EID(ctx_ptr->sesn_ptr)=mqm_ptr->user->header->eid;
 
-  _RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_FENCE_MEMBERSHIP);
+  _RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP)
 
   return_error:
-  _RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_INCONSISTENT_STATE);
+  _RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_INCONSISTENT_STATE)
 }
 
 static UFSRVResult *
-_HandleInterBroadcastUserPrefsNickname (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserPrefsNickname(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	ShareListContextData *ctx_ptr				=	(ShareListContextData *)context_ptr;
 	UserPreferenceDescriptor 	pref		=	{0};
-	GetUserPreferenceNickname (ctx_ptr->sesn_ptr, PREF_NICKNAME, PREFSTORE_MEM, &pref);
+  GetUserPreferenceNickname(ctx_ptr->sesn_ptr, PREF_NICKNAME, PREFSTORE_MEM, &pref, _EMPTY_STR);
 	pref.value.pref_value_str = mqm_ptr->user->prefs[0]->values_str;
 //
 //	SetUserPreferenceNickname(ctx_ptr->sesn_ptr, &pref, PREFSTORE_MEM, NULL);
@@ -342,7 +384,7 @@ _HandleInterBroadcastUserPrefsNickname (ClientContextData *context_ptr, MessageQ
 
 	if (mqm_ptr->user->header->has_eid) SESSION_EID(ctx_ptr->sesn_ptr)=mqm_ptr->user->header->eid;
 
-	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_FENCE_MEMBERSHIP);
+	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP)
 }
 
 UFSRVResult *
@@ -358,14 +400,14 @@ InterBroadcastUserNicknameMessage(Session *sesn_ptr, ClientContextData *context_
 
 	//actual delta
 	userpref_record.pref_id						=	USER_PREFS__NICKNAME;
-	userpref_record.values_str				=	nickname_new;//by reference. DONT LOSE SCOPE
+	userpref_record.values_str				=	nickname_new;//by reference. DON'T LOSE SCOPE
 
 	return (UfsrvInterBroadcastMessage(sesn_ptr, &msgqueue_msg, UFSRV_USER));
 
 }
 
 static UFSRVResult *
-_HandleInterBroadcastUserPrefsAvatar (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserPrefsAvatar(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	ShareListContextData *ctx_ptr				=	(ShareListContextData *)context_ptr;
 	UserPreferenceDescriptor 	pref		=	{0};
@@ -375,9 +417,11 @@ _HandleInterBroadcastUserPrefsAvatar (ClientContextData *context_ptr, MessageQue
 
 	SetUserPreferenceString(ctx_ptr->sesn_ptr, &pref, PREFSTORE_MEM, NULL);
 
-  if (mqm_ptr->user->header->has_eid) SESSION_EID(ctx_ptr->sesn_ptr)=mqm_ptr->user->header->eid;
+  if (mqm_ptr->user->header->has_eid) {
+    SESSION_EID(ctx_ptr->sesn_ptr) = mqm_ptr->user->header->eid;
+  }
 
-	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_FENCE_MEMBERSHIP);
+	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP)
 }
 
 UFSRVResult *
@@ -393,7 +437,7 @@ InterBroadcastUserAvatarMessage(Session *sesn_ptr, ClientContextData *context_pt
 
 	//actual delta
 	userpref_record.pref_id						=	USER_PREFS__USERAVATAR;
-	userpref_record.values_str				=	avatar_new;//by reference. DONT LOSE SCOPE
+	userpref_record.values_str				=	avatar_new;//by reference. DON'T LOSE SCOPE
 
 	return (UfsrvInterBroadcastMessage(sesn_ptr, &msgqueue_msg, UFSRV_USER));
 
@@ -406,21 +450,21 @@ InterBroadcastUserShareListMessage(Session *sesn_ptr, ClientContextData *context
 	UserCommand 					*usercommand		=	shlist_ctx_ptr->data_msg_received->ufsrvcommand->usercommand;
 
 	_GENERATE_ENVELOPE_INITIALISATION_SHARELIST(usercommand);
-	usercommand->header->when_client 	= usercommand->header->when;usercommand->header->has_when_client=1; //retain client's orig sent time
-	usercommand->header->when 				= GetTimeNowInMillis(); 		usercommand->header->has_when=1;
+	usercommand->header->when_client 	= usercommand->header->when;usercommand->header->has_when_client = 1; //retain client's orig sent time
+	usercommand->header->when 				= GetTimeNowInMillis(); 		usercommand->header->has_when = 1;
 	if (IS_PRESENT(event_ptr)) {
-		usercommand->header->when_eid		=	event_ptr->when; 					usercommand->header->has_when_eid=1;
-		usercommand->header->eid				=	event_ptr->eid; 					usercommand->header->has_eid=1;
+		usercommand->header->when_eid		=	event_ptr->when; 					usercommand->header->has_when_eid = 1;
+		usercommand->header->eid				=	event_ptr->eid; 					usercommand->header->has_eid = 1;
 	}
 
-	_PrepareInterBroadcastMessageForUser (&envelope_broadcast, sesn_ptr,  event_ptr, command_arg);
+	_PrepareInterBroadcastMessageForUser(&envelope_broadcast, sesn_ptr,  event_ptr, command_arg);
 
 	return (UfsrvInterBroadcastMessage(sesn_ptr, &msgqueue_msg, UFSRV_USER));
 
 }
 
 static UFSRVResult *
-_HandleInterBroadcastShareListProfile (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastShareListProfile(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	ShareListContextData 			*ctx_ptr						=	(ShareListContextData *)context_ptr;
 	UserPreferenceDescriptor 	pref								=	{0};
@@ -453,7 +497,7 @@ _HandleInterBroadcastShareListProfile (ClientContextData *context_ptr, MessageQu
       _RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 	}
 
-	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_FENCE_MEMBERSHIP)
+	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP)
 }
 
 /*
@@ -482,7 +526,34 @@ _HandleInterBroadcastForShareList(ClientContextData *context_ptr, MessageQueueMe
 		_RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 	}
 
-	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_FENCE_MEMBERSHIP)
+	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP)
+}
+
+static UFSRVResult *
+_HandleInterBroadcastForShareListBlockedFence(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+{
+  ShareListContextData 			*ctx_ptr						=	(ShareListContextData *)context_ptr;
+  UserCommand 							*user_command_ptr		=	mqm_ptr->user;
+  UserPreference 						*user_command_prefs =	user_command_ptr->prefs[0];
+  ShareListItemKeyStoreValue *key_store_value = ctx_ptr->key_store_value;
+
+  switch (user_command_ptr->header->args)
+  {
+    case COMMAND_ARGS__DELETED:
+      RemoveItemFromShareList(ctx_ptr->sesn_ptr, ctx_ptr->shlist_ptr, key_store_value, SESSION_CALLFLAGS_EMPTY);
+      if (mqm_ptr->user->header->has_eid) SESSION_EID(ctx_ptr->sesn_ptr) = mqm_ptr->user->header->eid;
+      break;
+
+    case COMMAND_ARGS__ADDED:
+      AddItemToShareList(ctx_ptr->sesn_ptr, ctx_ptr->shlist_ptr, key_store_value, SESSION_CALLFLAGS_EMPTY);
+      if (mqm_ptr->user->header->has_eid) SESSION_EID(ctx_ptr->sesn_ptr) = mqm_ptr->user->header->eid;
+      break;
+
+    default:
+    _RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
+  }
+
+  _RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP)
 }
 
 //FenceUserPrefs
@@ -492,7 +563,7 @@ _HandleInterBroadcastForShareList(ClientContextData *context_ptr, MessageQueueMe
  * 	@locked sesn_ptr:
  */
 static UFSRVResult *
-_HandleInterBroadcastFenceUserPrefs (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastFenceUserPrefs(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	ShareListContextData *ctx_ptr				=	(ShareListContextData *)context_ptr;
 
@@ -501,29 +572,28 @@ _HandleInterBroadcastFenceUserPrefs (ClientContextData *context_ptr, MessageQueu
 	{
 		case	FENCE_USER_PREFS__PROFILE_SHARING:
 		case 	FENCE_USER_PREFS__STICKY_GEOGROUP:
-		case 	FENCE_USER_PREFS__IGNORING:
 			return (_HandleInterBroadcastFenceUserPrefsDefaultBooleans(context_ptr, mqm_ptr, res_ptr, call_flags));
 
 		default:
 			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', prefid:'%d'}: ERROR: UNKNOWN PEREFERENCE TYPE", __func__, pthread_self(), ctx_ptr->sesn_ptr, SESSION_ID(ctx_ptr->sesn_ptr), mqm_ptr->user->prefs[0]->pref_id);
 	}
 
-	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_FENCE_MEMBERSHIP);
+	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_FENCE_MEMBERSHIP)
 }
 
 static UFSRVResult *
-_HandleInterBroadcastFenceUserPrefsDefaultBooleans (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastFenceUserPrefsDefaultBooleans(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	ShareListContextData 			*ctx_ptr		=	(ShareListContextData *)context_ptr;
 	UserPreferenceDescriptor 	pref				=	{0};
 
-	GetFenceUserPreferenceDescriptorById (mqm_ptr->user->fence_prefs[0]->pref_id, &pref);
+	GetFenceUserPreferenceDescriptorById(AS_USER_PREFS_OFFSETS(mqm_ptr->user->fence_prefs[0]->pref_id), &pref);
 	pref.value.pref_value_bool = mqm_ptr->user->fence_prefs[0]->values_int;
 	(*pref.pref_ops->pref_set_local)(&(PairedSessionFenceState){ctx_ptr->fstate_ptr, ctx_ptr->sesn_ptr}, &pref);
 
   if (mqm_ptr->user->header->has_eid) SESSION_EID(ctx_ptr->sesn_ptr)=mqm_ptr->user->header->eid;
 
-	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_FENCE_MEMBERSHIP);
+	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP)
 }
 
 //replaced by _HandleInterBroadcastFenceUserPrefsDefaultBooleans
@@ -537,7 +607,7 @@ _HandleInterBroadcastFenceUserPrefsDefaultBooleans (ClientContextData *context_p
 //	pref.value.pref_value_bool = mqm_ptr->user->fence_prefs[0]->values_int;
 //	(*pref.pref_ops)->pref_set_local(&(PairedSessionFenceState){ctx_ptr->sesn_ptr, ctx_ptr->fstate_ptr}, &pref);
 //
-//	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_FENCE_MEMBERSHIP);
+//	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP);
 //}
 //
 ////TODO: IMPLEMENT
@@ -552,7 +622,7 @@ _HandleInterBroadcastFenceUserPrefsDefaultBooleans (ClientContextData *context_p
 ////
 ////	SetUserPreferenceString(ctx_ptr->sesn_ptr, &pref, PREFSTORE_MEM, NULL);
 //
-//	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_FENCE_MEMBERSHIP);
+//	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP);
 //}
 //
 ////TODO: IMPLEMENT
@@ -567,8 +637,41 @@ _HandleInterBroadcastFenceUserPrefsDefaultBooleans (ClientContextData *context_p
 ////
 ////	SetUserPreferenceString(ctx_ptr->sesn_ptr, &pref, PREFSTORE_MEM, NULL);
 //
-//	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_FENCE_MEMBERSHIP);
+//	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_FENCE_MEMBERSHIP);
 //}
+//
+
+//geo
+
+static UFSRVResult *
+_HandleInterBroadcastUserPrefsDefaultInteger(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+{
+  ShareListContextData *ctx_ptr				=	(ShareListContextData *)context_ptr;
+  UserPreferenceDescriptor 	pref		=	{0};
+  GetUserPreferenceInteger(ctx_ptr->sesn_ptr, (enum UserPrefsOffsets)mqm_ptr->user->prefs[0]->pref_id, PREFSTORE_MEM, &pref);
+  pref.value.pref_value_int = mqm_ptr->user->prefs[0]->values_int;
+
+  (*pref.pref_ops->pref_set_local)(ctx_ptr->sesn_ptr, &pref);
+
+  if (mqm_ptr->user->header->has_eid) SESSION_EID(ctx_ptr->sesn_ptr) = mqm_ptr->user->header->eid;
+
+  _RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
+}
+
+static UFSRVResult *
+_HandleInterBroadcastUserPrefsDefaultString(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+{
+  ShareListContextData *ctx_ptr				=	(ShareListContextData *)context_ptr;
+  UserPreferenceDescriptor 	pref		=	{0};
+  GetUserPreferenceInteger(ctx_ptr->sesn_ptr, (enum UserPrefsOffsets)mqm_ptr->user->prefs[0]->pref_id, PREFSTORE_MEM, &pref);
+  pref.value.pref_value_str = mqm_ptr->user->prefs[0]->values_str;
+
+  (*pref.pref_ops->pref_set_local)(ctx_ptr->sesn_ptr, &pref);
+
+  if (mqm_ptr->user->header->has_eid) SESSION_EID(ctx_ptr->sesn_ptr) = mqm_ptr->user->header->eid;
+
+  _RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
+}
 //
 
 UFSRVResult *
@@ -596,12 +699,34 @@ InterBroadcastUserMessageFenceUserPrefs(Session *sesn_ptr, ClientContextData *co
 }
 
 //
+static unsigned long
+_GetFenceIdFromPreference(const UserCommand *user_cmd)
+{
+  if (IS_PRESENT(user_cmd->fences) && user_cmd->n_fences > 0) return user_cmd->fences[0]->fid;
+  //currently not suitable as function is used to check membership
+//  else if (IS_PRESENT(user_cmd->fences_invited) && user_cmd->n_fences_invited > 0) return user_cmd->fences_invited[0]->fid;
+  else return 0;
+}
+
+static unsigned long
+_GetFenceIdFromPreferenceForBlockedFence(const UserCommand *user_cmd)
+{
+  if (IS_PRESENT(user_cmd->fences_blocked) && user_cmd->n_fences_blocked > 0) return user_cmd->fences_blocked[0]->fid;
+  else return 0;
+}
+
+static bool
+_IsPrefCommandForBlockedFence(MessageQueueMessage *mqm_ptr)
+{
+  return mqm_ptr->user->prefs[0]->pref_id == USER_PREFS__BLOCKED_FENCE;
+}
+
 
 /**
  * 	@locks sesn_ptr:
  */
 static inline UFSRVResult *
-_PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, ShareListContextData *ctx_ptr, UFSRVResult *res_ptr, int command)
+_PrepareForInterBroadcastHandling(MessageQueueMessage *mqm_ptr, ShareListContextData *ctx_ptr, UFSRVResult *res_ptr, int command)
 {
 	bool lock_already_owned	=	false;
 	Session 		*sesn_ptr_localuser,
@@ -621,7 +746,7 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, ShareListContex
 		SessionLoadEphemeralMode(sesn_ptr_localuser);
 		ctx_ptr->sesn_ptr                 = sesn_ptr_localuser;
 		ctx_ptr->lock_already_owned_sesn  = lock_already_owned;
-//		ctx_ptr->flag_session_local=true; //do we need this?
+//		ctx_ptr->flag_session_local = true; //do we need this?
 
 		//TODO: CURRENTLY ONLY HANDLING SINGLE USER
 		if (IS_PRESENT(mqm_ptr->user->target_list) && (mqm_ptr->user->n_target_list > 0)) {
@@ -633,21 +758,30 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, ShareListContex
 		}
 
 		InstanceHolderForFenceStateDescriptor *instance_fstate_ptr;
-		if (IS_PRESENT(mqm_ptr->user->fences) && mqm_ptr->user->n_fences>0) {
-			instance_fstate_ptr = IsUserMemberOfFenceById(&SESSION_FENCE_LIST(ctx_ptr->sesn_ptr), mqm_ptr->user->fences[0]->fid, false);
+    unsigned long fid = _GetFenceIdFromPreference(mqm_ptr->user);
+		if (fid > 0) {
+			instance_fstate_ptr = IsUserMemberOfFenceByFenceId(&SESSION_FENCE_LIST(ctx_ptr->sesn_ptr),
+                                                         mqm_ptr->user->fences[0]->fid, false);
 			if (IS_EMPTY(instance_fstate_ptr))	goto exit_unlock_session;
 
 			ctx_ptr->fstate_ptr	=	FenceStateDescriptorOffInstanceHolder(instance_fstate_ptr);
 		}
 
+    if (_IsPrefCommandForBlockedFence(mqm_ptr)) {
+      if ((ctx_ptr->key_store_value->key_value = _GetFenceIdFromPreferenceForBlockedFence(mqm_ptr->user)) > 0) {
+        ctx_ptr->key_store_value->store_value = 0;
+        ctx_ptr->key_store_value->item_descriptor = ProvideDefaultShareListItemDescriptorForBlockedFence();
+      } else goto exit_unlock_session;
+    }
+
 		exit_success:
 		_RETURN_RESULT_RES(res_ptr, ctx_ptr, RESULT_TYPE_SUCCESS, RESCODE_USER_SESN_LOCAL)
-	}
 
-	exit_unlock_session:
-	SESSION_WHEN_SERVICED(sesn_ptr_localuser) = time(NULL);
-	if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_localuser, __func__);
-	goto exit_error;
+    exit_unlock_session:
+    SESSION_WHEN_SERVICED(sesn_ptr_localuser) = time(NULL);
+    if (!lock_already_owned)	SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_localuser, __func__);
+    goto exit_error;
+	}
 
 	exit_error:
 		_RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_USER_SESN_LOCAL)
@@ -660,17 +794,18 @@ _PrepareForInterBroadcastHandling (MessageQueueMessage *mqm_ptr, ShareListContex
 /////// INTRA	\\\\\
 
 
-static inline int _VetrifyUserCommandForIntra	(WireProtocolData *);
+static inline int _VetrifyUserCommandForIntra(WireProtocolData *);
 
 /**
  * 	@brief: Main controller for handling INTRA broadcasts for UserComands.
  */
 int
-HandleIntraBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleIntraBroadcastForUser(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int 			rc					=	0;
 	long long timer_start	=	GetTimeNowInMicros(),
 						timer_end;
+  WorkersConfigDescriptor *jobworkers_config  = GetJobWorkersConfigurationDescriptor();
 
   if (unlikely(mqm_ptr->has_ufsrvuid == 0)) goto return_error_undefined_ufsrvuid;
 
@@ -678,7 +813,7 @@ HandleIntraBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 
 	unsigned long userid = UfsrvUidGetSequenceId((const UfsrvUid *)(mqm_ptr->ufsrvuid.data));
 
-	InstanceHolderForSession  *instance_sesn_ptr_carrier	=	InstantiateCarrierSession (NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
+	InstanceHolderForSession  *instance_sesn_ptr_carrier	=	InstantiateCarrierSession(NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
 	if (IS_EMPTY(instance_sesn_ptr_carrier))	{
 	  rc = -4;
 	  goto return_final;
@@ -690,7 +825,7 @@ HandleIntraBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 	bool lock_already_owned = false;
 	Session *sesn_ptr_carrier = SessionOffInstanceHolder(instance_sesn_ptr_carrier);
 
-	GetSessionForThisUserByUserId (sesn_ptr_carrier, userid, &lock_already_owned,    sesn_call_flags);
+	GetSessionForThisUserByUserId(sesn_ptr_carrier, userid, &lock_already_owned,    sesn_call_flags);
 	InstanceHolderForSession *instance_sesn_ptr_local_user = (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr_carrier);
 
 	if (unlikely(IS_EMPTY(instance_sesn_ptr_local_user)))	goto return_error_unknown_uname;
@@ -707,7 +842,7 @@ HandleIntraBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 
 	SessionLoadEphemeralMode(sesn_ptr_local_user);
 	//>>>>>>>>><<<<<<<<<<
-	CommandCallbackControllerUserCommand (instance_sesn_ptr_local_user, NULL, mqm_ptr->wire_data);
+	CommandCallbackControllerUserCommand(instance_sesn_ptr_local_user, NULL, mqm_ptr->wire_data);
 	//>>>>>>>>><<<<<<<<<<
 
 	SESSION_WHEN_SERVICED(sesn_ptr_local_user) = time(NULL);
@@ -720,7 +855,7 @@ HandleIntraBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
   return_error_undefined_ufsrvuid:
   syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: COULD NOT FIND UFSRVUID", __func__, pthread_self());
   rc = -7;
-  goto return_deallocate_carrier;
+  goto return_final;
 
 	return_error_unknown_uname:
 	syslog(LOG_DEBUG, "%s {pid:'%lu', userid:'%lu'}: ERROR: COULD NOT RETRIEVE SESSION FOR USER", __func__, pthread_self(), userid);
@@ -728,11 +863,11 @@ HandleIntraBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 	goto return_deallocate_carrier;
 
 	return_deallocate_carrier:
-	SessionReturnToRecycler (instance_sesn_ptr_carrier, (ContextData *)NULL, 0);
+	SessionReturnToRecycler(instance_sesn_ptr_carrier, (ContextData *)NULL, 0);
 
 	return_final:
 	timer_end = GetTimeNowInMicros();
-	statsd_timing(pthread_getspecific(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.user.elapsed_time", (timer_end-timer_start));
+	statsd_timing(pthread_getspecific(jobworkers_config->ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.user.elapsed_time", (timer_end-timer_start));
 	return rc;
 
 }
@@ -741,7 +876,7 @@ HandleIntraBroadcastForUser (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
  * 	@brief: Verify the fitness of the UserCommand message in the context of on INTRA broadcast
  */
 inline static int
-_VetrifyUserCommandForIntra	(WireProtocolData *data_ptr)
+_VetrifyUserCommandForIntra(WireProtocolData *data_ptr)
 {
 	int rc = 1;
   UserCommand *user_cmd_ptr = (UserCommand *)data_ptr;
@@ -749,8 +884,7 @@ _VetrifyUserCommandForIntra	(WireProtocolData *data_ptr)
 	if (unlikely(IS_EMPTY((data_ptr))))				goto return_error_usercommand_missing;
 	if (unlikely(IS_EMPTY(user_cmd_ptr->header)))	goto return_error_commandheader_missing;
 	if (user_cmd_ptr->header->command == USER_COMMAND__COMMAND_TYPES__PREFERENCE) {
-		if (unlikely((user_cmd_ptr->n_prefs < 1) ||
-								 IS_EMPTY(user_cmd_ptr->prefs)))				goto return_error_missing_prefs_definition;
+		if (unlikely((user_cmd_ptr->n_prefs < 1) || IS_EMPTY(user_cmd_ptr->prefs))) goto return_error_missing_prefs_definition;
 	}
 
 	return_success:
@@ -758,12 +892,12 @@ _VetrifyUserCommandForIntra	(WireProtocolData *data_ptr)
 
 	return_error_missing_payload:
 	syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: DATA PAYLOAD MISSING FROM MessageQueue Message", __func__, pthread_self());
-	rc=-2;
+	rc = -2;
 	goto return_free;
 
 	return_error_ufsrvcommand_missing:
 	syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: COULD NOT FIND UFSRV COMMAND IN UNPACKED MESAGEQUEUE", __func__, pthread_self());
-	rc=-3;
+	rc = -3;
 	goto return_free;
 
 	return_error_commandheader_missing:
