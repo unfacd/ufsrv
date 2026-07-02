@@ -8,15 +8,16 @@
 #ifndef SRC_INCLUDE_PROTOCOL_IO_H_
 #define SRC_INCLUDE_PROTOCOL_IO_H_
 
-#include <recycler/instance_type.h>
+#include <uflib/recycler/instance_type.h>
 #include <session_type.h>
-#include <http_request_handler.h>
+#include <ufsrv_core/http/http_request_handler.h>
 #include <attachment_descriptor_type.h>
 
-//ssize_t ReadFromSocket (Session *sesn_ptr, SocketMessage *sock_msg_ptr, unsigned flag);
-onion_connection_status HttpSendFile_orig (Session *sesn_ptr, const char *filename, AttachmentDescriptor *attch_ptr);
-onion_connection_status HttpSendFile (Session *sesn_ptr);
+//ssize_t ReadFromSocket(Session *sesn_ptr, SocketMessage *sock_msg_ptr, unsigned flag);
+onion_connection_status HttpSendFile_orig(Session *sesn_ptr, const char *filename, AttachmentDescriptor *attch_ptr);
+onion_connection_status HttpSendFile(Session *sesn_ptr);
 int
-InitialiseSendFileContext (InstanceHolderForSession *instance_sesn_ptr, const char *filename, AttachmentDescriptor *attch_ptr);
-int HttpSendMessage (InstanceHolderForSession *, const char *msg, size_t msglen);
+InitialiseSendFileContext(InstanceHolderForSession *instance_sesn_ptr, const char *filename, AttachmentDescriptor *attch_ptr);
+
+
 #endif /* SRC_INCLUDE_PROTOCOL_IO_H_ */

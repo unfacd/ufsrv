@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -19,13 +19,12 @@
 #define PROTOCOL_WEBSOCKETS_DATA_H_
 
 #include <session_type.h>
-#include <ufsrv_core/protocol/protocol.h>
-//#include <nportredird.h>
+#include <ufsrvmsg_core/protocol/protocol.h>
 
 #include <ufsrvwebsock/include/protocol_websocket.h>//function definitions for this protocol
 #include <ufsrvrest/include/protocol_http.h>
-#include <proto_stun/include/protocol_stun.h>
-#include <proto_stun/include/worker_stun_thread.h>
+#include <ufsrvsfu/include/protocol_sfu.h>
+#include <ufsrvsfu/include/delegator_sfu_listener_thread.h>
 
 //#include <protocol_future.h>
 
@@ -60,7 +59,8 @@ static  Protocol ProtocolsRegistry [] = {
 	proto_websocket_error_callback,
 	proto_websocket_recycler_error_callback,
 	proto_websocket_close_callback,
-	proto_websocket_msgqueue_topics_callback
+	proto_websocket_msgqueue_topics_callback,
+	proto_websocket_generate_session_id_callback
  },
  0, NULL,
  {
@@ -98,7 +98,8 @@ static  Protocol ProtocolsRegistry [] = {
 	proto_http_error_callback,
 	proto_http_recycler_error_callback,
 	proto_http_close_callback,
-	proto_http_msgqueue_topics_callback
+	proto_http_msgqueue_topics_callback,
+	proto_http_generate_session_id_callback
  },
  0, NULL,
  {
@@ -113,31 +114,34 @@ static  Protocol ProtocolsRegistry [] = {
 	1//main listener semantics
  }//end of struct//end of struct
 }//end of protocol entry
-#if 0
-,{
- "STUN", 1, ThreadStunWorker,
- {
-	proto_stun_init_callback,
-	NULL, //config
-	proto_stun_init_listener,
-	NULL,//init_workers_delegator_callback -> to be phased out
-	proto_stun_main_listener_callback,
-	proto_stun_init_session_callback,
-	proto_stun_reset_session_callback,
-	NULL/*proto_http_hanshake_callback*/,
-	NULL/*proto_http_post_hanshake_callback*/,
-	proto_stun_msg_callback,
-	proto_stun_msg_out_callback,
-	NULL, //decode
-	NULL, //encode
-	proto_stun_service_timeout_callback,
-	proto_stun_error_callback,
-	proto_stun_recycler_error_callback,
-	proto_stun_close_callback,
-	NULL//msgqueue_topics_callback
+#if 1
+,
+
+{
+        "SFU", 2, ThreadSfuConnectionListenerWorker,
+        {
+                proto_sfu_init_callback,
+                NULL, //config
+	              proto_sfu_init_listener,
+                NULL,//init_workers_delegator_callback -> to be phased out
+	              proto_sfu_main_listener_callback,
+                (UFSRVResult *(*)(void *, unsigned int)) proto_sfu_init_session_callback,
+                (UFSRVResult *(*)(InstanceHolder *, unsigned int)) proto_sfu_reset_session_callback,
+                proto_stun_hanshake_callback,
+                NULL/*proto_http_post_hanshake_callback*/,
+                (UFSRVResult *(*)(InstanceHolder *, SocketMessage *, unsigned int, size_t)) proto_sfu_msg_callback,
+                (UFSRVResult *(*)(InstanceHolder *, SocketMessage *, unsigned int, size_t)) proto_sfu_msg_out_callback,
+                NULL, //decode
+	              NULL, //encode
+                (UFSRVResult *(*)(InstanceHolder *, time_t, unsigned long)) proto_sfu_service_timeout_callback,
+                (UFSRVResult *(*)(InstanceHolder *, unsigned int)) proto_sfu_error_callback,
+                (UFSRVResult *(*)(InstanceHolder *, unsigned int)) proto_sfu_recycler_error_callback,
+                (UFSRVResult *(*)(InstanceHolder *)) proto_sfu_close_callback,
+                NULL,//msgqueue_topics_callback
+                proto_sfu_generate_session_id_callback
  },
- 0, NULL,
- {
+        0, NULL,
+        {
 	0,//unsigned read_blocked_session
 	0,//unsigned read_inservice_session
 	0,//retain_session_on_error

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,11 +20,10 @@
 #endif
 
 #include <main.h>
-#include <utils_crypto.h>
-#include <zkgroup.h>
+#include <ufsrvmsg_core/include/utils_crypto.h>
 #include <api_endpoint_v1_server.h>
-#include <http_request_handler.h>
-#include <response.h>
+#include <ufsrv_core/http/http_request_handler.h>
+#include <ufsrv_core/http/response.h>
 #include <http_session_type.h>
 #include <session_type.h>
 
@@ -32,10 +31,42 @@ extern __thread ThreadContext ufsrv_thread_context;
 
 static const char *err = "Server unable to complete request.";
 
-static inline const char *_ServerCertificateNewMakeResultByJson(const KeyCertificateContext *key_cert_ctx_ptr,
-                                                                json_object *jobj_pref)  __attribute__((nonnull));
-static inline const char *_ServerCertificateMakeResultByJson(const KeyCertificateContext *key_cert_ctx_ptr,
-                                                             json_object *jobj_pref)  __attribute__((nonnull));
+static inline const char *_ServerCertificateNewMakeResultByJson(const KeyCertificateContext *key_cert_ctx_ptr, json_object *jobj_pref)  __attribute__((nonnull));
+static inline const char *_ServerCertificateMakeResultByJson(const KeyCertificateContext *key_cert_ctx_ptr, json_object *jobj_pref)  __attribute__((nonnull));
+
+API_ENDPOINT_V1(ASSETLINKS)
+{
+  Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
+  HttpSession *http_ptr = (HttpSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr);
+  char *assetlinks_response =
+#include "assetlinks.json.h"
+  ;
+#define _THIS_PATH_ASSETSPATH	".well-known/assetlinks.json"
+
+  size_t pathprefix_len = strlen( _THIS_PATH_ASSETSPATH);
+  const char *full_path = onion_request_get_fullpath(HTTPSESN_REQUEST_PTR(http_ptr));
+  int flags = onion_request_get_flags(HTTPSESN_REQUEST_PTR(http_ptr));
+
+  if (strlen(full_path) < pathprefix_len)	goto return_error;
+
+  if ((flags&OR_METHODS) == OR_GET) {
+    goto return_reply;
+  } else {
+    syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', request_flags:'%d'}: ERROR: UNSUPPORTED HTTP REQUEST TYPE...", __func__, pthread_self(), sesn_ptr, flags);
+    goto return_error;
+  }
+
+  return_reply:
+  onion_response_set_length(HTTPSESN_RESPONSE_PTR(http_ptr), strlen(assetlinks_response));
+  onion_response_set_content_type(HTTPSESN_RESPONSE_PTR(http_ptr), "application/json");
+  onion_response_write(instance_sesn_ptr, HTTPSESN_RESPONSE_PTR(http_ptr), assetlinks_response, strlen(assetlinks_response));
+  return OCS_PROCESSED;
+
+  return_error:
+  onion_response_set_code(HTTPSESN_RESPONSE_PTR(http_ptr), 409);
+  return OCS_PROCESSED;
+
+}
 
 typedef enum CertificateOp {
   CERTIFICATEOP_QUERY,
@@ -61,7 +92,7 @@ API_ENDPOINT_V1(SERVER_CERTIFICATE)
   HttpSession 		*http_ptr;
   json_object 		*jobj_pref = NULL;
 
-  http_ptr=(HttpSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
+  http_ptr = (HttpSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr);
 #define _THIS_PATH_CERT	"/V1/Server/Certificate"
 
   const char	*json_str_reply;
@@ -70,7 +101,7 @@ API_ENDPOINT_V1(SERVER_CERTIFICATE)
   char *full_path = strndupa(onion_request_get_fullpath(HTTPSESN_REQUEST_PTR(http_ptr)), MBUF); //TODO: is extra copying necessary just to please compiler
   int flags = onion_request_get_flags(HTTPSESN_REQUEST_PTR(http_ptr));
 
-  if (strlen(full_path)<pathprefix_len)	goto return_error;
+  if (strlen(full_path) < pathprefix_len)	goto return_error;
 
   ///V1/Server/Certificate/New
   char *op_name, *arg = "";
@@ -141,7 +172,7 @@ API_ENDPOINT_V1(SERVER_CERTIFICATE)
 
   return_reply:
 //  onion_response_set_length(HTTPSESN_RESPONSE_PTR(http_ptr), strlen(json_str_reply));
-  onion_response_write(instance_sesn_ptr, HTTPSESN_RESPONSE_PTR(http_ptr),json_str_reply, strlen(json_str_reply));
+  onion_response_write_with_known_content_length(instance_sesn_ptr, HTTPSESN_RESPONSE_PTR(http_ptr),json_str_reply, strlen(json_str_reply), "application/json");
   if (IS_PRESENT(jobj_pref))	json_object_put(jobj_pref);
   return OCS_PROCESSED;
 
@@ -151,6 +182,7 @@ API_ENDPOINT_V1(SERVER_CERTIFICATE)
 #include <crypto_zkgroup.h>
 #include <zkgroup_utils/utils_zkgroup.h>
 
+//wget --user=/3J140H9YY5H43KM08000000000 --ask-password https://api.unfacd.io/V1/Server/ZKGroup/Params
 API_ENDPOINT_V1(SERVER_ZKGROUP_PARAMS)
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
@@ -158,7 +190,7 @@ API_ENDPOINT_V1(SERVER_ZKGROUP_PARAMS)
   HttpSession 		*http_ptr;
   json_object 		*jobj_pref = NULL;
 
-  http_ptr = (HttpSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
+  http_ptr = (HttpSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr);
 #define _THIS_PATH_CERT	"/V1/Server/ZKGroup/Params"
 
   const char	*json_str_reply;
@@ -170,7 +202,7 @@ API_ENDPOINT_V1(SERVER_ZKGROUP_PARAMS)
   if (strlen(full_path) < pathprefix_len)	goto return_error;
 
   if ((flags&OR_METHODS) == OR_GET) {
-    jobj_pref                                 = json_object_new_object();
+    jobj_pref                         = json_object_new_object();
     ZKGroupServerParams server_params = {0};
 
     if (GenerateZKGroupServerParams(&server_params)) {
@@ -194,7 +226,7 @@ API_ENDPOINT_V1(SERVER_ZKGROUP_PARAMS)
   return OCS_PROCESSED;
 
   return_reply:
-  onion_response_write(instance_sesn_ptr, HTTPSESN_RESPONSE_PTR(http_ptr),json_str_reply, strlen(json_str_reply));
+  onion_response_write_with_known_content_length(instance_sesn_ptr, HTTPSESN_RESPONSE_PTR(http_ptr), json_str_reply, strlen(json_str_reply), "application/json");
   if (IS_PRESENT(jobj_pref))	json_object_put(jobj_pref);
   return OCS_PROCESSED;
 
@@ -204,12 +236,12 @@ API_ENDPOINT_V1(SERVER_ZKGROUP_PARAMS)
 static inline const char *
 _ServerCertificateMakeResultByJson(const KeyCertificateContext *key_cert_ctx_ptr, struct json_object *jobj_pref)
 {
-  json_object_object_add (jobj_pref, "key_id", json_object_new_int64(key_cert_ctx_ptr->key_id));
-  json_object_object_add (jobj_pref, "public_key", json_object_new_string(key_cert_ctx_ptr->encoded.public_key));
-  json_object_object_add (jobj_pref, "public_key_serialised", json_object_new_string(key_cert_ctx_ptr->encoded.public_key_serialised));
-  json_object_object_add (jobj_pref, "private_key", json_object_new_string("not_allowed"/*key_cert_ctx_ptr->encoded.private_key)*/));
+  json_object_object_add(jobj_pref, "key_id", json_object_new_int64(key_cert_ctx_ptr->key_id));
+  json_object_object_add(jobj_pref, "public_key", json_object_new_string(key_cert_ctx_ptr->encoded.public_key));
+  json_object_object_add(jobj_pref, "public_key_serialised", json_object_new_string(key_cert_ctx_ptr->encoded.public_key_serialised));
+  json_object_object_add(jobj_pref, "private_key", json_object_new_string("not_allowed"/*key_cert_ctx_ptr->encoded.private_key)*/));
 
-  const char *json_str_reply=json_object_to_json_string(jobj_pref);
+  const char *json_str_reply = json_object_to_json_string(jobj_pref);
 
   return json_str_reply;
 }
@@ -217,12 +249,12 @@ _ServerCertificateMakeResultByJson(const KeyCertificateContext *key_cert_ctx_ptr
 static inline const char *
 _ServerCertificateNewMakeResultByJson(const KeyCertificateContext *key_cert_ctx_ptr, struct json_object *jobj_pref)
 {
-  json_object_object_add (jobj_pref, "key_id", json_object_new_int64(key_cert_ctx_ptr->key_id)); //TODO: implement keyid for server key
-  json_object_object_add (jobj_pref, "public_key", json_object_new_string(key_cert_ctx_ptr->encoded.public_key));
-  json_object_object_add (jobj_pref, "public_key_serialised", json_object_new_string(key_cert_ctx_ptr->encoded.public_key_serialised));
-  json_object_object_add (jobj_pref, "private_key", json_object_new_string(key_cert_ctx_ptr->encoded.private_key));
+  json_object_object_add(jobj_pref, "key_id", json_object_new_int64(key_cert_ctx_ptr->key_id)); //TODO: implement keyid for server key
+  json_object_object_add(jobj_pref, "public_key", json_object_new_string(key_cert_ctx_ptr->encoded.public_key));
+  json_object_object_add(jobj_pref, "public_key_serialised", json_object_new_string(key_cert_ctx_ptr->encoded.public_key_serialised));
+  json_object_object_add(jobj_pref, "private_key", json_object_new_string(key_cert_ctx_ptr->encoded.private_key));
 
-  const char *json_str_reply=json_object_to_json_string(jobj_pref);
+  const char *json_str_reply = json_object_to_json_string(jobj_pref);
 
   return json_str_reply;
 }

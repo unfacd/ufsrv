@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,16 +18,19 @@
 #ifndef UFSRV_CREDENTIAL_RESPONSE_TYPE_H
 #define UFSRV_CREDENTIAL_RESPONSE_TYPE_H
 
-#include <zkgroup.h>
+#include <signal_ffi.h>
+
+#define AUTH_CREDENTIAL_RESPONSE_SIZE SignalAUTH_CREDENTIAL_RESPONSE_LEN
+
 
 typedef struct CredentialResponse {
   struct {
-    uint8_t by_value[AUTH_CREDENTIAL_RESPONSE_LEN];
+    uint8_t by_value[AUTH_CREDENTIAL_RESPONSE_SIZE];
     uint8_t *by_ref;
   } raw;
 
   struct {
-    uint8_t by_value[((AUTH_CREDENTIAL_RESPONSE_LEN + 2) / 3) * 5];
+    uint8_t by_value[((AUTH_CREDENTIAL_RESPONSE_SIZE + 2) / 3) * 5];
     uint8_t *by_ref;
   } serialised;
 } CredentialResponse;

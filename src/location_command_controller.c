@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -24,12 +24,12 @@
 #include <ufsrvwebsock/include/protocol_websocket.h>
 #include <ufsrvcmd_user_callbacks.h>
 #include <ufsrvcmd_callbacks.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
-#include <ufsrv_core/SignalService.pb-c.h>
-#include <ufsrv_core/location/location.h>
-#include <recycler/recycler.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <ufsrvmsg_core/SignalService.pb-c.h>
+#include <ufsrvmsg_core/location/location.h>
+#include <uflib/recycler/recycler.h>
 #include <command_controllers.h>
-#include <ufsrvuid.h>
+#include <uflib/ufsrvuid.h>
 
 extern ufsrv							*const masterptr;
 extern __thread ThreadContext ufsrv_thread_context;
@@ -68,15 +68,15 @@ typedef struct MarshalMessageEnvelopeForLocation MarshalMessageEnvelopeForLocati
 	}
 
 inline static void
-_PrepareMarshalMessageForLocation (MarshalMessageEnvelopeForLocation *envelope_ptr, Session *sesn_ptr, DataMessage *data_msg_ptr_orig, UfsrvEvent *event_ptr, enum _LocationCommand__CommandTypes command_type, enum _CommandArgs command_arg);
-inline static UFSRVResult *_CommandControllerLocation (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
-inline static UFSRVResult *_CommandControllerLocationAddress (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
-inline static UFSRVResult *_CommandControllerLocationLongLat (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
-inline static UFSRVResult *_MarshalLocation  (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr);
-inline static UFSRVResult *_HandleLocationCommandError (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, int rescode, int command_type);
+_PrepareMarshalMessageForLocation(MarshalMessageEnvelopeForLocation *envelope_ptr, Session *sesn_ptr, DataMessage *data_msg_ptr_orig, UfsrvEvent *event_ptr, enum _LocationCommand__CommandTypes command_type, enum _CommandArgs command_arg);
+inline static UFSRVResult *_CommandControllerLocation(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+inline static UFSRVResult *_CommandControllerLocationAddress(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+inline static UFSRVResult *_CommandControllerLocationLongLat(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
+inline static UFSRVResult *_MarshalLocation(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr);
+inline static UFSRVResult *_HandleLocationCommandError(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, int rescode, int command_type);
 
 UFSRVResult *
-CommandCallbackControllerLocationCommand (InstanceContextForSession *ctx_ptr_local_user, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr)
+CommandCallbackControllerLocationCommand(InstanceContextForSession *ctx_ptr_local_user, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr)
 {
   CommandHeader *command_header = data_msg_ptr->ufsrvcommand->locationcommand->header;
 
@@ -103,26 +103,26 @@ CommandCallbackControllerLocationCommand (InstanceContextForSession *ctx_ptr_loc
 }
 
 inline static UFSRVResult *
-_CommandControllerLocationLongLat (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
+_CommandControllerLocationLongLat(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
 {
   exit_catch_all:
   _RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 }
 
 inline static UFSRVResult *
-_CommandControllerLocationAddress (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
+_CommandControllerLocationAddress(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr)
 {
   exit_catch_all:
   _RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 }
 
 inline static UFSRVResult *
-_CommandControllerLocation (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
+_CommandControllerLocation(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, DataMessage *data_msg_ptr_received)
 {
   Session *sesn_ptr = ctx_ptr->sesn_ptr;
   LocationCommand *location_command_ptr = data_msg_ptr_received->ufsrvcommand->locationcommand;
 
-  IsUserAllowedToChangeLocation (ctx_ptr, data_msg_ptr_received, wsm_ptr_received, NULL, _MarshalLocation, CALLFLAGS_EMPTY);
+  IsUserAllowedToChangeLocation(ctx_ptr, data_msg_ptr_received, wsm_ptr_received, NULL, _MarshalLocation, CALLFLAGS_EMPTY);
 
   if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))	{
   } else {
@@ -135,7 +135,7 @@ _CommandControllerLocation (InstanceContextForSession *ctx_ptr, WebSocketMessage
 }
 
 inline static void
-_PrepareMarshalMessageForLocation (MarshalMessageEnvelopeForLocation *envelope_ptr, Session *sesn_ptr, DataMessage *data_msg_ptr_orig, UfsrvEvent *event_ptr, enum _LocationCommand__CommandTypes command_type, enum _CommandArgs command_arg)
+_PrepareMarshalMessageForLocation(MarshalMessageEnvelopeForLocation *envelope_ptr, Session *sesn_ptr, DataMessage *data_msg_ptr_orig, UfsrvEvent *event_ptr, enum _LocationCommand__CommandTypes command_type, enum _CommandArgs command_arg)
 {
   envelope_ptr->envelope->ufsrvcommand								=	envelope_ptr->ufsrv_command_wire;
 
@@ -166,15 +166,15 @@ _PrepareMarshalMessageForLocation (MarshalMessageEnvelopeForLocation *envelope_p
 }
 
 inline static UFSRVResult *
-_MarshalLocation (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr)
+_MarshalLocation(InstanceContextForSession *ctx_ptr, ClientContextData *ctx_data_ptr, DataMessage *data_msg_ptr_received, WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr)
 {
   _GENERATE_MESSAGECOMMAND_ENVELOPE_INITIALISATION();
 
   __unused LocationContext *location_ctx_ptr = (LocationContext *)ctx_data_ptr; //currently null
 
-  _PrepareMarshalMessageForLocation (&envelope_marshal, ctx_ptr->sesn_ptr, NULL, NULL, data_msg_ptr_received->ufsrvcommand->locationcommand->header->command, COMMAND_ARGS__SYNCED);
+  _PrepareMarshalMessageForLocation(&envelope_marshal, ctx_ptr->sesn_ptr, NULL, NULL, data_msg_ptr_received->ufsrvcommand->locationcommand->header->command, COMMAND_ARGS__SYNCED);
 
-  BuildUserLocationByProto (ctx_ptr->sesn_ptr, envelope_marshal.location_record);
+  BuildUserLocationByProto(ctx_ptr->sesn_ptr, envelope_marshal.location_record);
 
   UfsrvCommandMarshallingDescriptor ufsrv_description = {header.eid, 0, header.when, &EnvelopeMetaData, &command_envelope};
   UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr_received, NULL, &ufsrv_description, uLOCATION_V1_IDX);//todo: update Websocket message from NULL
@@ -184,29 +184,29 @@ _MarshalLocation (InstanceContextForSession *ctx_ptr, ClientContextData *ctx_dat
 }
 
 UFSRVResult *
-IsUserAllowedToChangeLocation (InstanceContextForSession *ctx_ptr,  DataMessage *data_msg_received,  WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr, CallbackCommandMarshaller command_marshaller, unsigned long call_flags)
+IsUserAllowedToChangeLocation(InstanceContextForSession *ctx_ptr,  DataMessage *data_msg_received,  WebSocketMessage *wsm_ptr_received, UfsrvEvent *event_ptr, CallbackCommandMarshaller command_marshaller, unsigned long call_flags)
 {
   LocationRecord *location_record_ptr = data_msg_received->ufsrvcommand->locationcommand->location;
 
   if (location_record_ptr->source == LOCATION_RECORD__SOURCE__BY_USER) {
-    UpdateLocationByProto(ctx_ptr, location_record_ptr);
+    UpdateLocationByWireProto(ctx_ptr, location_record_ptr);
     if (SESSION_RESULT_TYPE_SUCCESS(ctx_ptr->sesn_ptr) && (SESSION_RESULT_CODE(ctx_ptr->sesn_ptr) == RESCODE_LOCATION_CHANGED || SESSION_RESULT_CODE(ctx_ptr->sesn_ptr) == RESCODE_LOCATION_INIT)) {
       if (IS_PRESENT(command_marshaller)) {
         _INVOKE_COMMAND_MARSHALLER(command_marshaller, ctx_ptr, NULL, data_msg_received, wsm_ptr_received, event_ptr);
       }
-    } else {
-      return (UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr_received, NULL, NULL, uOK_V1_IDX));
+    } else {//technically, it is not an error to land here: eg location has not changed
+      return (UfsrvCommandInvokeUserCommand(ctx_ptr, NULL, wsm_ptr_received, NULL, EMPTY_PROTOCOL_PAYLOAD, uOK_V1_IDX)); //this will take care of deallocating the json_reply object
     }
   }
 
   _RETURN_RESULT_SESN(ctx_ptr->sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 }
 
-static void _BuildErrorHeaderForLocationCommand (LocationCommand *command_ptr, LocationCommand *command_ptr_incoming, int errcode, int command_type);
-inline static UFSRVResult *_MarshalCommandErrorToUser	(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, unsigned req_cmd_idx);
+static void _BuildErrorHeaderForLocationCommand(LocationCommand *command_ptr, LocationCommand *command_ptr_incoming, int errcode, int command_type);
+inline static UFSRVResult *_MarshalCommandErrorToUser(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, unsigned req_cmd_idx);
 
 inline static UFSRVResult *
-_HandleLocationCommandError (InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, int rescode, int command_type)
+_HandleLocationCommandError(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr, int rescode, int command_type)
 {
   Envelope 					command_envelope	= ENVELOPE__INIT;
   CommandHeader 		header						= COMMAND_HEADER__INIT;
@@ -239,7 +239,7 @@ _HandleLocationCommandError (InstanceContextForSession *ctx_ptr, WebSocketMessag
 }
 
 static void
-_BuildErrorHeaderForLocationCommand (LocationCommand *command_ptr, LocationCommand *command_ptr_incoming, int errcode, int command_type)
+_BuildErrorHeaderForLocationCommand(LocationCommand *command_ptr, LocationCommand *command_ptr_incoming, int errcode, int command_type)
 {
   CommandHeader *header_ptr_incoming 	= command_ptr_incoming->header;
   CommandHeader *header_ptr 					=	command_ptr->header;
@@ -268,7 +268,7 @@ _BuildErrorHeaderForLocationCommand (LocationCommand *command_ptr, LocationComma
 }
 
 inline static UFSRVResult *
-_MarshalCommandErrorToUser	(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
+_MarshalCommandErrorToUser(InstanceContextForSession *ctx_ptr, WebSocketMessage *wsm_ptr_received, Envelope *command_envelope_ptr, unsigned req_cmd_idx)
 {
   Session *sesn_ptr = ctx_ptr->sesn_ptr;
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -19,12 +19,12 @@
 #define UFSRV_FENCE_ZKGROUP_UTILS_H
 
 #include <json/json.h>
-#include <main_types.h>
-#include <uuid_type.h>
+#include <uflib/main_types.h>
+#include <uflib/uuid_type.h>
 #include <rest_request_descriptor_type.h>
-#include <zkgroup_utils/group_credential_type.h>
+#include <zkgroup_utils/authentication_credential_type.h>
 
-int HandleCredentialRequest(uint8_t *server_private_param, Uuid *uuid, size_t redemption_start_time, size_t redemption_end_time, CollectionDescriptor *collection, on_request_handled executor, ClientContextData *ctx_data);
-int JsonFormatCredentialResponse(RestRequestHandlingState, RestRequestDescriptor *rest_descriptor);
+int HandleCredentialRequest(const uint8_t *server_private_param, const Uuid *uuid, size_t redemption_start_time, size_t redemption_end_time, CollectionDescriptor *collection, on_request_handled executor, ClientContextData *ctx_data);
+int JsonFormatCredentialResponseCallback(RestRequestHandlingState state, RestRequestDescriptor *rest_descriptor);
 
 #endif //UFSRV_FENCE_ZKGROUP_UTILS_H
