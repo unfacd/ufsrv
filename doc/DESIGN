@@ -1,0 +1,406 @@
+-------------------------------------------------
+THESE ARE HISTORICAL NOTE AND DON'T REFLECT CURRENT STRUCTURE
+Socket
+------------------------
+//Global table of opened Sockets
+//ProtocolHeader is a placeholder to manage protocol specific run-time semantics, such as handshake
+//details. Currently ProtocolHeaderWebsocket s implemented.
+//As the server is multi protocol, to add a new protocol you may need to specifiy new one for a new protocol. 
+//See Protocol description below 
+//HeaderProtocolWebsocket current;y is used during WebSocket handshake process.
+//
+//Handshake:
+//-I/O Loop (ThreadWebsocket) if handshake flag:	(protocol_websocket_thread.c)
+	HandshakeWebsocket(sesnptr, ssptr)				(protocol_websocket_thread.c)
+		len=recv(sock, handshake, 1024, MSG_PEEK);
+		iterate over tokens and save in 'handshake'
+		parse_handshake(sptr, handshake)			(protocol_websocket_routines.c)
+			ProtocolHeaderWebsocket *headers = sptr->header;
+			populate ProtocolHeaderWebsocket
+		generate validation token and copy in ProtocolHeaderWebsocket *headers
+		DispatchSocketBuffer (sesnptr, sptr, NULL);
+		.
+		.
+		On error return -1				
+		
+struct Socket {
+         time_t when;
+
+         int type,
+             sock,
+             block_sz;
+         unsigned flag;
+
+         ssize_t sbytes,
+                 rbytes;
+
+         long hport, //remote port
+              port; //local port
+
+         char address[MAXHOSTLEN], //normally localhost
+              haddress[MAXHOSTLEN]; //remote address
+         void *index;  /* generic data place-holder */
+
+         struct Socket *next;
+
+#ifdef SOCKET_QUEUE
+         long nMsg;
+         SocketQueue *front,
+                     *rear;
+#else
+		void *header; //ProtocolHeader[placeholder] a protocol specific may or may not be needed ProtocolHeaderWebSocket
+		
+         char msg[XLARGBUF];//raw read from the socket
+		char msg_out2[XLARGBUF];//response message formatted by the recieivin socket
+		char *msg_out; //dynamically allocated by the call back. this is what is sent back. should be implement in the queue struct->msg
+         ssize_t msglen;
+		size_t msg_out_len;
+#endif
+        };
+ typedef struct Socket Socket;
+
+ struct SocketsTable {
+         int nEntries;
+         Socket *head,
+                *tail;
+        };
+ typedef struct SocketsTable SocketsTable;
+
+//defined in protocol_websocket.h
+
+struct ProtocolHeaderWebsocket {
+    char path[1024+1];
+    char host[1024+1];
+    char origin[1024+1];
+    char version[1024+1];
+    char connection[1024+1];
+    char protocols[1024+1];
+    char cookie[1024+1];
+	char validation_token[MEDIUMBUF+1];
+    char key1[1024+1];
+    char key2[1024+1];
+    char key3[8+1];
+	 int        hixie;
+    int        hybi;
+} ;
+typedef struct ProtocolHeaderWebsocket ProtocolHeaderWebsocket;
+
+Protocol
+---------------
+Statically defined array of struct Protocol
+// static const Protocol ProtocolsRegistry []. defined in protocol_data.h
+//ie it is shared amongst redirections of the same type
+//accessed globally via: 
+//'const Protocol *const protocols_registry_ptr=ProtocolsRegistry'. defined in
+//protocol.h
+//
+//holds static information on each supported protocol for every Redirection type
+//lives inside RedirectionRegistery accessed via 'Protocol *protocol_def_ptr'
+//defined in protocols_data.h
+//exported globally through a read-only pointer decleration.
+//extern const Protocol *const protocols_registry_ptr;
+
+//very important to link the protocol back to the correpsonding
+//RedirectionRegsistry to enable Sessions access to protocol callbacks.
+// Each protocol type is a direct
+//index hash into the array
+//in this example WebSockets is define the first in the array therefore has
+//idx=0 Pointer is offset using that value.
+
+rrptr->redir->protocol_type=PROTOTCOL_WEBSOCKETS; //idx=0
+rrptr->redir->protocol_def_ptr=(protocols_registery_ptr+PROTOTCOL_WEBSOCKETS);
+
+//also given a sesnptr, you decalre and access protocol data:
+
+register const Protocol *protocol_def_ptr=
+			((RedirectionRegistry *)sesnptr->user_data)->redir->protocol_def_ptr;
+register const ProtocolCallbacks * pc=&protocol_def_ptr->protocol_callbacks;
+
+//then you can invoke a  callback:
+
+msg_out=((*pc_ptr->msg_callback)(sesnptr, msg));
+
+//happens once at startu time in LaunchRedirectors:nportredird.c
+//
+//defined in protocol.h
+// client communication protocol
+struct Protocol {
+        const char *protocol_name;
+        void * (*protocol_thread)(void *);
+        ProtocolCallbacks protocol_callbacks;
+};
+typedef struct Protocol Protocol;
+
+struct ProtocolCallbacks {
+     int (*handshake_callback)(struct Session *);
+     char *(*write_callback)(struct Session *, char *);
+     int (*read_callback)(struct Session *);
+     char *(*close_callback)(struct Session *);
+ };
+typedef struct ProtocolCallbacks ProtocolCallbacks;
+
+
+
+Session
+-------------------
+
+							Session
+							|
+							`Source Socket (connecting incoming socket) ssptr
+							`Destination Socket (A destination connection initiated by by the session)dsptr
+							`SessionService (service specicif state info and semantics)
+								`SessionService (Session state information)
+									`User (*)
+									`Fence (*, List)
+								
+//defined in session.h
+//dynamically created run-time entitiy for each successfully established Redirection
+//constructed into a dynamic list, root of which is of type List 
+//statically defined in session.c:
+
+//static List MasterSession;
+//static List *const msesnptr=&MasterSession;
+
+//not exported globally. But Sessions are known types within the application.
+//contains a reference to the associated Redirection but only limited to
+//the scope of RedirectionRegistery via 'Socket->user_data'. Linkage is
+//made when connection is established (AnswerTelnetRequest: nportredir.c)
+//each protocol has a predefined i/o worker thread established in
+//AnswerTelnetConnection:
+
+const Protocol const *prot_ptr=(protocols_registry_ptr+rptr->redir->protocol_type);
+
+    //each session supprt one unique pth_thread type Session->th
+    pthread_create (&sesnptr->th, NULL,
+                     prot_ptr->protocol_thread, (void *)sesnptr);
+//
+
+typedef struct Session {
+          time_t when;
+
+          unsigned long session_id;
+
+          unsigned stat;  /* FIRING_DQUAD */
+
+          Socket *dsptr; /* destination socket */
+          Socket *ssptr; /* source socket */
+
+          void *user_data; //RedirectionRegistery
+          void *redirection_registry;
+          void *session_service; //SessionService state information
+
+		//unique per session
+          pthread_t th;
+		  pthread_attr_t th_attr;
+          pid_t pid;
+        //unique per session
+         } Session;
+
+SessionService
+--------------------
+//each Session defines a SessionService structure which contains data specific to the semnatics of the service being provided
+//by the protocol and connection.
+//SessionService and USer are instantiated and attached to host Session during Session creation process in user.c CreateUserSession()
+//following successfull user handshake connection
+
+	struct SessionServiceRequest {
+			unsigned long 	server_req_id; //each request is earmarked with a sequence number
+			unsigned long	client_req_id; //id supplied by the client
+			time_t 			req_when;
+			unsigned  		req_cmd_idx; //index into UFServerCommand
+			unsigned 		req_status; //serviced|unserviced
+			unsigned 		req_error_idx; //error string if any
+			} ;
+		typedef struct SessionServiceRequest SessionServiceRequest;
+
+	struct SessionService {
+			unsigned short	authentication_mode; //how did the user access the network
+
+			UserBackendAccess user_backend_access;	//interface and semantics for accessing the backend currently used to isolate objects access the User Backend
+
+			struct SessionServiceRequest *current_client_req_ptr; //current request by client
+			struct SessionServiceRequest *current_server_req_ptr; //current request by server (the provider)
+
+			Queue client_req_que_history; //we keep history of MAX_QUEUE_HSTORY of type ProtocolRequestWebsocket
+			Queue server_req_que_history;
+
+			struct User *u_ptr; //user attached to this session
+
+			List session_user_fence_list; //list of fences joined by the user
+
+			Queue session_user_message_queue; //messages produced by user irrespective of which fence
+		};
+	typedef struct SessionService SessionService;
+	
+
+User
+==================================
+
+struct UserDetails {
+		char id[MINIBUF+1];
+	    char name[SMALLBUF+1];
+	    char email[SMALLBUF+1];
+	    int last_selected_bid; //def -1
+	    char session_cookie[MEDIUMBUF+1];
+	    unsigned verified; //1 or 0
+	    int num_connections;
+	    char join_date;
+	};
+typedef struct UserDetails UserDetails;
+
+struct User {
+    UserDetails user_details;
+
+    void *session_ptr; //anonymous link back to session for efficiency
+    //Queue message_queue;//list of all messsages generated by the user
+  };
+  typedef struct User User;
+	
+	
+Fence
+-------------
+static List MasterFenceRegistry;
+static List *const master_fence_registry_ptr=&MasterFenceRegistry;
+Fence *broadcast_fence_ptr;
+
+
+
+UserBackendAccess
+=======================
+//interface to isolate semantics of data access and commnincation with wordpress as our current chosen User Backend
+//member of SessionService
+//instantiated in CreateSessionService
+//
+//SessionService.UserBackendAccess
+//	BackendAccessRoutines *backend_access_routines; (statically defined in userbackend_access_wordpress_data.h)
+//	void *backend_access_data -> UserBackendAccessWordPress (user_backend_access.h)
+//call sequence:
+//	int InitialiseUserBackendAccess (SessionService *) -> int InitialiseUserBackendAccessWordPress (SessionService *)
+	
+	struct BackendAccess {
+			BackendAccessRoutines *backend_access_routines; //pointer to static object shared across all SessionService objects
+			void *backend_access_data;//dynamically allocated for each SessionService object ie thread instance
+		};
+	typedef struct BackendAccess BackendAccess;
+
+	struct BackendAccessRoutines {
+			void (*backend_access_init)(void *);
+			void (*backend_access_reset)(void *);
+			void (*backend_access_destruct)(void *);
+			};
+	typedef struct BackendAccessRoutines BackendAccessRoutines;
+----------------------------------------
+
+wordpress specific types
+
+struct RawBuffer {
+    char *memory;
+    size_t size;
+  };
+  typedef struct RawBuffer RawBuffer;
+
+  //this goes into ServiceSession.backend_access.backend_access.data
+  //
+struct UserBackendAccessWordPress {
+	CURL *curl;
+	CURLcode curl_code;
+	char curl_error_str[CURL_ERROR_SIZE]
+
+	RawBuffer rb;
+
+	struct json_object *jobj;
+	enum json_tokener_error jerr;
+	struct json_tokener *jtok;
+
+};
+typedef struct UserBackendAccessWordPress UserBackendAccessWordPress;
+
+static BackendAccess backend_access_wordpress ={
+		backend_access_init_wordpress,
+		backend_access_reset_wordpress,
+		backend_access_destruct_wordpress,
+};
+end wordpress specific types
+------------------------------------------------------	
+Fence Call
+
+//	Root function
+//	works on both, MasterBaseFenceRegistry and MasterFenceRegistry
+//	no field assignment or comparison
+//	returns empty 'Fence *' inserted into respectice List
+//	no User attchment
+//
+static Fence *_f_CreateFence (List *lst_ptr)		
+	
+	Fence *AddBaseFence (void)
+	// wrapper funtion that calls root add function with the appropriate list
+	//generates id
+	//generates time stamp
+	//no Fence name assigned
+	//returns 'Fence *'
+	
+		Fence *AddBaseFenceAndLinkToUser (List *lst_ptr, const char *fence_canonical_name)
+		//AddBaseFence()
+		//AddThisToList (lst_ptr, f_ptr);
+		//assign canonical name
+		//canonical_name must be dynamically created by caller
+		//no search or comparison
+		//User's Fence List is referenced gainst the Base one with a pointer
+		
+//	root function
+//	not for export
+//	works on any List *
+//	strcasecmp(FENCE(eptr)->fence_location.canonical_name, fence_canonical_name)
+//	returns Fence * or NULL
+//
+static Fence *_f_FindFenceByCanonicalName (List *lst_ptr, const char *fence_canonical_name)		
+	
+	Fence *FindBaseFenceByCanonicalName (const char *fence_canonical_name)
+		//wrapper for root function
+		//loads Base Fence Registry
+		//returns Fence * or NULL
+	
+		Fence *FindBaseFenceByCanonicalNameAndAddToRegistry (const char *fence_canonical_name)
+		//looks for name in List if not add it to base Registry and return Fence *
+		//	Not linked to user
+		//if found return found 'Fence *'
+		//	previously linked to user
+			//if !FindBaseFenceByCanonicalName(fence_canonical_name)
+				//AddBaseFence()
+				//return created 'Fence *'
+			//else return found "Fence *'
+			
+			Fence *FindBaseFenceByCanonicalNameAndLinkToUser (List *lst_ptr, const char *fence_canonical_name)
+			//Leverages the above chain
+			//looks for fence name in list: if not found: add it to Registry: link it to supplied User's List
+			//FindBaseFenceByCanonicalNameAndAddToRegistry
+			//LinkToUser
+	
+	Global Lists:
+---------------
+1)	Session
+2)	User
+3)	Fence
+4)	MessageQueue
+
+Session. -> User (1)
+		-> Fence (*:List)
+		-> UserMessageQueue (1) ->	Message (*) (producer)
+		
+Fence. 	-> User (*:List) 
+		-> FenceMessageQueue	(1)	->	Message	(*) (consumer)
+		
+----------------------------------------------------------------		
+>anonymous pointer link-back to Session. Everything teh user does is linked back to the context of the session
+User.	-> Fence (*:List)
+		-> UserMessageQueue	(1)	->	Message (*) (producer)
+		-> Session (1)
+----------------------------------------------------------------
+		
+MessageQueue	->	Message (*)
+
+Message	-> 	UserMessageQueue (1) (producer)
+		->	FenceMessageQueue (*) ->	Message (*)	(consumer) //we allow user to broadcast message to multiple Fences
+		->	User (1)
+		
+				

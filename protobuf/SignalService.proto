@@ -1,6 +1,6 @@
 /**
  * Copyright (C) 2018 Open Whisper Systems
- * Copyright (C) 2019 unfacd
+ * Copyright (C) 2022 unfacd
  *
  * Licensed according to the LICENSE file in this repository.
  */
@@ -13,33 +13,36 @@
 syntax = "proto2";
 
 message CommandHeader {
-    optional string     path                    = 1;
-    optional bytes   	ufsrvuid			    = 2;    //long form originator userid, including uid
-    optional uint64		cid						= 3;	//session id
-    optional uint64     gid                     = 4;
-    optional uint64		eid						= 5;	//event id
-    optional uint64		when					= 6;	//when was the command sent out
-    optional string 	sid						= 7;	//server id
-    required uint32		command				    = 8;
-    optional uint32		args					= 9;	//extra qualifying arguments for the command
-    optional CommandArgs args_client            = 20; //extra arg to transmit original arg
-    optional uint32		args_error		        = 16;	//error code to further contextualise command/args in case coomand generated error
-    optional uint32		args_error_client	    = 19;	//arg code originally sent by client that caused the error
-    optional string		uname					= 14; //used in SessionBroadcast
-    optional uint64		when_eid		     	= 15; //when was the event generated
-    optional uint64		when_client		        = 17;	//client's timestamp. If available sent back to client from their original request. Help with client's local context
-    optional string 	cookie				    = 18;
-    optional uint32    destination_device_id    = 10;
-}//11,12,13,14,21
+    optional string     path                = 1;
+    optional bytes   	ufsrvuid			= 2;    //long form originator userid, including uid
+    optional uint64		cid					= 3;	//session id
+    optional uint64     gid                 = 4;    // ufsrv unique event id
+    optional uint64		eid					= 5;	//event id
+    optional uint64     fid                 = 12;   //fence id
+    optional uint64		eid_client  	    = 11;	//quoiting back event id for originator
+    optional uint64		when				= 6;	//when was the command sent out
+    optional string 	sid					= 7;	//server id
+    required uint32		command				= 8;
+    optional uint32		args				= 9;	//extra qualifying arguments for the command
+    optional CommandArgs args_client        = 20;   //extra arg to transmit original arg
+    optional uint32		args_error		    = 16;	//error code to further contextualise command/args in case coomand generated error
+    optional uint32		args_error_client   = 19;	//arg code originally sent by client that caused the error
+    optional string		uname				= 14;   //used in SessionBroadcast
+    optional uint64		when_eid		    = 15;   //when was the event generated
+    optional uint64		when_client		    = 17;	//client's timestamp. If available sent back to client from their original request. Help with client's local context
+    optional string 	cookie				= 18;
+    optional uint32   destination_device_id = 10;
+} //13, 14, 21
 
 enum CommandArgs {
-    SYNCED						= 0;
+    UNDEFINED                   = 0;
     INVITED						= 1;	//invited by other users
     INVITED_GEO				    = 11;	//invited based on geo roaming change. contrasts with GEO_BASED
     ACCEPTED					= 2;	//command was based on previous user request
     DENIED						= 3;
     DEFERRED					= 4;
     GEO_BASED					= 5;	//join happened based on automatic location change: roaming mode
+    LINK_BASED                  = 26; //join was based on prior accepted group link join
     REJECTED					= 6;
     CREATED						= 7;
     DELETED						= 8;
@@ -58,8 +61,32 @@ enum CommandArgs {
     RESYNC                      = 22; //server instructing clients to send sync request
     UNCHANGED					= 23; //server did not change backend state. semantics is related to original command type
     REJECTED_USER			    = 24; //request rejected by target user (as opposed to ufsrv rejection)
+    SYNCED						= 25; //server synchrosined value
 
-}//25
+}//27
+
+//Location zones at which user-created groups are anchored: Country:admin_area:locality:self_zone
+//used as pref values in message UserPreference.
+//settings 1-4 will are interpreted relative to current location eg if current location is (Australia:Victoria:Doncaster:0) and BaseLocAnchorZone is BASELOC_ZONE_REGIONHOOD, user group will be created under Australia:Victoria::0:group_name
+enum BaseLocAnchorZones {
+    BASELOC_ZONE_UNDEFINED          =   0;
+    BASELOC_ZONE_NEIGHBOURHOOD      =   1; //Narrowest zone Australia:Victoria:Doncaster:0:zzz
+    BASELOC_ZONE_REGIONHOOD         =   2; //Australia:Victoria::0:zzz
+    BASELOC_ZONE_COUNTRYHOOD        =   3; //Australia:::0:zzz
+    BASELOC_ZONE_SELFZONE_EXCLUSIVE =   4; //private cloud :::<uid>:zzz
+    BASELOC_ZONE_SELFZONE_GEOLOC    =   5; //private cloud with geoloc encoded 'Australia:Victoria:Doncaster:<uid>:zzz'
+    BASELOC_ZONE_NETWORK            =   6; //unfacd network :::0:zzz
+    BASELOC_ZONE_HOMEBASE_GEOLOC    =   7; // user defined
+};
+
+//works with geo roaming feature. Location change sensitivity at which geoloc roaming is triggered.
+//used as pref values in message UserPreference. Align with 'enum GeoLocRoamingTrigger' in ufsrv
+enum GeoLocRoamingTrigger {
+    GEOLOC_TRIGGER_UNDEFINED        = 0;
+    GEOLOC_TRIGGER_NEIGHBOURHOOD    = 1; //default and most sensitive to geoloc change
+    GEOLOC_TRIGGER_REGIONHOOD       = 2;
+    GEOLOC_TRIGGER_COUNTRYHOOD      = 3;
+};
 
 message LocationRecord {
     enum Source {
@@ -82,44 +109,46 @@ message UserRecord {
     enum NetState {
         DEREGISTERED	= 0;
         ONLINE		    = 1;
-        OFFLINE	        = 2;
+        OFFLINE	      = 2;
     }
 
     enum AvailabilityState {
         AVAILABLE			= 0;
-        DONT_DISTURB	    = 1;
-        BUSY				= 2;
+        DONT_DISTURB  = 1;
+        BUSY				  = 2;
     }
 
     enum ActivityState {
         IDLE				=	0;
-        TYPING				=	1;
-        IMAGING				=	2;
-        CALLING				=	3;
+        TYPING			=	1;
+        IMAGING			=	2;
+        CALLING			=	3;
         VIDEO				=	4;
-        PRIVATE				=	5;
+        PRIVATE			=	5;
     }
 
-    required bytes   	          ufsrvuid			            = 1;    //long form userid, including uid
-    required string               username						= 2;
-    optional bytes   	          invited_by   	                = 14;
-    optional uint64   	          invited_when 	                = 15;
-    optional uint64               lastseen						= 4;
-    optional bytes   			  profile_key 				    = 13;
-    repeated FenceRecord          fences						= 5;
-    optional LocationRecord		  location				        = 6;
-    optional AttachmentRecord	  avatar						= 10;//user's own profile avatar
-    optional NetState			  net_status					= 7;
-    optional uint64               cid							= 9;
-    optional uint64               eid							= 11;
-    optional AvailabilityState	  availability_status	        = 8;
-    optional ActivityState		  activity_state			    = 12;
+    required bytes   	          ufsrvuid			      = 1;    //long form userid, including uid
+    required string             username						= 2;
+    optional bytes   	          invited_by   	      = 14;
+    optional uint64   	        invited_when 	      = 15;
+    optional uint64             lastseen						= 4;
+    optional bytes   			      profile_key 				= 13;
+    repeated FenceRecord        fences					    = 5;
+    optional LocationRecord		  location				    = 6;
+    optional AttachmentRecord	  avatar						  = 10;//user's own profile avatar
+    optional NetState			      net_status					= 7;
+    optional uint64             cid							    = 9;
+    optional uint64             eid							    = 11;
+    optional AvailabilityState	availability_status	= 8;
+    optional ActivityState		  activity_state			= 12;
 }//3,16
 
 message AttachmentRecord {
     enum Flags {
         VOICE_MESSAGE = 1;
         BORDERLESS    = 2;
+//        reserved        3;
+        GIF           = 4;;
     }
     optional string id          	= 1;
     optional string  contentType	= 2;
@@ -190,40 +219,47 @@ message FenceRecord {
         TIMED			=	1;	//read ttl value
     }
 
-    optional  uint64              fid					=	1;
-    optional  string              fname					=	2;
-    repeated  UserRecord  		  members				=	3;
-    repeated  UserRecord		  invited_members		=	4;
-    repeated  UserRecord		  blocked_members		=	19;
-    repeated  FenceUserPreference fence_preferences     =   12;
-    optional  AttachmentRecord	  avatar				=	5;
-    optional  FenceType			  fence_type			=	20;
-    optional  JoinMode			  join_mode				=	23;
-    optional  PrivacyMode		  privacy_mode			=	24;
-    optional  DeliveryMode		  delivery_mode			=	25;
-    optional  LongevityMode		  longevity_mode		=	10 [default = UNTIMED];
-    optional  Permission		  presentation			=	28;
-    optional  Permission		  membership			=	29;
-    optional  Permission		  Messaging				=	30;
-    optional  Permission		  Attaching				=	31;
-    optional  Permission		  Calling				=	32;
-    optional  string              cname					=	6;
-    optional  LocationRecord	  location				=	7;
-    optional  uint32              maxmembers			=	8;
-    optional  uint64              ttl					=	9;
-    optional  bytes               fkey					=	11;
-    optional  uint32              usercount				=	13;
-    optional  uint64			  created				=	14;
-    optional  uint64			  destroyed				=	15;
-    optional  uint32              invited_usercount	    =	16;
-    optional  uint64			  eid					=	17;
-    optional  bytes 			  owner_uid				=	18;
-    optional  uint64			  invited_when			=	21;
-    optional  bytes			      invited_by			=	22; //userid
-    optional  uint64   			  mute_duration			=	26;
-    optional  uint64			  expire_timer			=	27;
-    optional string               color                 =   33;
-}//34
+    enum JoinRequestApprovalMode {
+            UNRESTRICTED			=	0;
+            ADMIN_APPROVED			=	1;
+            DELEGATE_APPROVED       = 2; //a delegate other than admin can grant access
+        }
+
+    optional  uint64              fid					      =	1;
+    optional  string              fname					    =	2;
+    repeated  UserRecord  		    members				    =	3;
+    repeated  UserRecord		      invited_members		=	4;
+    repeated  UserRecord		      linkjoin_members	=	19;
+    repeated  UserRecord		      banned_members	=	34;
+    repeated  FenceUserPreference fence_preferences = 12;
+    optional  AttachmentRecord	  avatar				    =	5;
+    optional  FenceType			      fence_type			  =	20;
+    optional  JoinMode			      join_mode				  =	23;
+    optional  PrivacyMode		      privacy_mode			=	24;
+    optional  DeliveryMode		    delivery_mode			=	25;
+    optional  LongevityMode		    longevity_mode		=	10 [default = UNTIMED];
+    optional  Permission		      presentation			=	28;
+    optional  Permission		      membership			  =	29;
+    optional  Permission		      Messaging				  =	30;
+    optional  Permission		      Attaching				  =	31;
+    optional  Permission		      Calling				    =	32;
+    optional  string              cname					    =	6;
+    optional  string              description       = 16;
+    optional  LocationRecord	    location			    =	7;
+    optional  uint32              maxmembers			  =	8;
+    optional  uint64              ttl					      =	9;
+    optional  bytes               fkey					    =	11;
+    optional  uint32              usercount				  =	13;
+    optional  uint64			        created				    =	14;
+    optional  uint64			        destroyed				  =	15;
+    optional  uint64			        eid					      =	17;
+    optional  bytes 			        owner_uid				  =	18;
+    optional  uint64			        by_user_when			=	21;
+    optional  bytes			          by_user			      =	22; //userid: currently used in interbroadcast message passing
+    optional  uint64   			      mute_duration			=	26;
+    optional  uint64			        expire_timer			=	27;
+    optional string               color             = 33;
+}//35
 
 message QuotedMessageRecord {
     message QuotedAttachment {
@@ -266,21 +302,26 @@ message GuardianRecord {
 }
 
 message IntroMessageRecord {
-     enum HandleType {
-         UFSRV			=	0;	//default
-         NICKNAME		=	1;
-         E164	        =	2;
-         EMAIL	        =	3;
-     }
-     required string             to          = 1; //handle ufsrvuid
-     required string             originator  = 2;
-     optional bytes              msg         = 3;
-     optional AttachmentRecord   avatar      = 4;
-     optional string             handle      = 5; //used to identify the originator's rego name when request is forwarded on to target user
-     optional HandleType         handle_type = 6 [default = UFSRV];
+    enum HandleType {
+        UFSRV			  =	0;	//default ufsrvuid
+        NICKNAME		=	1;
+        E164	      =	2;
+        EMAIL	      =	3;
+    }
+    enum UserResponseType {//how did the user respond to the IntroRequest
+        UNSET			  =	  0;	//default
+        ACCEPTED    =   1;
+        REJECTED    =   2;
+        IGNORED     =   3;
+    }
+    required string             to          = 1; //handle (see handle type below for correlation)
+    required string             originator  = 2; //sent as ufsrvuid
+    optional bytes              msg         = 3;
+    optional AttachmentRecord   avatar      = 4;
+    optional string             handle      = 5; //used to identify the originator's rego name when request is forwarded on to target user
+    optional HandleType         handle_type = 6 [default = UFSRV]; // for 'to'
+    optional UserResponseType   user_response_type = 7 [default = UNSET];
 }
-
-
 
 message MessageEffectRecord {
     enum Type {
@@ -288,7 +329,7 @@ message MessageEffectRecord {
         RAIN    =   1;
     }
 
-    required Type type = 1;
+    required Type type       = 1;
     optional float  duration = 2;
 }
 
@@ -310,14 +351,18 @@ message StickerRecord {
 }
 
 message RevokedMessageRecord {
-    optional uint64 targetSentTimestamp = 1;
+    optional uint64 when_sent       = 1; //originator's sent time
+    required uint64 gid             = 2;
+    optional uint64 fid             = 3;
+    optional bytes  author          = 4; //ufsrvuid
 }
 
+
 message MessageRecord {
-    optional bytes       		         message		= 1;
-    optional uint64       		         ttl			= 2;
+    optional bytes       		             message		    = 1;
+    optional uint64       		           ttl			      = 2;
     optional QuotedMessageRecord         quoted_message = 3;//todo: these fields are also temporarily exposed at command levels for due to processing semantics constraints (eg. attachments upaloaded after MessageRecord is created
-    repeated AttachmentRecord            attachments	= 4;
+    repeated AttachmentRecord            attachments	  = 4;
     optional MessageCommand.ProtocolType protocol_type  = 5; //signal protocol type as define in Envelope.Type
     optional MessageEffectRecord         effect         = 6;
     optional bool                        view_once      = 7;
@@ -395,7 +440,7 @@ message ReportedContentRecord {
     enum Status {
         UNSET       =   0;
         REPORTED    =   1;
-        DELETED     =   2;
+        REVOKED     =   2;
         UNREPORTED  =   3;
     }
     required bytes  originator      = 1; //ufsrvuid for message author
@@ -407,23 +452,23 @@ message ReportedContentRecord {
     optional uint64 count           = 7; //how many times reported
 }
 
-//Attributes identifying the recipient of the message and meta data on the command
 message ReceiptCommand {
     enum CommandTypes {
         DELIVERY = 0;
         READ     = 1;
+        VIEWED   = 2;
     }
     enum Errors {
         NONE								=	0;
-        NOT_ON_SHARELIST                    =	1;
-        BLOCKED                             =   2;
+        NOT_ON_SHARELIST    =	1;
+        BLOCKED             = 2;
     }
 
     optional 				CommandHeader  header		= 1;
-    optional 				CommandTypes   type      	= 2;
+    optional 				CommandTypes   type     = 2;
     repeated uint64 timestamp 							= 3;
-    repeated uint64 eid 								= 4;
-    optional uint64 fid									= 5;
+    repeated uint64 eid 								    = 4;
+    optional uint64 fid									    = 5;
     optional bytes uid_originator						= 6; //the user for whom receipt is issued (e.g original msg sender)
 }
 
@@ -455,60 +500,64 @@ message StateCommand {
 
 message FenceCommand {
     enum CommandTypes {
-        JOIN     				= 0;
-        LEAVE   				= 1;
-        INVITE  				= 2;
-        BLOCK					= 3;
-        FNAME 					= 4;
-        BANNER					= 5;
-        AVATAR					= 6;
-        MAXMEMBERS				= 7;
-        TTL						= 8;
-        FKEY					= 9;
-        TAGS					= 11;
-        MAKE				    = 12;
-        STATE					= 13; //overall definition sent to users who join fence so they can synch their own view of it
-        EXPIRY					=	14;
-        MUTE					=	15;
-        PERMISSION			    =	16; //permission setting command
-        NICKNAME				=	17;	//fence member's nickname changed
-        KICK					=	18;	//temporarily evict from group
-        DESTRUCT				=	19; //fence record completely removed. This server-to-server command
-        JOIN_MODE				=   10;
-        PRIVACY_MODE            =   20;
-        DELIVERY_MODE           =   21;
-        PERMISSION_LIST_SEMANTICS =	22;
-    }//23
+        JOIN     				            = 0;
+        LEAVE   				            = 1;
+        INVITE  				            = 2; //invite-to-join request
+        BLOCK					              = 3;
+        FNAME 					            = 4;
+        BANNER					            = 5;
+        AVATAR					            = 6;
+        MAXMEMBERS			            = 7;
+        TTL						              = 8;
+        FKEY					              = 9; //fence cryprographic key
+        TAGS					              = 11;
+        MAKE				                = 12;
+        STATE					              = 13; //overall definition sent to users who join fence so they can synch their own view of it
+        EXPIRY					            = 14;
+        MUTE					              = 15;
+        PERMISSION			            = 16; //permission setting command
+        NICKNAME				            = 17;	//fence member's nickname changed
+        KICK					              = 18;	//temporarily evict from group
+        DESTRUCT				            = 19; //fence record completely removed. This server-to-server command
+        JOIN_MODE				            = 10;
+        PRIVACY_MODE                = 20;
+        DELIVERY_MODE               = 21;
+        PERMISSION_LIST_SEMANTICS   =	22;
+        INVITE_REJECTED             = 23;//invite invitation rejected
+        INVITE_DELETED              = 24;//invite invitation removed by user
+        LINKJOIN                    = 25; //A request by member to join the group via a shareable link (different from direct in-app invitation)
+        DESCRIPTION                 = 26;
+    }//27
 
     enum Errors {
-        NONE					=	0;
-        ALREADY_EXISTS			=	1;
-        PERMISSIONS				=	2; //no permission to text
-        PERMISSIONS_ADMIN		=	3;	//no permission to change group attributes
+        NONE					          =	0;
+        ALREADY_EXISTS			    =	1;
+        PERMISSIONS				      =	2; //no permission to text
+        PERMISSIONS_ADMIN		    =	3;	//no permission to change group attributes
         //  	PERMISSIONS_ATTACH	=	4; //no permission to attach
-        NOT_MEMBER				=	5;	//user not member of group
+        NOT_MEMBER				      =	5;	//user not member of group
         GROUP_DOESNT_EXIST	    =	6;
-        INVITE_ONLY				=	7;
-        REACHED_CAPACITY		=   8;
-        BANNED					=	9;
-        KEY_PROTECTED			=	10;
-        WRONG_KEY				=	11;
+        INVITE_ONLY				      =	7;
+        REACHED_CAPACITY		    = 8;
+        BANNED					        =	9;
+        KEY_PROTECTED			      =	10;
+        WRONG_KEY				        =	11;
         NO_POSTING_ALLOWED	    =	12;	//only postings from owner are allowed
-        MISSING_PARAMETER		=	13;
-        EXECUTION_ERROR			=	14;//general backend related
-    }//15
+        MISSING_PARAMETER		    =	13;
+        EXECUTION_ERROR			    =	14;//general backend related
+        BY_REQUEST              = 15;//user must request to join group eg linkjoin
+        LINKJOIN_NONCE          = 17; //invalid nonce, or expired, or not provided
+        LENGTH_EXCEEDED         = 16;
+    }//18
+
 
     optional CommandHeader 		header					=	1;
     repeated FenceRecord  		fences					=	2;
     repeated AttachmentRecord   attachments			    =	3;
     optional UserRecord 		originator			    =	4;//user who's affected by, or originated this command
-    optional UserRecord			invited_by			    =	6;
-    optional UserRecord			blocked_by			    =	7;
+    optional UserRecord 		authoriser			    =	5;//user admin who authorised the command (where admin authorisation was required)
     optional FenceRecord.Permission.Type	type        =   8;
-
-    repeated 	UserRecord			rejected			=	11;//for commands where subset of users are concerned, for example invitation
-    repeated 	UserRecord			accepted			=	12;//for commands where subset of users are concerned, for example invitation
-}//5, 10, 13+
+}//6, 7, 10, 11,12,13+
 
 message LocationCommand {
     enum CommandTypes {
@@ -522,17 +571,17 @@ message LocationCommand {
     }
 
     optional 	CommandHeader				header			    = 1;
-    optional	LocationRecord				location        	= 2;
-    repeated 	UserRecord 			        sharing_with		= 3;
-    optional    bytes                       uid_originator		= 6; //the user whose record is being communicated if other than current user
+    optional	LocationRecord	  	location        = 2;
+    repeated 	UserRecord 			    sharing_with		= 3;
+    optional    bytes             uid_originator	= 6; //the user whose record is being communicated if other than current user
 }
 
 message MessageCommand {
     enum CommandTypes {
-        SAY			        = 0;
-        CONTACTS	        = 1;
-        FLAG		        = 2;
-        LIKE		        = 3;
+        SAY			            = 0;
+        CONTACTS	          = 1;
+        FLAG		            = 2;
+        LIKE		            = 3;
         FOLLOW	            = 4;
         PREVIEW             = 5;
         INTRO               = 6; //unsolicited contact request
@@ -543,40 +592,46 @@ message MessageCommand {
         EFFECT              = 11;
         REACTION            = 12;
         REVOKE              = 13;
+        INTRO_USER_RESPONSE = 14; //unsolicited contact request response by user
     }
 
     enum Errors {
-        NONE								=	0;
-        NO_POSTING_ALLOWED	= 1;	//only postings from owner are allowed
-        INVALID_EID         = 2;
-        INVALID_CHALLENGE   = 3;
+        SYSTEM				= 0;
+        NO_POSTING_ALLOWED	    = 1;	//only postings from owner are allowed
+        INVALID_EID             = 2;
+        INVALID_CHALLENGE       = 3;
+        OWNERSHIP               = 4; //ownership or permission related error
+        MESSAGE_ALREADY_REVOKED = 5;
+        MESSAGE_NOT_IN_STORAGE  = 6; //message was not able to be retreived
+        TIME_THRESHOLD_LAPSED   = 7;
+
     }
 
     enum ProtocolType { //As per Envelope.Type
-                        UNKNOWN       = 0;
-                        CIPHERTEXT    = 1;
-                        KEY_EXCHANGE  = 2;
-                        PREKEY_BUNDLE = 3;
+         UNKNOWN       = 0;
+         CIPHERTEXT    = 1;
+         KEY_EXCHANGE  = 2;
+         PREKEY_BUNDLE = 3;
     }
 
-    optional CommandHeader 		    header		   =	1;
-    repeated FenceRecord  		    fences		   =	2;
-    repeated MessageRecord 		    messages	   =	3;
+    optional CommandHeader 		      header		     =	1;
+    repeated FenceRecord  		      fences		     =	2;
+    repeated MessageRecord 		      messages	     =	3;
     repeated AttachmentRecord       attachments	   =	4;
-    optional QuotedMessageRecord    quoted_message =    9;
-    repeated UserContactRecord      contacts       =   10; //contacts sharing message
-    repeated ReportedContentRecord  reported       =    13;
-    optional GuardianRecord         guardian       =    14;
-    optional IntroMessageRecord     intro          =    15;
-    repeated PreviewRecord          preview        =    11;
-    optional StickerRecord          sticker        =    12;
-    optional MessageReactionRecord  reaction       =    16;
-    repeated BodyRange              bodyRanges     =    18;//mentions
-    optional RevokedMessageRecord   revoked        =    17;
-    optional UserRecord 	        originator	   =	5;//user who's affected by, or originated this command
-    repeated UserRecord 		    to			   =	6;
-    optional LocationRecord		    location	   =	7;
-    optional uint64				    expire_timer   =	8;//individual messages can have their own expiry independent of fence setting
+    optional QuotedMessageRecord    quoted_message =  9;
+    repeated UserContactRecord      contacts       =  10; //contacts sharing message
+    repeated ReportedContentRecord  reported       =  13;
+    optional GuardianRecord         guardian       =  14;
+    optional IntroMessageRecord     intro          =  15;
+    repeated PreviewRecord          preview        =  11;
+    optional StickerRecord          sticker        =  12;
+    optional MessageReactionRecord  reaction       =  16;
+    repeated BodyRange              bodyRanges     =  18;//mentions
+    repeated RevokedMessageRecord   revoked        =  17;
+    optional UserRecord 	          originator	   =	5;//user who's affected by, or originated this command
+    repeated UserRecord 		        to			       =	6;
+    optional LocationRecord		      location	     =	7;
+    optional uint64				          expire_timer   =	8;//individual messages can have their own expiry independent of fence setting
 }//19
 
 message SyncCommand {
@@ -608,9 +663,9 @@ enum UserPrefs {
     RM_WANDERER						=	1;
     RM_CONQUERER					=	2;
     RM_JOURNALER					=	3;
-    HOMEBASELOC_NEW_GROUP	        =	4;
-    PREF_VIDEO_CALLING		        =	5;
-    PREF_6								=	6;
+    REF_4                 = 4;
+    REF_5                 = 5;
+    REF_6							    =	6;
     PREF_7								=	7;
     PREF_8								=	8;
     PREF_9								=	9;
@@ -622,7 +677,7 @@ enum UserPrefs {
     PREF_15								=	15;
     PREF_16								=	16;
     PREF_17								=	17;
-    PREF_18							    =	18;
+    PREF_18							  =	18;
     PREF_19								=	19;
 
     PREF_20								=	20;
@@ -636,7 +691,7 @@ enum UserPrefs {
     PREF_28								=	28;
     PREF_29								=	29;
 
-    PREF_30							    =	30;
+    PREF_30							  =	30;
     PREF_31								=	31;
     PREF_32								=	32;
     PREF_33								=	33;
@@ -676,40 +731,40 @@ enum UserPrefs {
     //end of predefined boolean type pref max 64. Align with UserPrefsOffsets in user_type.h
 
     NICKNAME							=	64;
-    USERAVATAR						    =	65;
+    USERAVATAR				    =	65;
     //sharelists 66-81
     PROFILE								=	66;
     LOCATION							=	67;
     CONTACTS							=	68;
     NETSTATE							=	69;
     FRIENDS								=	70;
-    BLOCKING							=   71;
-    READ_RECEIPT						=   72;
-    ACTIVITY_STATE                      =   73;
+    BLOCKING							= 71;
+    READ_RECEIPT					= 72;
+    ACTIVITY_STATE        = 73;
 
-    SHRLISTPROF74						        =	74;
+    BLOCKED_FENCE						        =	74;
     SHRLISTPROF75						        =	75;
     SHRLISTPROF76						        =	76;
     SHRLISTPROF77						        =	77;
     SHRLISTPROF78						        =	78;
-    SHRLISTPROF79						        =   79;
-    SHRLISTPROF80						        =   80;
-    SHRLISTPROF81                              =    81 ;
+    SHRLISTPROF79						        = 79;
+    SHRLISTPROF80						        = 80;
+    SHRLISTPROF81                   = 81 ;
     //end of reserved sharelists
 
     E164NUMBER                          =   82;
     REGO_PIN                            =   83;
-    BASELOC_ZONE                        =   84;
+    BASELOC_ANCHOR_ZONE                 =   84;
     GEOLOC_TRIGGER                      =   85;
     UNSOLICITED_CONTACT                 =   86;
     GUARDIAN_UID                        =   87;
+    HOMEBASE_GEOLOC                     =   88; //baseloc defined by user to anchor user-created groups in
 }
 
 //IMPORTANT: align with FenceUserPrefsOffsets and UserPreferenceDescriptor prefs_table[] in fence-state.c. First 64 are reserved for bools
 enum FenceUserPrefs {
-    STICKY_GEOGROUP				=	0;
-    PROFILE_SHARING				=	1;
-    IGNORING							=	2;
+    STICKY_GEOGROUP				    =	0;
+    PROFILE_SHARING				    =	1;
     PREF_FENCE_63					=	63;
     //end of predefined boolean type pref max 64. Align with FenceUserPrefsOffsets in fence_state.h
 }
@@ -745,49 +800,52 @@ message FenceUserPreference {
 }
 
 message UserCommand {
-
     enum CommandTypes {
-        PREFERENCE			= 0;
-        PREFERENCES			= 8;
-        FENCE_PREFERENCE	= 7;
-        FENCE_PREFERENCES	= 9;
-        BLOCK				= 1;//block somebody
-        RESET				= 2;//clean up user from all fences
-        LIKE				= 3;
-        FOLLOW				= 4;
-        DISLIKE				= 5;
-        TAG					= 6;
+        UNDEFINED           = 0;
+        PREFERENCE			    = 13;
+        PREFERENCES			    = 8;
+        FENCE_PREFERENCE	  = 7;
+        FENCE_PREFERENCES	  = 9;
+        BLOCK			          = 1;//block somebody
+        RESET			          = 2;//clean up user from all fences
+        LIKE			          = 3;
+        FOLLOW			        = 4;
+        DISLIKE			        = 5;
+        TAG					        = 6;
         END_SESSION         = 11; //signal protocol type end session
         AUTHENTICATE        = 12; //requesting user to re-signon
-    }//13
+        INVALIDATE          = 14; //User is no longer registered with unfacd
+    }//15
 
     enum ShareType {
-        PROFILE					= 0;
-        LOCATION				= 1;
-        CONTACTS				= 2;
-        NETSTATE				= 3;
+        PROFILE					        = 0;
+        LOCATION				        = 1;
+        CONTACTS				        = 2;
+        NETSTATE				        = 3;
         FRIENDS                 = 4;
         BLOCKING                = 5;
         READ_RECEIPT            = 6;
         ACTIVITY_STATE          = 7;
+        BLOCKED_FENCE           = 8;
     }
     enum Errors {
-        NONE					=	0;
-        MISSING_PARAMETER		=	1;
-        NOT_ONLIST				=	2;
+        NONE					          =	0;
+        MISSING_PARAMETER		    =	1;
+        LIST_MEMBERSHIP		      =	2;
+        INADEQUATE_PERMISSIONS  = 3;
     }//
 
-    optional    bytes						profile_key					= 1; //for this user sending
+    optional    bytes						 profile_key					= 1; //for this user sending
     repeated 	FenceRecord 				fences						= 3; //fences affected by this SessionMessage
     repeated 	FenceRecord 				fences_invited			    = 4; //fences for which user invited  affected by this SessionMessage
     repeated 	FenceRecord 				fences_blocked			    = 5; //fences in which user blocked affected by this SessionMessage
-    repeated 	UserPreference			    prefs						= 6;
-    repeated	FenceUserPreference	        fence_prefs					= 7; //for each fence -> collection of prefs, complementary to prefs above
+    repeated 	UserPreference			prefs						= 6;
+    repeated	FenceUserPreference	fence_prefs					= 7; //for each fence -> collection of prefs, complementary to prefs above
     optional 	CommandHeader				header						= 9;
-    repeated 	AttachmentRecord 		    attachments					= 10;
+    repeated 	AttachmentRecord 	  attachments					= 10;
     optional 	UserRecord 					originator					= 11; //the user whose record is being communicated if other than current user
-    repeated    UserRecord					target_list					= 12; //users added/removed to/from sharelists
-    repeated    UserContactRecord           contact                     = 13;
+    repeated  UserRecord					target_list					= 12; //users added/removed to/from sharelists
+    repeated  UserContactRecord   contact                     = 13;
 }//2
 
 message CallCommand {
@@ -798,6 +856,8 @@ message CallCommand {
         BUSY				=	3;
         HANGUP			=	4;
         OFFER				=	5;
+        OPAQUE      = 6;
+        GROUP_CALL  = 7;
     }
 
     enum Errors {
@@ -856,20 +916,36 @@ message CallCommand {
         optional uint32 deviceId = 3;
     }
 
-    optional 	CommandHeader			header			= 20;
+    message Opaque {
+        enum Urgency {
+            DROPPABLE          = 0;
+            HANDLE_IMMEDIATELY = 1;
+        }
 
-    optional 	Offer     				offer     		= 1;
-    optional	Answer    				answer    		= 2;
-    repeated 	IceUpdate 				iceUpdate 		= 3;
-    optional 	Hangup    				legacyHangup    = 4;
-    optional 	Busy      				busy      		= 5;
+        optional bytes   data    = 1;
+        optional Urgency urgency = 2;
+    }
+
+    message GroupCallUpdate {
+        optional string eraId = 1;
+    }
+
+    optional 	CommandHeader			header			 = 20;
+
+    optional 	Offer     		offer     		   = 1;
+    optional	Answer    		answer    		   = 2;
+    repeated 	IceUpdate 		iceUpdate 		   = 3;
+    optional 	Hangup    		legacyHangup     = 4;
+    optional 	Busy      		busy      		   = 5;
     //6 reserved
-    optional    Hangup                  hangup          = 7;
+    optional  Hangup         hangup          = 7;
+    optional Opaque          opaque          = 10;
+    optional GroupCallUpdate groupCallUpdate = 11;
 
-    optional    bool                    multiRing       = 8;
-    optional    uint32                  destinationDeviceId = 9;
+    optional    bool         multiRing           = 8;
+    optional    uint32       destinationDeviceId = 9;
 
-    optional	UserRecord 				originator		= 21;//user who's affected by, or originated this command
+    optional	UserRecord 				originator= 21;//user who's affected by, or originated this command
     repeated 	UserRecord 				to				= 22;
     optional	FenceRecord				fence			= 23;
 }//10
@@ -912,27 +988,27 @@ message UfsrvCommandWire {
     //IMPORTANT: this should be kept inline with 'enum UfsrvCmdTopicIds' and 'enum UfsrvMsgCommandType'. check ufsrvcmd_broadcast_type.h
     //Also currently device defines this in com/unfacd/android/ufsrvcmd/UfsrvCommand.java
     enum UfsrvType {
-        UFSRV_SESSION	= 0;
+        UFSRV_SESSION	  = 0;
         UFSRV_FENCE     = 1;
         UFSRV_MESSAGE   = 2;
         UFSRV_LOCATION  = 3;
-        UFSRV_USER		= 4;
-        UFSRV_CALL 		= 5;
+        UFSRV_USER		  = 4;
+        UFSRV_CALL 		  = 5;
         UFSRV_RECEIPT   = 6;
-        UFSRV_SYNC		= 7;
+        UFSRV_SYNC		  = 7;
         UFSRV_STATE	    = 8;
     }
 
-    optional CommandHeader	    header				=	1;//to be removed
-    required UfsrvType			ufsrvtype		=   2;
-    optional FenceCommand 	    fenceCommand	=	3;
-    optional UserCommand		userCommand		=	4;
-    optional MessageCommand	    msgCommand		=	5;
-    optional CallCommand		callCommand		=	6;
+    optional CommandHeader	    header				  =	1;//to be removed
+    required UfsrvType			    ufsrvtype		    = 2;
+    optional FenceCommand 	    fenceCommand	  =	3;
+    optional UserCommand		    userCommand		  =	4;
+    optional MessageCommand	    msgCommand		  =	5;
+    optional CallCommand		    callCommand		  =	6;
     optional ReceiptCommand     receiptCommand	=	7;
-    optional SyncCommand		syncCommand		=	8;//not implemented
-    optional LocationCommand    locationCommand =   9;
-    optional StateCommand       stateCommand    =  10;
+    optional SyncCommand		    syncCommand		  =	8;//not implemented
+    optional LocationCommand    locationCommand = 9;
+    optional StateCommand       stateCommand    = 10;
 }
 //////////////////////////////////////
 
@@ -944,6 +1020,8 @@ message Envelope {
         PREKEY_BUNDLE       = 3;
         RECEIPT             = 5;
         UNIDENTIFIED_SENDER = 6;
+//        reserved 7; // SENDERKEY_MESSAGE
+        PLAINTEXT_CONTENT   = 8;
         UFSRV_COMMAND	    = 20;//AA+ used with type to signal ufsrv semantics
     }
 
@@ -952,23 +1030,26 @@ message Envelope {
     optional string sourceUuid      = 11;
     optional uint32 sourceDevice    = 7;
     optional string relay           = 3;
-    optional uint64 timestamp       = 5;
+    optional uint64 timestamp       = 5; //The timestamp this envelope was sent in millis. This can be context/client-sensitive
     optional bytes  legacyMessage   = 6; // Contains an encrypted DataMessage
     optional bytes  content         = 8; // Contains an encrypted Content
     optional string serverGuid      = 9;
-    optional uint64 serverTimestamp = 10;
+    optional uint64 serverTimestamp = 10; //The server timestamp of when the server received the envelope in millis. Also, separately, WebSocket messages contain a header 'X-Unfacd-Timestamp' which is the the server timestamp of when the envelope was delivered to client
 
     optional UfsrvCommandWire	ufsrvCommand	=	20; //set by server client bound
     optional string             sourceUfsrvUid  =   21;
 }
 
 message Content {
-    optional DataMessage dataMessage = 1;
-    optional SyncMessage syncMessage = 2;
-    optional CallMessage callMessage = 3;
-    optional NullMessage nullMessage = 4;
-    optional ReceiptMessage receiptMessage = 5;
-    optional TypingMessage  typingMessage  = 6;
+    optional DataMessage    dataMessage                  = 1;
+    optional SyncMessage    syncMessage                  = 2;
+    optional CallMessage    callMessage                  = 3;
+    optional NullMessage    nullMessage                  = 4;
+    optional ReceiptMessage receiptMessage               = 5;
+    optional TypingMessage  typingMessage                = 6;
+    optional bytes          senderKeyDistributionMessage = 7;
+    optional bytes          decryptionErrorMessage       = 8;
+    optional StoryMessage   storyMessage                 = 9;
 }
 
 message CallMessage {
@@ -1022,6 +1103,15 @@ message CallMessage {
         optional uint32 deviceId = 3;
     }
 
+    message Opaque {
+        enum Urgency {
+            DROPPABLE          = 0;
+            HANDLE_IMMEDIATELY = 1;
+        }
+
+        optional bytes   data    = 1;
+        optional Urgency urgency = 2;
+    }
 
     optional Offer     offer               = 1;
     optional Answer    answer              = 2;
@@ -1032,6 +1122,7 @@ message CallMessage {
     optional Hangup    hangup              = 7;
     optional bool      multiRing           = 8;
     optional uint32    destinationDeviceId = 9;
+    optional Opaque    opaque              = 10;
 }
 
 message DataMessage {
@@ -1132,14 +1223,6 @@ message DataMessage {
         optional string            organization    = 7;
     }
 
-    message Preview {
-        optional string            url   = 1;
-        optional string            title = 2;
-        optional AttachmentPointer image = 3;
-        optional string            description = 4;
-        optional uint64            date        = 5;
-    }
-
     message Sticker {
         optional bytes             packId    = 1;
         optional bytes             packKey   = 2;
@@ -1159,6 +1242,54 @@ message DataMessage {
     message Delete {
         optional uint64 targetSentTimestamp = 1;
     }
+
+    message GroupCallUpdate {
+        optional string eraId = 1;
+    }
+
+    message StoryContext {
+        optional string authorUuid = 1;
+        optional uint64 sentTimestamp = 2;
+    }
+
+      message Payment {
+
+        message Address {
+          message MobileCoin {
+            optional bytes address = 1;
+          }
+
+          oneof Address {
+            MobileCoin mobileCoin = 1;
+          }
+        }
+
+        message Amount {
+          message MobileCoin {
+            optional uint64 picoMob = 1;
+          }
+
+          oneof Amount {
+            MobileCoin mobileCoin = 1;
+          }
+        }
+
+        message Notification {
+          message MobileCoin {
+            optional bytes receipt = 1;
+          }
+
+          oneof Transaction {
+            MobileCoin mobileCoin = 1;
+          }
+
+          optional string note = 2;
+        }
+
+        oneof Item {
+          Notification notification = 1;
+        }
+      }
 
     enum ProtocolVersion {
         option allow_alias = true;
@@ -1190,6 +1321,9 @@ message DataMessage {
     optional Reaction           reaction                = 16;
     optional Delete             delete                  = 17;
     repeated BodyRange          bodyRanges              = 18;
+    optional GroupCallUpdate    groupCallUpdate         = 19;
+    optional Payment            payment                 = 20;
+    optional StoryContext       storyContext            = 21;
 
     optional UfsrvCommandWire	ufsrvCommand		    =	100; //set by client on server bound
 }
@@ -1202,6 +1336,7 @@ message ReceiptMessage {
     enum Type {
         DELIVERY = 0;
         READ     = 1;
+        VIEWED   = 2;
     }
 
     optional Type   type      = 1;
@@ -1217,6 +1352,51 @@ message TypingMessage {
     optional uint64 timestamp = 1;
     optional Action action    = 2;
     optional bytes  groupId   = 3;
+}
+
+message StoryMessage {
+  optional bytes             profileKey    = 1;
+  optional GroupContextV2    group         = 2;
+  oneof attachment {
+    AttachmentPointer fileAttachment = 3;
+    TextAttachment    textAttachment = 4;
+  }
+  optional bool              allowsReplies = 5;
+}
+
+message Preview {
+  optional string            url         = 1;
+  optional string            title       = 2;
+  optional AttachmentPointer image       = 3;
+  optional string            description = 4;
+  optional uint64            date        = 5;
+}
+
+message TextAttachment {
+  enum Style {
+    DEFAULT   = 0;
+    REGULAR   = 1;
+    BOLD      = 2;
+    SERIF     = 3;
+    SCRIPT    = 4;
+    CONDENSED = 5;
+  }
+
+  message Gradient {
+    optional uint32 startColor = 1;
+    optional uint32 endColor   = 2;
+    optional uint32 angle      = 3; // degrees
+  }
+
+  optional string  text                = 1;
+  optional Style   textStyle           = 2;
+  optional uint32  textForegroundColor = 3; // integer representation of hex color
+  optional uint32  textBackgroundColor = 4;
+  optional Preview preview             = 5;
+  oneof background {
+    Gradient gradient = 6;
+    uint32   color    = 7;
+  }
 }
 
 message Verified {
@@ -1284,6 +1464,12 @@ message SyncMessage {
         optional uint64 timestamp  = 2;
     }
 
+     message Viewed {
+        optional string senderE164 = 1;
+        optional string senderUuid = 3;
+        optional uint64 timestamp = 2;
+      }
+
     message Configuration {
         optional bool   readReceipts                   = 1;
         optional bool   unidentifiedDeliveryIndicators = 2;
@@ -1324,6 +1510,11 @@ message SyncMessage {
         optional bytes storageService = 1;
     }
 
+    message PniIdentity {
+        optional bytes publicKey  = 1;
+        optional bytes privateKey = 2;
+    }
+
     message MessageRequestResponse {
         enum Type {
             UNKNOWN          = 0;
@@ -1339,26 +1530,52 @@ message SyncMessage {
         optional Type   type       = 4;
     }
 
-    optional Sent                 sent                 = 1;
-    optional Contacts             contacts             = 2;
-    optional Groups               groups               = 3;
-    optional Request              request              = 4;
-    repeated Read                 read                 = 5;
-    optional Blocked              blocked              = 6;
-    optional Verified             verified             = 7;
-    optional Configuration        configuration        = 9;
-    optional bytes                padding              = 8;
-    repeated StickerPackOperation stickerPackOperation = 10;
-    optional ViewOnceOpen         viewOnceOpen         = 11;
-    optional FetchLatest          fetchLatest          = 12;
-    optional Keys                 keys                 = 13;
-    optional MessageRequestResponse messageRequestResponse = 14;
+    message OutgoingPayment {
+        message MobileCoin {
+          optional bytes  recipientAddress     = 1;
+          // @required
+          optional uint64 amountPicoMob        = 2;
+          // @required
+          optional uint64 feePicoMob           = 3;
+          optional bytes  receipt              = 4;
+          optional uint64 ledgerBlockTimestamp = 5;
+          // @required
+          optional uint64 ledgerBlockIndex     = 6;
+          repeated bytes  spentKeyImages       = 7;
+          repeated bytes  outputPublicKeys     = 8;
+        }
+        optional string recipientUuid = 1;
+        optional string note          = 2;
+        oneof paymentDetail {
+          MobileCoin mobileCoin = 3;
+        }
+      }
+
+      optional Sent                   sent                   = 1;
+      optional Contacts               contacts               = 2;
+      optional Groups                 groups                 = 3;
+      optional Request                request                = 4;
+      repeated Read                   read                   = 5;
+      optional Blocked                blocked                = 6;
+      optional Verified               verified               = 7;
+      optional Configuration          configuration          = 9;
+      optional bytes                  padding                = 8;
+      repeated StickerPackOperation   stickerPackOperation   = 10;
+      optional ViewOnceOpen           viewOnceOpen           = 11;
+      optional FetchLatest            fetchLatest            = 12;
+      optional Keys                   keys                   = 13;
+      optional MessageRequestResponse messageRequestResponse = 14;
+      optional OutgoingPayment        outgoingPayment        = 15;
+      repeated Viewed                 viewed                 = 16;
+      optional PniIdentity            pniIdentity            = 17;
 }
 
 message AttachmentPointer {
     enum Flags {
         VOICE_MESSAGE = 1;
         BORDERLESS    = 2;
+//        reserved        3;
+        GIF           = 4;
     }
 
     oneof attachment_identifier {
@@ -1455,3 +1672,19 @@ message GroupDetails {
     optional bool     archived      = 11;
 }
 
+message PaymentAddress {
+    oneof Address {
+        MobileCoinAddress mobileCoinAddress = 1;
+    }
+
+    message MobileCoinAddress {
+        optional bytes address   = 1;
+        optional bytes signature = 2;
+    }
+}
+
+message DecryptionErrorMessage {
+    optional bytes  ratchetKey = 1;
+    optional uint64 timestamp  = 2;
+    optional uint32 deviceId   = 3;
+}

@@ -13,8 +13,6 @@
 #include <sockets.h>
 #include <net.h>
 #include <session.h>
-#include <misc.h>
-#include <redirection.h>
 #include <nportredird.h>
 #include <ufsrvwebsock/include/protocol_websocket_io.h>
 #include <ufsrv_core/instrumentation/instrumentation_backend.h>
@@ -98,32 +96,28 @@ int AnswerCommandConsoleRequest (Socket *s_ptr)
 
 	nsocket = accept(s_ptr->sock, (struct sockaddr *)&hisaddr, (socklen_t *)&sin_size);
 
-	if ((nsocket < 0) && (errno != EWOULDBLOCK))
-	{
+	if ((nsocket < 0) && (errno != EWOULDBLOCK)) {
 		syslog (LOG_ERR, "%s: ERROR: COULD NOT accept connection: %s",   __func__, strerror(errno));
 
 		return 0;
 	}
 
-	setsockopt (nsocket, SOL_SOCKET, SO_KEEPALIVE, (void *)&opt, sizeof(int));
+	setsockopt(nsocket, SOL_SOCKET, SO_KEEPALIVE, (void *)&opt, sizeof(int));
 	//up-to this point we have a fully connected socket
 	{
     ERR_clear_error();
 
-	  SSL_set_fd (masterptr->ufsrv_crypto.ssl_console, nsocket);
+	  SSL_set_fd(masterptr->ufsrv_crypto.ssl_console, nsocket);
     int accept_return_status = SSL_accept(masterptr->ufsrv_crypto.ssl_console);
 		if (accept_return_status <= 0) {
 		  _PrintSslError(accept_return_status);
 //			syslog (LOG_ERR, "%s: ERROR: COULD NOT ESTABLSIH SSL HANSHAKE: %s", __func__,  SSL_get_error(masterptr->ufsrv_crypto.ssl_console, accept_return_status));
-			close (nsocket);
+			close(nsocket);
 
 			return 0;
 		}
 
-		syslog (LOG_INFO, "%s: SUCCESS: SECURE COMMAND CONSOLE Session establsihed SSL: '%s' cipher: '%s'... " , __func__,
-				SSL_get_version(masterptr->ufsrv_crypto.ssl_console), SSL_get_cipher(masterptr->ufsrv_crypto.ssl_console));
-
-
+		syslog (LOG_INFO, "%s: SUCCESS: SECURE COMMAND CONSOLE Session establsihed SSL: '%s' cipher: '%s'... " , __func__, SSL_get_version(masterptr->ufsrv_crypto.ssl_console), SSL_get_cipher(masterptr->ufsrv_crypto.ssl_console));
 	}
 
 	{
@@ -132,17 +126,17 @@ int AnswerCommandConsoleRequest (Socket *s_ptr)
 		if (IS_PRESENT(sesn_ptr)) {
 			Socket *s_ptr_console_client;
 			xmalloc(s_ptr_console_client, (sizeof(Socket)));
-			memset (s_ptr_console_client, 0, sizeof(Socket));
+			memset(s_ptr_console_client, 0, sizeof(Socket));
 
 			s_ptr_console_client->sock = nsocket;
-			strcpy (s_ptr_console_client->haddress, (char *)inet_ntoa(hisaddr.sin_addr));
-			strcpy (s_ptr_console_client->address, "localhost");
+			strcpy(s_ptr_console_client->haddress, (char *)inet_ntoa(hisaddr.sin_addr));
+			strcpy(s_ptr_console_client->address, "localhost");
 			s_ptr_console_client->hport = ntohs(hisaddr.sin_port);
 			s_ptr_console_client->port = 19700;
 
-		   if (!(sesn_ptr = InstantiateSession(s_ptr, NULL, CALL_FLAG_HASH_SESSION_LOCALLY, -1))) {//thread-safe only called from this thread
-			   close (nsocket);
-			   free (s_ptr_console_client);
+		   if (!(sesn_ptr = InstantiateSessionObject(s_ptr, NULL, CALL_FLAG_HASH_SESSION_LOCALLY, -1))) {//thread-safe only called from this thread
+			   close(nsocket);
+			   free(s_ptr_console_client);
 
 			   return 0;
 			  }
@@ -155,11 +149,11 @@ int AnswerCommandConsoleRequest (Socket *s_ptr)
 		} else {
 			//Recycler instance
 			SESNSTATUS_UNSET(sesn_ptr->stat, SESNSTATUS_RECYCLED);
-		   sesn_ptr->session_id = GenerateSessionId();
+		   sesn_ptr->session_id = GenerateSessionIdLocally();
 		}
 
 		syslog(LOG_INFO, ">> %s: Command Console connection from '%s': Creating Command Console Client thread...", __func__, sesn_ptr->ssptr->haddress);
-		pthread_create (&th_command_console_client, NULL, ThreadCommandConsoleClient, sesn_ptr);
+		pthread_create(&th_command_console_client, NULL, ThreadCommandConsoleClient, sesn_ptr);
 	}
 
 	return nsocket;
@@ -171,8 +165,7 @@ SetupCommandConsole (void)
 {
 	int socket;
 
-	if ((socket=SetupListeningSocket("127.0.0.1", masterptr->command_console_port, SOCK_TCP, SOCKOPT_IP4|SOCKOPT_REUSEADDRE)))
-	{
+	if ((socket=SetupListeningSocket("127.0.0.1", masterptr->command_console_port, SOCK_TCP, SOCKOPT_IP4|SOCKOPT_REUSEADDRE)) > 0) {
 		Socket *s_ptr;
 		xmalloc(s_ptr, (sizeof(Socket)));
 		memset (s_ptr, 0, sizeof(Socket));
@@ -185,9 +178,7 @@ SetupCommandConsole (void)
 		syslog(LOG_INFO, ">> AnswerCommandConsoleRequest: Successfully created Command Console on port %d (fd=%d)...", masterptr->command_console_port, s_ptr->sock);
 
 		return s_ptr;
-	}
-	else
-	{
+	} else {
 		syslog(LOG_INFO, ">> AnswerCommandConsoleRequest: ERROR: COUL NOT create Command Console port %d (error: '%s')...", masterptr->command_console_port, strerror(errno));
 	}
 

@@ -1,0 +1,266 @@
+{
+  	"openapi": "3.1.0",
+  	"info": {
+    "title": "unfacd ufsrv Account API",
+    "version": "1.0"
+  },
+  	"servers": [
+    {
+      "url": "https://api.unfacd.io/V1/Account"
+    }
+  ],
+	"security": [
+		{
+			"basicAuth": [
+
+			]
+		}
+	],
+  	"components": {
+	  	"securitySchemes": {
+		  "basicAuth": {
+			  "type": "http",
+			  "scheme": "basic"
+		  }
+	  },
+		"responses": {
+			"UnauthorizedError": {
+				"description": "Authentication information is missing or invalid",
+				"headers": {
+					"WWW_Authenticate": {
+						"schema": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"schemas": {
+		"State": {
+			"type": "object",
+			"properties": {
+				"account_state": {
+					"type": "boolean"
+				},
+				"ufsrvuid": {
+					"type": "string",
+					"pattern": "^[1-9][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$"
+				},
+				"eid": {
+					"type": "integer"
+				},
+				"username": {
+					"type": "string",
+					"format": "email"
+				},
+				"nickname": {
+					"type": "string"
+				},
+				"profile_key": {
+					"type": "string",
+					"contentEncoding": "base64"
+				},
+				"cid": {
+					"description": "Session id",
+					"type": "string",
+					"pattern": "^[1-9][[:digit:]]{1,19}$"
+				},
+				"queue_size": {
+					"description": "Amount of undelivered messages queued for the user",
+					"type": "number"
+				},
+				"sid": {
+					"description": "Server id where user is currently connected",
+					"type": "string"
+				},
+				"donations": {
+					"type": "object",
+					"properties": {
+						"subscriber_id": {
+							"type": "string",
+							"contentEncoding": "base64"
+						},
+						"currency": {
+							"type": "string",
+							"description": "3 letter currency code as defined by ISO-4217",
+							"format": "iso-4217",
+							"example": "AUD"
+						},
+						"subscription_level": {
+							"type": "integer"
+						}
+					}
+				},
+				"user_prefs": {
+					"$ref": "#/Components/Schemas/UserPrefs"
+				},
+				"fences": {
+					"$ref": "#/Components/Schemas/Fences"
+				}
+			}
+		  },
+		"UserPrefs": {
+				"description": "Describe user preferences",
+				"properties": {
+					"user_prefs" : {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"id": {
+									"type": "number",
+									"description": "id number of the preference. These are standardised number range"
+								},
+								"value": {
+									"anyOf": [
+										{
+											"type": "string"
+										},
+										{
+											"type": "integer"
+										}
+									]
+								}
+							}
+						}
+					}
+				}
+		},
+		"Fences": {
+			"description": "Describe current configuration of a group",
+			"properties": {
+				"userCount": {
+					"description": "Members count",
+					"type": "number"
+				},
+				"linkjoin_list_user_count": {
+					"description": "Count of users who are requesting to join group via LinkJoin pathway",
+					"type": "number"
+				},
+				"banned_list_user_count": {
+					"type": "number"
+				},
+				"fname": {
+					"type": "string"
+				},
+				"fid": {
+					"description": "Group's unique id"
+				},
+				"fkey": {
+					"description": "Group's unique key",
+					"type": "string",
+					"contentEncoding": "base64"
+				},
+				"eid": {
+					"description": "Group's latest event id number",
+					"type": "number"
+				}
+
+			}
+		},
+		"FencePrefs": {
+			"description": "Describe group preferences",
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"name": {
+						"type": "string",
+						"description": "Preference identifying name",
+						"enum": ["sticky_geogroup", "profile_sharing"]
+					},
+					"value": {
+						"anyOf": [
+							{
+								"type": "string"
+							},
+							{
+								"type": "integer"
+							},
+							{
+								"type": "boolean"
+							}
+						]
+					}
+				}
+			}
+		}
+    }
+  },
+  	"paths": {
+    "/Myself": {
+      "get": {
+        "description": "Get state information on user account",
+        "parameters": [
+			{
+			 "name": "digest_mode",
+			 "in": "query",
+			 "description": "The amount of state information details to return back.",
+			 "required": false,
+			 "schema": {
+				 "type": "integer",
+				 "maximum": 3,
+				 "format": "int32"
+			 }
+		}
+		],
+        "responses": {
+          "200": {
+            "description": "OK",
+			 "content":{
+			  "application/json":{
+				  "schema":{
+					  "$ref":"#/components/schemas/State"
+				  }
+			  }
+			 }
+          },
+			"401": {
+				"$ref": "#/components/responses/UnauthorizedError"
+			}
+        }
+      }
+    },
+	  "/Myself/{ufsrvuid}":{
+		  "get":{
+			  "description": "Get state information on user account for user specified by UfsrvUid",
+			  "tags":[
+				  ""
+			  ],
+			  "parameters":[
+				  {
+					  "name":"ufsrvuid",
+					  "in":"path",
+					  "required":true,
+					  "description":"Specialise retrieved state information for user with specified ufsrvuid.",
+					  "schema":{
+						  "type":"string"
+					  }
+				  }
+			  ],
+			  "responses":{
+				  "200":{
+					  "description":"Expected response to a valid request",
+					  "content":{
+						  "application/json":{
+							  "schema":{
+								  "$ref":"#/components/schemas/State"
+							  }
+						  }
+					  }
+				  },
+				  "default":{
+					  "description":"unexpected error",
+					  "content":{
+						  "application/json":{
+							  "schema":{
+								  "$ref":"#/components/schemas/Error"
+							  }
+						  }
+					  }
+				  }
+			  }
+		  }
+	  }
+  }
+}

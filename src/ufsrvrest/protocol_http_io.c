@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -21,40 +21,27 @@
 
 #include <main.h>
 #include <sockets.h>
-#include <utils.h>
+#include <uflib/utils.h>
 #include <nportredird.h>
-#include <ufsrv_core/protocol/protocol.h>
-#include <ufsrv_core/protocol/protocol_io.h>
+#include <ufsrvmsg_core/protocol/protocol.h>
+#include <ufsrvmsg_core/protocol/protocol_io.h>
 #include <ufsrvwebsock/include/protocol_websocket_io.h>
 #include <ufsrv_core/instrumentation/instrumentation_backend.h>
 #include <http_session_type.h>
-#include <http_rest/mime.h>
+#include <ufsrv_core/http/mime.h>
 #include <protocol_http_io.h>
-#include <http_request_handler.h>
+#include <ufsrv_core/http/http_request_handler.h>
 
 
 extern ufsrv *const masterptr;
 extern  const  Protocol *const protocols_registry_ptr;
-
-int
-HttpSendMessage(InstanceHolderForSession *instance_sesn_ptr, const char *msg, size_t msglen)
-{
-	TransmissionMessage tmsg;
-
-	tmsg.type = TRANSMSG_TEXT;
-	tmsg.len = msglen;
-	tmsg.msg = strndup(msg, msglen);
-	tmsg.msg_packed = (void *)tmsg.msg;
-
-	return SendToSocket(instance_sesn_ptr, &tmsg, SOCKMSG_DONTWSFRAME);
-}
 
 #include <sys/sendfile.h>
 
 /**
  * 	@ALERT: You may need to check attch_ptr for NULL value as under special TESTING mode it is allowed to be that
  */
-onion_connection_status HttpSendFile_orig (Session *sesn_ptr, const char *filename, AttachmentDescriptor *attch_ptr)
+onion_connection_status HttpSendFile_orig(Session *sesn_ptr, const char *filename, AttachmentDescriptor *attch_ptr)
 {
 #if 0
 	bool use_sendfile=true;
@@ -322,15 +309,14 @@ InitialiseSendFileContext(InstanceHolderForSession *instance_sesn_ptr, const cha
 		return OCS_NOT_PROCESSED;
 	}
 
-	if (S_ISDIR(st.st_mode))
-	{
+	if (S_ISDIR(st.st_mode)) {
 		close(fd);
 		return OCS_NOT_PROCESSED;
 	}
 
 	size_t length = st.st_size;
 
-	char etag[_CONFIGDEFAULT_ETAG_SIZE*2];
+	char etag[_CONFIGDEFAULT_ETAG_SIZE * 2];
 	GenerateEtag(&st, etag);
 
 	onion_request 	*request  = SESSION_HTTPSESN_REQUEST_PTR(sesn_ptr);
@@ -370,9 +356,19 @@ InitialiseSendFileContext(InstanceHolderForSession *instance_sesn_ptr, const cha
 #endif
 			size_t ends, starts;
 			if (*end)	ends = atol(end);
-			else 		ends = length;
+			else 		ends = length - 1;
 
 			starts = atol(start);
+      if (starts > ends || starts > length) {
+        syslog (LOG_DEBUG, "%s {pid:'%lu'}: Range not satisfiable", __func__, pthread_self());
+        snprintf(tmp, sizeof(tmp), "bytes */%d", (unsigned int)length);
+        onion_response_set_header(res, "Content-Range", tmp);
+        onion_response_set_code(res, HTTP_RANGE_NOT_SATISFIABLE);
+        onion_response_write_headers(instance_sesn_ptr, res);
+        close(fd);
+        return OCS_PROCESSED;
+      }
+
 			length = ends - starts + 1;
 			lseek(fd, starts, SEEK_SET);
 			snprintf(tmp,sizeof(tmp),"bytes %d-%d/%d",(unsigned int)starts, (unsigned int)ends, (unsigned int)st.st_size);

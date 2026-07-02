@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -22,13 +22,13 @@
 #ifndef UFSRV_LOCATION_COMMAND_CONTROLLER_H
 #define UFSRV_LOCATION_COMMAND_CONTROLLER_H
 
-#include <recycler/instance_type.h>
+#include <uflib/recycler/instance_type.h>
 #include <session_type.h>
 #include <ufsrvresult_type.h>
 #include <command_controllers.h>
 
 #include <WebSocketMessage.pb-c.h>
-#include <ufsrv_core/SignalService.pb-c.h>
+#include <ufsrvmsg_core/SignalService.pb-c.h>
 
 UFSRVResult *CommandCallbackControllerLocationCommand (InstanceContextForSession *ctx_ptr_local_user, WebSocketMessage *wsm_ptr_orig, DataMessage *data_msg_ptr);
 

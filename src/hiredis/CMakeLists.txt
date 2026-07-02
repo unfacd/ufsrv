@@ -27,3 +27,6 @@ add_library(hiredis ${SRC_LIST})
 set_target_properties(hiredis PROPERTIES OUTPUT_NAME "hiredis")
 
 target_include_directories(hiredis PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Add -fPIC flag
+set_property(TARGET hiredis PROPERTY POSITION_INDEPENDENT_CODE ON)

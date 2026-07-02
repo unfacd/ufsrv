@@ -19,7 +19,7 @@ typedef struct AttachmentDescription {
 #define REDIS_CMD_ATTCHMENT_DOWNLOAD_SET	"SET %s:%s %s"
 
 AttachmentDescription *BackendAttachmentGenerate(Session *sesn_ptr);
-void AttachementDescriptionDestruct (AttachmentDescription *, bool);
+void AttachmentDescriptionDestruct (AttachmentDescription *attch_ptr, bool self_destruct);
 
 UFSRVResult *BackendAttachmentStoreLocationId (Session *sesn_ptr_target, const char *id, const char *location);
 UFSRVResult *BackendAttachmentGetFileLocation (Session *sesn_ptr, const char *id);
