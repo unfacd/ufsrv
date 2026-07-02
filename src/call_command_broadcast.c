@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -21,15 +21,16 @@
 
 #include <main.h>
 #include <thread_context_type.h>
-#include <ufsrv_core/user/user_preferences.h>
+#include <ufsrvmsg_core/user/user_preferences.h>
 #include <nportredird.h>
 #include <call_command_broadcast.h>
 #include <sessions_delegator_type.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
-#include <ufsrvuid.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <uflib/ufsrvuid.h>
 #include <command_controllers.h>
-#include <ufsrv_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
+#include <ufsrvmsg_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
 #include <hiredis.h>
+#include "ufsrv_core/include/delegator_session_worker_thread.h"
 
 extern ufsrv *const masterptr;
 extern SessionsDelegator *const sessions_delegator_ptr;
@@ -53,11 +54,12 @@ typedef struct BroadcastMessageEnvelopeForCall BroadcastMessageEnvelopeForCall;
 ///// INTRA	\\\\\\
 
 int
-HandleIntraBroadcastForCall (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleIntraBroadcastForCall(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int				rc					= 0;
 	long long timer_start	=	GetTimeNowInMicros();
 	long long timer_end;
+  WorkersConfigDescriptor *jobworkers_config  = GetJobWorkersConfigurationDescriptor();
 
   if (unlikely(mqm_ptr->has_ufsrvuid == 0)) goto return_error_undefined_ufsrvuid;
 
@@ -65,7 +67,7 @@ HandleIntraBroadcastForCall (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 
   unsigned long userid = UfsrvUidGetSequenceId((const UfsrvUid *)(mqm_ptr->ufsrvuid.data));
 
-  InstanceHolderForSession *instance_sesn_ptr_carrier = InstantiateCarrierSession (NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
+  InstanceHolderForSession *instance_sesn_ptr_carrier = InstantiateCarrierSession(NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
 	if (IS_EMPTY(instance_sesn_ptr_carrier))	{
 	  rc = -4;
 	  goto return_final;
@@ -76,7 +78,7 @@ HandleIntraBroadcastForCall (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 																					CALL_FLAG_HASH_SESSION_LOCALLY|CALL_FLAG_HASH_UID_LOCALLY| CALL_FLAG_HASH_USERNAME_LOCALLY|
 																					CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION);
 	bool lock_already_owned = false;
-	GetSessionForThisUserByUserId (sesn_ptr_carrier, userid, &lock_already_owned, sesn_call_flags);
+	GetSessionForThisUserByUserId(sesn_ptr_carrier, userid, &lock_already_owned, sesn_call_flags);
 	InstanceHolderForSession	*instance_sesn_ptr_local_user = (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr_carrier);
   Session *sesn_ptr_local_user = SessionOffInstanceHolder(instance_sesn_ptr_local_user);
 
@@ -108,7 +110,7 @@ HandleIntraBroadcastForCall (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
   return_error_undefined_ufsrvuid:
   syslog(LOG_DEBUG, "%s {pid:'%lu'}: ERROR: COULD NOT FIND UFSRVUID", __func__, pthread_self());
   rc = -7;
-  goto return_deallocate_carrier;
+  goto return_final;
 
 	return_error_unknown_uname:
 	syslog(LOG_DEBUG, "%s {pid:'%lu', userid:'%lu'}: ERROR: COULD NOT RETRIEVE SESSION FOR USER", __func__, pthread_self(), userid);
@@ -116,11 +118,11 @@ HandleIntraBroadcastForCall (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
 	goto return_deallocate_carrier;
 
 	return_deallocate_carrier:
-	SessionReturnToRecycler (instance_sesn_ptr_carrier, (ContextData *)NULL, 0);
+	SessionReturnToRecycler(instance_sesn_ptr_carrier, (ContextData *)NULL, 0);
 
 	return_final:
 	timer_end = GetTimeNowInMicros();
-	statsd_timing(pthread_getspecific(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.msg.elapsed_time", (timer_end-timer_start));
+	statsd_timing(pthread_getspecific(jobworkers_config->ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.msg.elapsed_time", (timer_end-timer_start));
 	return rc;
 
 }
@@ -129,7 +131,7 @@ HandleIntraBroadcastForCall (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr,
  * 	@brief: Verify the fitness of the FenceCommand message in the context of on INTRA broadcast
  */
 int
-VerifyCallCommandFromUser	(WireProtocolData *data_ptr)
+VerifyCallCommandFromUser(WireProtocolData *data_ptr)
 {
 	int rc = 1;
   CallCommand *cmd_ptr = (CallCommand *)data_ptr;
@@ -137,7 +139,7 @@ VerifyCallCommandFromUser	(WireProtocolData *data_ptr)
 	if (unlikely(IS_EMPTY((cmd_ptr))))				goto return_error_callcommand_missing;
 	if (unlikely(IS_EMPTY(cmd_ptr->header)))	goto return_error_commandheader_missing;
 	if (unlikely(IS_EMPTY(cmd_ptr->fence)))		goto return_error_missing_fence_definition;
-	if (unlikely(cmd_ptr->fence->fid <= 0))			goto return_error_invalid_fence_definition;
+	if (unlikely(cmd_ptr->fence->fid <= 0))		goto return_error_invalid_fence_definition;
 
 	return_success:
 	goto return_final;

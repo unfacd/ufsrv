@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2024 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -25,16 +25,15 @@
 # define NPORTREDIRD_H
 
 #include <sys/time.h>
-#include <standard_net_includes.h>
-#include <main_types.h>
-#include <recycler/instance_type.h>
+#include <uflib/standard_net_includes.h>
+#include <uflib/main_types.h>
+#include <uflib/recycler/instance_type.h>
 #include <ufsrvresult_type.h>
 #include <uflib/adt/adt_linkedlist.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue_type.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvmsgqueue_type.h>
+#include <uflib/scheduled_jobs/scheduled_jobs_type.h>
 #include <ufsrv_instance_descriptor_type.h>
 #include <utils_curve.h>
-
-#include <http_request_handler.h>
 
 #include <sockets.h>
 #include <session.h>
@@ -44,10 +43,10 @@
 
 #include <server_geogroups_enum.h>
 
-#include <lauxlib.h>
-#include <lua.h>
-#include <lualib.h>
-#include <zkgroup.h>
+#include <standard_lua_includes.h>
+#include <zkgroup_utils/zkgroup_server_params_type.h>
+#include <ufsrv_sessions_delegator_type.h>
+#include <cloud_authorization_token_type.h>
 
 enum {
   LOG_MODE_SYSLOG, LOG_MODE_OWN
@@ -60,10 +59,6 @@ enum {
  enum {
   REDIRECTION_ACTIVE, REDIRECTION_DISABLED
  }; /*status*/
-
- enum {
-	 DELEGTYPE_TIMER=0, DELEGTYPE_MSGQUEUE
- };
 
 typedef enum ServerRunMode {
 	RUNMODE_NORMAL, RUNMODE_SHADOW, RUNMODE_INVALID
@@ -110,8 +105,8 @@ typedef enum ServerRunMode {
 			unsigned 	running_mode; /*enum*/
 			unsigned 	log_mode; //own|syslog enum
 			unsigned 	ssl_support; //boolean in configfile
-			char 			config_dir[MBUF];
-			char 			config_file[MBUF];
+			char 			config_dir[_POSIX_PATH_MAX + 1];
+			char 			config_file[_POSIX_PATH_MAX + 1];
 			char 			server_class[MINIBUF];
 			char 			intra_ufsrv_classname[MINIBUF];	//calls name of the server that handled intra commands
 			char 			*server_descriptive_name;
@@ -133,6 +128,10 @@ typedef enum ServerRunMode {
 			char cache_backend_address_fence[MBUF];
 			int cache_backend_port_fence;
       char ufsrvmedia_upload_uri[SBUF];
+      struct {
+          char run_as_user[MINIBUF];
+          char chroot_pathname[_POSIX_PATH_MAX + 1];
+      } runtime_user;
 			size_t buffer_size;//how much toallocate  for incming buffer
 			size_t buffer_maxsize;//upper limit on dynamically adjusted buffer_size;
 			struct {
@@ -166,9 +165,8 @@ typedef enum ServerRunMode {
 				ec_public_key		public_key_server;
 				ec_public_key		public_key_server_serialised;
 				//credentials issuance
-				uint8_t  private_server_params[SERVER_SECRET_PARAMS_LEN];
-        uint8_t  public_server_params[SERVER_PUBLIC_PARAMS_LEN];
-
+				uint8_t  private_server_params[SERVER_SECRET_PARAMS_SIZE];
+        uint8_t  public_server_params[SERVER_PUBLIC_PARAMS_SIZE];
 			}	ufsrv_crypto;
 
 			int pipefds[2]; //pipe between main thread and WorkDelegatorThread read fd[0], write fd[1]
@@ -181,6 +179,8 @@ typedef enum ServerRunMode {
 			FenceCacheBackend				*fence_cachebackend;
 			InstrumentationBackend 	*instrumentation_backend;
 			UFSRVResult             result;
+			UfsrvSessionsDelegator  *sessions_delegator;
+
 			//not in use yet
 			//struct _h_connection 		*db_backend; //db connection for the main thread; non worker or delegator
 
@@ -205,6 +205,17 @@ typedef enum ServerRunMode {
 			  pthread_key_t ufsrv_db_backend_key;//key to multiplex db backend connections
 		  } threads_subsystem;
 
+      struct {
+        pthread_t 			thread;
+      } timer_delegator;
+
+      /**
+       * server-wide authorization tokens for various cloud service requests
+       */
+      struct {
+        CloudAuthorizationToken *fcm,
+                                *integrity_api;
+      } cloud_authorization;
  } ufsrv;
 
 // typedef struct UfsrvInstanceDescriptor {
@@ -224,32 +235,39 @@ typedef enum ServerRunMode {
 #define _CONF_SESNMEMSPECS_ALLOC_GROUP_SZ(x)	x->memspecs_session.allocation_group_sz
 #define _CONF_SESNMEMSPECS_ALLOC_THRESHOLD(x)	x->memspecs_session.allocation_trigger_threshold
 
- typedef int (*CallbackWorkExecutor)(MessageContextData *);
- typedef MessageContextData * (*CallbackWorkArgExtractor)(MessageQueueMsgPayload *);
+#define EXTRA_KEEPALIVE_OPTIONS_UNSPECIFIED 0
+#define EXTRA_KEEPALIVE_OPTIONS_VALID(x) ((x) > 0 && (x) != EXTRA_KEEPALIVE_OPTIONS_UNSPECIFIED)
 
- typedef struct WorkerJobSpecs{
-	unsigned delegator_type;
-	void *args;
-	int (*work_exec)(MessageContextData *);
-	MessageContextData * (*fetch_work_arg)(MessageQueueMsgPayload *);
- } WorkerJobSpecs;
-
-void InitUFSRV (void);
+void InitUFSRV (UfsrvSessionsDelegator *sd_ptr);
+void InitUFSRVForSfu(UfsrvSessionsDelegator *sd_ptr);
 void InitHTTPClient(void);
 void InitSSL (void);
-void UfsrvMainListener (Socket *sock_ptr_listener, Socket *sock_ptr_console);
-void InvokeMainListener (int protocol_id, Socket *sock_ptr_listener, ClientContextData *context_ptr);
-int AnswerTelnetRequest (Socket *);
-Socket *InitMainListener (int protocol_id);
-void InitWorkersDelegator (int protocol_id);
-long long UfsrvConfigGetReqid (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup);
-bool UfsrvConfigRegisterUfsrverInstance (PersistanceBackend	*pers_ptr);
-UfsrvInstanceDescriptor *GetUfsrvInstance (Session *sesn_ptr, const char *server_class, unsigned geogroup, UfsrvInstanceDescriptor *instance_ptr_out);
-bool UfsrvConfigRegisterUfsrverActivity (PersistanceBackend	*pers_ptr, time_t activity_time);
-bool UfsrvConfigRegisterUfsrverActivityWithSession (Session *sesn_ptr, time_t activity_time);
-CollectionDescriptor *UfsrvConfigGetGeoGroup (Session *sesn_ptr, const char *server_class, unsigned ufsrv_geogroup, CollectionDescriptor *collection_ptr_ids, CollectionDescriptor *collection_ptr_times);
-size_t UfsrvConfigGetGeogroupSize (Session *sesn_ptr);
-time_t UfsrvConfigGetUfsrverActivityTime (Session *sesn_ptr, const char *server_class, int ufsrv_geogroup, int serverid_by_user);
+void RegisterUfsrvSessionsDelegator(UfsrvSessionsDelegator *const sessions_delegator);
+UfsrvSessionsDelegator *const GetUfsrvSessionsDelegator(void);
+UFSRVResult *const ProvideSuccessResult();
+void LaunchTimerManagerThread(void (*scheduled_jobs_startup_callback)(void));
+void InitUfsrvScheduledJobsStore (ScheduledJobs *scheduled_jobs, size_t count, void (*scheduled_jobs_startup_callback)(void));
+void InitialiseScheduledJobTypeForSessionsTimeouts();
+ScheduledJobs *GetScheduledJobsStore(void);
+void UfsrvMainListener(Socket *sock_ptr_listener, Socket *sock_ptr_console);
+char *GetMainListenerAddress();
+void InvokeMainListener(int protocol_id, Socket *sock_ptr_listener, ClientContextData *context_ptr);
+int AnswerTelnetRequest(Socket *, int interval);
+Socket *InitMainListener(int protocol_id);
+void InitWorkersDelegator(int protocol_id);
+long long UfsrvConfigGetReqid(Session *sesn_ptr, const char *server_class, int ufsrv_geogroup);
+bool UfsrvConfigRegisterUfsrverInstance(PersistanceBackend	*pers_ptr);
+UfsrvInstanceDescriptor *GetUfsrvInstance(Session *sesn_ptr, const char *server_class, unsigned geogroup, UfsrvInstanceDescriptor *instance_ptr_out);
+bool UfsrvConfigRegisterUfsrverActivity(PersistanceBackend	*pers_ptr, time_t activity_time);
+bool UfsrvConfigRegisterUfserverActivityWithSession (Session *sesn_ptr, time_t activity_time);
+CollectionDescriptor *UfsrvConfigGetGeoGroup(Session *sesn_ptr, const char *server_class, unsigned ufsrv_geogroup, CollectionDescriptor *collection_ptr_ids, CollectionDescriptor *collection_ptr_times);
+size_t UfsrvConfigGetGeogroupSize(Session *sesn_ptr);
+time_t UfsrvConfigGetUfsrverActivityTime(Session *sesn_ptr, const char *server_class, int ufsrv_geogroup, int serverid_by_user);
+void RegisterUfsrvCloudAuthorizationTokenForFcm(CloudAuthorizationToken *cloud_authorization_token_ptr);
+void RegisterUfsrvCloudAuthorizationTokenForIntegrityApi(CloudAuthorizationToken *cloud_authorization_token_ptr);
+void InitialiseScheduledJobTypesForGpcAuthorization();
+CloudAuthorizationToken *GetUfsrvCloudAuthorizationTokenForFcm() __attribute_const__;
+CloudAuthorizationToken *GetUfsrvCloudAuthorizationTokenForIntegrityApi() __attribute_const__;
 
 int UfsrvGetServerId();
 

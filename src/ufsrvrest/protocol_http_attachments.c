@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -21,37 +21,34 @@
 
 #include <main.h>
 #include <nportredird.h>
-#include <misc.h>
-#include <utils.h>
-#include <utils_crypto.h>
-#include <ufsrv_core/user/users.h>
-#include <session.h>
+#include <uflib/utils.h>
 #include <ufsrv_core/cache_backend/redis.h>
-#include <ufsrv_core/user/user_backend.h>
 #include <protocol_http_attachments.h>
 
 extern ufsrv *const masterptr;
 
-static char *_AttachmentPathGenerate (void);
+static char *_AttachmentPathGenerate(void);
 
 #include <utils_nonce.h>
+#include <uflib/utils_crypto.h>
+
 /**
  * 	@brief: Generate a temporary context to accept a network file upload. The system generates a random nonce and a random path
  * 	which have limited TTL. The user must supply both in order for the upload to be accepted.
  * 	A hash in the backend "_ATTACHEMENT:<nonce> <path> is set which is to be referenced back when user sends a request for uplaod.
  * 	The DbBackend is only stroed into upon successful upload.
  *
- * 	@dynamic_memory:	Allocates 'AttachmentDescription *' which user must free withAttachementDescriptionDestruct()
+ * 	@dynamic_memory:	Allocates 'AttachmentDescription *' which user must free withAttachmentDescriptionDestruct()
  */
 AttachmentDescription *
-BackendAttachmentGenerate (Session *sesn_ptr)
+BackendAttachmentGenerate(Session *sesn_ptr)
 {
 	char *attachment_path = _AttachmentPathGenerate();
 	if (attachment_path) {
 		char *attachment_nonce = BackEndGenerateNonce(sesn_ptr, _CONFIGDEFAULT_ATTACHMENT_NONCE_EXPIRY, "_ATTACHMENT", attachment_path);
 
 		if (unlikely(IS_EMPTY(attachment_nonce))) {
-			free (attachment_path);
+			free(attachment_path);
 			return NULL;
 		}
 
@@ -71,24 +68,22 @@ BackendAttachmentGenerate (Session *sesn_ptr)
 }
 
 void
-AttachementDescriptionDestruct (AttachmentDescription *attch_ptr, bool self_destruct)
+AttachmentDescriptionDestruct(AttachmentDescription *attch_ptr, bool self_destruct)
 {
 	if(unlikely(attch_ptr==NULL))	return;
 
 	if(attch_ptr->nonce)	free(attch_ptr->nonce);
 	if(attch_ptr->path)	free(attch_ptr->path);
 
-	if (self_destruct)	{free (attch_ptr);	attch_ptr=NULL;}
+	if (self_destruct)	{free(attch_ptr);	attch_ptr = NULL;}
 
 }
 
-static char *_AttachmentPathGenerate (void)
+static char *_AttachmentPathGenerate(void)
 {
-//#define _UPLOAD_SERVER_NAME "https://api.unfacd.io:20080/"
-	char *random_path=(char *)GenerateSalt (64, true/*zero terminated*/);
-	if (random_path)
-	{
-		char *attachment_path=NULL;
+	char *random_path = (char *)GenerateSalt(64, true/*zero terminated*/);
+	if (IS_STR_LOADED(random_path)) {
+		char *attachment_path = NULL;
 		asprintf(&attachment_path, "%sV1/Account/Attachment/%s", masterptr->ufsrvmedia_upload_uri, random_path);
 
 		return attachment_path;
@@ -102,7 +97,7 @@ static char *_AttachmentPathGenerate (void)
  * This is a permenant hash. The id cannot change, but location can, which is what is returned back to the user.
  */
 UFSRVResult *
-BackendAttachmentStoreLocationId (Session *sesn_ptr_carrier, const char *id, const char *location)
+BackendAttachmentStoreLocationId(Session *sesn_ptr_carrier, const char *id, const char *location)
 {
 	PersistanceBackend 	*pers_ptr;
 	redisReply 					*redis_ptr;
@@ -148,34 +143,34 @@ BackendAttachmentStoreLocationId (Session *sesn_ptr_carrier, const char *id, con
  *
  */
 UFSRVResult *
-BackendAttachmentGetFileLocation (Session *sesn_ptr, const char *id)
+BackendAttachmentGetFileLocation(Session *sesn_ptr, const char *id)
 {
 	int 								rescode=RESCODE_PROG_NULL_POINTER;
 	PersistanceBackend 	*pers_ptr;
 	redisReply 					*redis_ptr;
 
-	if (unlikely(sesn_ptr==NULL))		goto return_generic_error;
+	if (unlikely(sesn_ptr == NULL))		goto return_generic_error;
 	if (unlikely((IS_EMPTY(id))))		goto return_error_param;
 
 	pers_ptr=sesn_ptr->persistance_backend;
 
-	redis_ptr=(*pers_ptr->send_command)(sesn_ptr, "GET %s:%s", _ATTCHMENT_DOWNLOAD_PREFIX, id);
+	redis_ptr = (*pers_ptr->send_command)(sesn_ptr, "GET %s:%s", _ATTCHMENT_DOWNLOAD_PREFIX, id);
 
-	if (IS_EMPTY(redis_ptr)) {rescode=RESCODE_BACKEND_CONNECTION; goto return_error_backend_connection;}
+	if (IS_EMPTY(redis_ptr)) {rescode = RESCODE_BACKEND_CONNECTION; goto return_error_backend_connection;}
 
-	if (redis_ptr->type==REDIS_REPLY_STRING)
+	if (redis_ptr->type == REDIS_REPLY_STRING)
 	{
 #ifdef __UF_TESTING
 		syslog(LOG_DEBUG, "%s (pid:'%lu' o:'%p', location:'%s'): Retrieved location...", __func__, pthread_self(), sesn_ptr, redis_ptr->str);
 #endif
-		char *file_location=strdup(redis_ptr->str);
+		char *file_location = strdup(redis_ptr->str);
 		freeReplyObject(redis_ptr);
 
 		 _RETURN_RESULT_SESN(sesn_ptr, file_location, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER);
 	}
 
-	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_error_backend_error;
-	if (redis_ptr->type==REDIS_REPLY_NIL)		goto return_error_backend_nil;
+	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_error_backend_error;
+	if (redis_ptr->type == REDIS_REPLY_NIL)		goto return_error_backend_nil;
 
 	//catch-all
 	goto	on_return_free;
@@ -215,7 +210,7 @@ BackendAttachmentGetFileLocation (Session *sesn_ptr, const char *id)
  * 	@params path: the full url, from which we derive the path
  */
 bool
-IsAttachmentDescriptionValid (Session *sesn_ptr, const char *nonce, const char *path)
+IsAttachmentDescriptionValid(Session *sesn_ptr, const char *nonce, const char *path)
 {
 	PersistanceBackend *pers_ptr;
 	redisReply *redis_ptr;
@@ -243,7 +238,7 @@ IsAttachmentDescriptionValid (Session *sesn_ptr, const char *nonce, const char *
 		syslog(LOG_DEBUG, "%s {pid:'%lu' o:'%p', path:'%s'}: SUCCESS NONCE:'%s' RECEIVED. Stored value:'%s'", __func__, pthread_self(), sesn_ptr, path, nonce, redis_ptr->str);
 #endif
 
-		char *this_path=strrchr(redis_ptr->str, '/');
+		char *this_path = strrchr(redis_ptr->str, '/');
 		if (this_path++ && *this_path) {
 			if (strcmp(this_path, path) == 0) {
 				freeReplyObject(redis_ptr);

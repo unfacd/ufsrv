@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -22,15 +22,15 @@
 #include <main.h>
 #include <misc.h>
 #include <api_endpoint_v1_receipt.h>
-#include <ufsrv_core/user/user_backend.h>
-#include <http_request_handler.h>
+#include <ufsrvmsg_core/user/user_backend.h>
+#include <ufsrv_core/http/http_request_handler.h>
 #include <protocol_http.h>
-#include <response.h>
+#include <ufsrv_core/http/response.h>
 #include <http_session_type.h>
 #include <session_type.h>
 #include <message.h>
-#include <ufsrv_core/SignalService.pb-c.h>
-#include <ufsrv_core/msgqueue_backend/ufsrv_msgcmd_type_enum.h>
+#include <ufsrvmsg_core/SignalService.pb-c.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrv_msgcmd_type_enum.h>
 
 extern __thread ThreadContext ufsrv_thread_context;
 
@@ -49,15 +49,15 @@ API_ENDPOINT_V1(RECEIPT)
 	HttpSession 				*http_ptr;
 	struct json_object 	*jobj_msg=NULL;
 
-	http_ptr=(HttpSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
+	http_ptr=(HttpSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr);
 	#define _THIS_PATH	"/V1/Receipt"
 
-	http_ptr=(HttpSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
+	http_ptr=(HttpSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr);
 
 	int flags=onion_request_get_flags(HTTPSESN_REQUEST_PTR(http_ptr));
 
 	if ((flags&OR_METHODS) == OR_POST) {
-		jobj_msg=HTTPSESN_JSONDATA(((HttpSession *)SESSION_PROTOCOLSESSION(sesn_ptr)));
+		jobj_msg=HTTPSESN_JSONDATA(((HttpSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr)));
 		if (unlikely(jobj_msg == NULL))	goto request_error;
 
 //		struct json_object *jobj_account=DbGetAccountInJson (sesn_ptr, destination_number);
