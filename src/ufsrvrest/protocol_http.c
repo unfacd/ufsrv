@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2025 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -21,95 +21,122 @@
 
 #include <main.h>
 #include <sessions_delegator_type.h>
-#include <ufsrv_core/protocol/protocol.h>
-#include <ufsrv_core/protocol/protocol_io.h>
+#include <ufsrvmsg_core/protocol/protocol.h>
+#include <ufsrvmsg_core/protocol/protocol_io.h>
+#include <ufsrvmsg_core/type_providers/attachment_descriptor_provider.h>
 #include <protocol_http.h>
 #include <protocol_http_io.h>
 #include <http_session_type.h>
-#include <http_request_handler.h>
+#include <ufsrv_core/http/http_request_handler.h>
 #include <net.h>
-#include <request.h>
-#include <url.h>
-#include <h_handler.h>
-#include <h_basic_auth.h>
+#include <ufsrv_core/http/request.h>
+#include <ufsrv_core/http/url.h>
+#include <ufsrv_core/http/h_handler.h>
+#include <ufsrv_core/http/h_basic_auth.h>
 #include <attachments.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvmsgqueue.h>
 #include <message.h>
-#include <ufsrv_core/user/users.h>
-#include <ufsrv_core/user/users_protobuf.h>
-#include <ufsrv_core/fence/fence_state.h>
-#include <ufsrvuid.h>
+#include <ufsrvmsg_core/user/users.h>
+#include <ufsrvmsg_core/user/users_protobuf.h>
+#include <ufsrvmsg_core/fence/fence_state.h>
+#include "ufsrv_core/include/delegator_session_worker_thread.h"
+#include <uflib/ufsrvuid.h>
 
 extern ufsrv							*const masterptr;
 extern const Protocol			*const protocols_registry_ptr;
 extern SessionsDelegator	*const sessions_delegator_ptr;
+extern __thread ThreadContext ufsrv_thread_context;
 
 static void InitUfsrvApiEndpoints (void);
 
 #include <api_endpoint_v1_account.h>
 #include <api_endpoint_v1_call.h>
+#include <api_endpoint_v1_donation.h>
 #include <api_endpoint_v1_registry.h>
 #include <api_endpoint_v1_message.h>
 #include <api_endpoint_v1_fence.h>
 #include <api_endpoint_v1_user.h>
 #include <api_endpoint_v1_receipt.h>
 #include <api_endpoint_v1_server.h>
+#include <ufsrvmsg_core/fence/fence_utils.h>
+#include <gpc_utils.h>
 
 static void
-InitUfsrvApiEndpoints (void)
+InitUfsrvApiEndpoints(void)
 {
 	syslog(LOG_INFO, "%s: INITIALISING API ENDPOINTS...", __func__);
 
+  //
+  //!!! IMPORTANT WHEN GROUPING ENDPOINTS WITH COMMON PREFIX ALWAYS PUT THE MOST SPECIFIC FIRST. SEE V1/Donation/Subscription/Levels ORDER SEQUENCE
+  //
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Nonce", 				(void *)NONCE);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Nickname/*", 	(void *)NICKNAME);
 
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), ".well-known/assetlinks.json", (void *)ASSETLINKS);
+
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Myself/*", 				(void *)ACCOUNT_MYSELF);
   onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Captcha", 				(void *)CAPTCHA);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/SignOn", (void *)ACCOUNT_SIGNON);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/New", 		(void *)ACCOUNT_CREATENEW);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/VerifyNew/Voice/Script/*", (void *)ACCOUNT_VERIFYNEW_VOICESCRIPT);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/VerifyNew/Voice/*", (void *)ACCOUNT_VERIFYNEW_VOICE);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/VerifyNew", 	(void *)ACCOUNT_VERIFYNEW);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/SignOn",         (void *)ACCOUNT_SIGNON);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/New", 		        (void *)ACCOUNT_CREATENEW);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/VerifyNew/Voice/Script/*",  (void *)ACCOUNT_VERIFYNEW_VOICESCRIPT);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/VerifyNew/Voice/*",         (void *)ACCOUNT_VERIFYNEW_VOICE);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/VerifyNew", 	     (void *)ACCOUNT_VERIFYNEW);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/VerifyStatus/*", (void *)ACCOUNT_VERIFYSTATUS);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Nonce", 			(void *)ACCOUNT_NONCE);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Nonce", 			      (void *)ACCOUNT_NONCE);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/RegistrationLock/Verify", (void *)ACCOUNT_REGISTRATION_LOCK);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/RegistrationLock", (void *)ACCOUNT_REGISTRATION_LOCK);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/KBS",              (void *)ACCOUNT_KBS);
 #ifdef __UF_TESTING
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/PasswordHash", (void *)ACCOUNT_GENERATEPASSWORDHASH);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/PasswordHash",     (void *)ACCOUNT_GENERATEPASSWORDHASH);
 #endif
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Attachment*", (void *)ACCOUNT_ATTACHMENT);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Keys", 				(void *)ACCOUNT_KEYS);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Keys/Status", 	(void *)ACCOUNT_KEYS_STATUS);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Keys/Signed", 	(void *)ACCOUNT_KEYS_SIGNED);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Attachment*",     (void *)ACCOUNT_ATTACHMENT);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Keys", 				    (void *)ACCOUNT_KEYS);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Keys/Status", 	    (void *)ACCOUNT_KEYS_STATUS);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Keys/Signed", 	    (void *)ACCOUNT_KEYS_SIGNED);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Keys/PreKeys/*", 	(void *)ACCOUNT_KEYS_PREKEYS);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/GCM", 							(void *)ACCOUNT_GCM);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/GCM_PREAUTH/*", 	(void *)ACCOUNT_GCM_PREAUTH);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Prefs/Group/*", 	(void *)PREFSGROUP);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Prefs/StickyGeogroup/*", 	(void *)PREFSSTICKY_GEOGROUP);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Prefs", 					(void *)PREFS);
-  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Profile/*", 	(void *)PROFILE);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Profile/*", 	    (void *)PROFILE);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/SharedContacts", 	(void *)ACCOUNT_SHARED_CONTACTS);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Account/Devices*", 			  (void *)ACCOUNT_DEVICES);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/UserAttributes", 	(void *)ACCOUNT_USERATTRIBUTES);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/StateSync", 				(void *)STATESYNC);
   onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Account/Certificate/Delivery",	(void *)CERTIFICATE_DELIVERY);
 
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Donation/Subscription/Levels",	          (void *)DONATION_SUBSCRIPTION_LEVELS);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Donation/Subscription/Level/*",	        (void *)DONATION_SUBSCRIPTION_LEVEL);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Donation/Subscription/Boost/Amounts",	  (void *)DONATION_SUBSCRIPTION_BOOST_AMOUNTS);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Donation/Subscription/Boost/Badges",	    (void *)DONATION_SUBSCRIPTION_BOOST_BADGES);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Donation/Subscription/DefaultPaymentMethod/*",	 (void *)DONATION_SUBSCRIPTION_DEFAULT_PAYMENT_METHOD);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Donation/Subscription/CreatePaymentMethod/*",	   (void *)DONATION_SUBSCRIPTION_CREATE_PAYMENT_METHOD);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Donation/Subscription/*",	               (void *)DONATION_SUBSCRIPTION);
+
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Call", 										(void *)CALL);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Call/Turn", 								(void *)CALL_TURN);
 
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Receipt", 										(void *)RECEIPT);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Receipt", 									(void *)RECEIPT);
 
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Registry/UserToken/*", 		(void *)REGISTERY_USER);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Registry/UserId/*", 			(void *)REGISTERY_USERID);
 
-  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/MessageNonce*", 							(void *)MESSAGE_NONCE);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/MessageNonce*", 					(void *)MESSAGE_NONCE);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Message/Gid/*", 					(void *)MESSAGE_GID);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Message/*", 							(void *)MESSAGE);
 #ifdef __UF_TESTING
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Encrypt", (void *)MESSAGE_ENCRYPT);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Decrypt", (void *)MESSAGE_DECRYPT);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Encrypt",                  (void *)MESSAGE_ENCRYPT);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Decrypt",                  (void *)MESSAGE_DECRYPT);
 #endif
 
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Fence/NearBy", (void *)FENCE_NEARBY);
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Fence/Search/*", (void *)FENCE_SEARCH);
   onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Fence/Certificate/*", (void *)FENCE_CERTIFICATE);
   onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "V1/Fence/ZKGroup", (void *)FENCE_ZKGROUP);
-	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Fence/*", (void *)FENCE);
+  onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Fence/Info/*", (void *)FENCE_INFO);
+	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/Fence/*", (void *)FENCE);//Keep most specific path for V1/Fence above this
+
 
   onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/User/Presence/*", 	(void *)USER_PRESENCE); //always put ahead of User below
 	onion_url_add((onion_url *)HTTP_PROTOCOL_ROOTHANDLER(protocols_registry_ptr, PROTOCOLID_HTTP), "^V1/User/*", 	(void *)USER);
@@ -120,21 +147,226 @@ InitUfsrvApiEndpoints (void)
 
 }/**/
 
+#include <jobworkers/ufsrvworker_pool_descriptor_type.h>
+#include <ufsrv_core/jobworkers/jobworkers_utils.h>
+#include <jobworkers/base_thread_context_data_type.h>
+#include <ufsrv_core/cache_backend/persistance.h>
+#include <http_request.h>
+
+static UFSRVResult *
+_UfsrvWorkerPoolOneoffInitialiser(WorkerPoolDescriptor *pool_descriptor)
+{
+  return DefaultUfsrvWorkerPoolOneoffInitialiser(pool_descriptor);
+}
+
+/**
+ * @brief static type provider for ufsrv worker pool. One per server instance.
+ */
+static WorkerPoolDescriptor *const
+_GetUfsrvWorkerPoolDescriptor(oneoff_initialiser on_created) {
+  static WorkerPoolDescriptor ufsrvworker_pool;
+
+  ufsrvworker_pool.on_created = on_created;
+
+  return &ufsrvworker_pool;
+}
+
+/**
+ * @brief Callback initialiser for a UfsrvWorker thread, applicable to ufsrvwebsock and ufsrvapi class servers.
+ * @param thread_base_ctx_data pre-allocated context
+ */
+static UFSRVResult *
+_UfsrvWorkerThreadDataContextInitialiser(BaseThreadContext *thread_base_ctx_data)
+{
+  ThreadContext *ufsrv_thread_context_ptr = thread_base_ctx_data->user_thread_context;
+  WorkersConfigDescriptor *config_descriptor = &(thread_base_ctx_data->pool_descriptor->workers_pool_config_descriptor);
+
+  //todo: this is the old pthread_key based implementation. Delete one the thread_local implementation is finalised.
+  pthread_key_create(&(config_descriptor->ufsrv_thread_context_key), NULL);
+  pthread_setspecific(config_descriptor->ufsrv_thread_context_key, (void *)&ufsrv_thread_context);
+
+  HopscotchHashtableConfigurable  *locked_objects_store = &(thread_base_ctx_data->locked_objects_store);
+  hopscotch_init_with_offset(&(locked_objects_store->hashtable), CONFIG_THREAD_LOCKED_OBJECTS_STORE_PFACTOR);
+  locked_objects_store->keylen = 0;
+  locked_objects_store->keylen = 64;
+  locked_objects_store->hash_func = (uint64_t (*)(uint8_t *, size_t))inthash_u64;
+
+  ufsrv_thread_context_ptr->ht_ptr = locked_objects_store;
+  ufsrv_thread_context.ht_ptr = locked_objects_store;//TBD
+
+  InitUfsrvScheduledJobsStore(&thread_base_ctx_data->scheduled_jobs_store, 0, NULL);
+
+  ufsrv_thread_context_ptr->res_ptr = &(thread_base_ctx_data->ufsrv_result);
+  ufsrv_thread_context.res_ptr = &(thread_base_ctx_data->ufsrv_result);//TBD
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  if (IS_PRESENT(InitialiseHttpRequestContext(&(thread_base_ctx_data->http_request_context), 0))) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->ufsrv_http_request_context_key, (void *)&(thread_base_ctx_data->http_request_context));
+
+    ufsrv_thread_context_ptr->http_request_context = &(thread_base_ctx_data->http_request_context);
+    ufsrv_thread_context.http_request_context = &(thread_base_ctx_data->http_request_context);//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE HttpRequestContext for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+    _exit(-1);
+  }
+
+  syslog(LOG_DEBUG, "%s: SUCCESS (http_ptr:'%p'): Initialised HttpRequestContext for Ufsrv Worker thread: '%lu'...", __func__, &(thread_base_ctx_data->http_request_context), pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  InstrumentationBackend *instr_ptr = InstrumentationBackendInit(NULL, NULL);//no namespace
+  if (instr_ptr) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->ufsrv_instrumentation_backend_key, (void *)instr_ptr);
+
+    ufsrv_thread_context_ptr->instrumentation_backend = instr_ptr;
+    ufsrv_thread_context.instrumentation_backend = instr_ptr;//TBD
+  } else {
+    syslog(LOG_NOTICE, "%s: ERROR: COULD NOT INITIALISE INSTRUMENTATION for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+  }
+
+  syslog(LOG_INFO, "%s: SUCCESS (instr_ptr:'%p'): Initialised Instrumentation Backend for Ufsrv Worker thread: '%lu' (NOT IMPLEMENTED)...", __func__, instr_ptr, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  struct _h_connection *db_ptr = InitialiseDbBackend();
+  if (db_ptr) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->ufsrv_db_backend_key, (void *)db_ptr);//TODO: move key to delegator structure
+
+    ufsrv_thread_context_ptr->db_backend = db_ptr;
+    ufsrv_thread_context.db_backend = db_ptr;//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE DB Backend access for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+    _exit(-1);
+  }
+
+  syslog(LOG_INFO, "%s: SUCCESS: Initialised DB Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  PersistanceBackend *per_ptr = InitialisePersistanceBackend(NULL);
+  if (per_ptr) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->worker_persistance_key, (void *)per_ptr);
+
+    ufsrv_thread_context_ptr->persistance_backend = per_ptr;
+    ufsrv_thread_context.persistance_backend = per_ptr;//TBD
+  } else {
+    syslog(LOG_ERR, "ThreadUFServerWorker: ERROR: COULD NOT INITIALISE Session Cache Backend for Ufsrv Worker thread: '%lu'...", pthread_self());
+    exit(-1);
+  }
+
+  syslog(LOG_INFO, "%s: SUCCESS: Initialised Session Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  UserMessageCacheBackend *per_ptr_usrmsg = InitialiseCacheBackendUserMessage(NULL);
+  if (per_ptr_usrmsg) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->worker_usrmsg_cachebackend_key, (void *)per_ptr_usrmsg);
+
+    ufsrv_thread_context_ptr->usrmsg_cachebackend = per_ptr_usrmsg;
+    ufsrv_thread_context.usrmsg_cachebackend = per_ptr_usrmsg;//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE UserMessage Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+    _exit (-1);
+  }
+
+  syslog(LOG_INFO, "%s : SUCCESS: Initialised UserMessage Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  FenceCacheBackend *per_ptr_fence = InitialiseCacheBackendFence(NULL);
+  if (per_ptr_fence) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->worker_fence_cachebackend_key, (void *)per_ptr_fence);
+
+    ufsrv_thread_context_ptr->fence_cachebackend = per_ptr_fence;
+    ufsrv_thread_context.fence_cachebackend = per_ptr_fence;//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE Fence Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+    _exit (-1);
+  }
+
+  syslog(LOG_INFO, "%s : SUCCESS: Initialised Fence Cache Backend for Ufsrv Worker thread: '%lu'...", __func__, pthread_self());
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  MessageQueueBackend *mq_ptr = BuildConnectionHandleForMessageQueueBackend(NULL);
+  if (mq_ptr) {
+    //todo: to be removed once thread_local implementation below is complete
+    pthread_setspecific(config_descriptor->ufsrv_msgqueue_pub_key, (void *)mq_ptr);
+
+    ufsrv_thread_context_ptr->msgqueue_backend = mq_ptr;
+    ufsrv_thread_context.msgqueue_backend = mq_ptr;//TBD
+  } else {
+    syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE MessageQueue Publisher for UfServerWorker thread: '%lu'...", __func__, pthread_self());
+    exit (-1);
+  }
+
+  syslog(LOG_INFO, "%s: SUCCESS: Initialised MessageQueue Publisher Backend for UfServerWorker thread: '%lu'...", __func__, pthread_self());
+
+  THREAD_CONTEXT_RETURN_RESULT_SUCCESS(NULL, RECODE_NONE)
+}
+
+/**
+ * @brief Initialise and launch the job workers subsystem (one per instance)
+ */
+static void
+_LaunchUfsrvWorkers()
+{
+  WorkerPoolDescriptor *const pool_descriptor = _GetUfsrvWorkerPoolDescriptor(_UfsrvWorkerPoolOneoffInitialiser);
+  size_t pool_sz = GetJobWorkersPoolSize(_CONFIGDEFAULT_MAX_UFSRV_WORKERS);
+  pool_descriptor->workers_pool_config_descriptor.up_status = POOL_STATE_UP;
+  pool_descriptor->workers_pool_config_descriptor.pool_sz = pool_sz;
+//  pool_descriptor->sessions_delegator = sd_ptr;
+  pool_descriptor->thread_handlers.on_instantiated = _UfsrvWorkerThreadDataContextInitialiser;
+  RegisterJobWorkersConfigurationDescriptor(&pool_descriptor->workers_pool_config_descriptor);
+
+  if (IS_PRESENT(pool_descriptor->on_created)) {
+    pool_descriptor->on_created(pool_descriptor);
+  }
+
+  LaunchUfServerWorkerThreads(pool_descriptor, sizeof(ThreadContext));
+}
+
+/**
+ * @brief Grouping of startup scheduled jobs
+ */
+static void
+_InitialiseStartupScheduledJobs()
+{
+  InitialiseScheduledJobTypeForSessionsTimeouts();
+  InitialiseScheduledJobTypesForGpcAuthorization();
+}
+
 /**
  *  @brief: One-off Protocol type data initialisation
  */
 UFSRVResult *
-proto_http_init_callback (Protocol *proto_ptr)
+proto_http_init_callback(Protocol *proto_ptr)
 {
-	Protocol *proto_ptr_my;
-	ProtocolHttp *proto_http_ptr;
+  syslog(LOG_INFO, "%s: Initialising protocol: '%s' ...", __func__, proto_ptr->protocol_name);
 
-	InitUFSRV();
-	CreateSessionsDelegatorThread ();
+  SessionsDelegator *sd_ptr = InitialiseDelegator();
+  if (IS_EMPTY(sd_ptr)) {
+    syslog(LOG_ERR, "%s: ERROR COULD NOT INITIALISE DELEGATOR... EXISTING", __func__ );
+    exit(-1);
+  }
+
+  InitUFSRV((UfsrvSessionsDelegator *)sd_ptr);
+  LaunchSessionsDelegatorThread(sd_ptr);
+
+  _LaunchUfsrvWorkers();
+  LaunchTimerManagerThread(&_InitialiseStartupScheduledJobs);//ensure RegisterJobWorkersConfigurationDescriptor() is called beforehand
 
 	//_GET_PROTO_HTTP(proto_ptr);
-	proto_ptr_my = ProtocolGet (PROTOCOLID_HTTP);
-	proto_http_ptr = calloc(1, sizeof(ProtocolHttp));
+  Protocol *proto_ptr_my = ProtocolGet(PROTOCOLID_HTTP);
+  ProtocolHttp *proto_http_ptr = calloc(1, sizeof(ProtocolHttp));
 	_ASSIGN_PROTOCOL_TYPE_DATA(proto_ptr_my, proto_http_ptr);//connect the two pointers
 
 	//AA+ HTTP
@@ -144,8 +376,8 @@ proto_http_init_callback (Protocol *proto_ptr)
 
 	proto_http_ptr->http_handlers.root_handler = (onion_handler *)onion_root_url();
 
-	proto_http_ptr->constants.max_post_size = 1024*1024; // 1MB
-	proto_http_ptr->constants.max_file_size = 1024*1024*1024; // 1GB
+	proto_http_ptr->constants.max_post_size = 1024 * 1024; // 1MB
+	proto_http_ptr->constants.max_file_size = 1024 * 1024 * 1024; // 1GB
 
 
 	//HTTP_PROTOCOL_MAXPOSTSIZE(protocols_registry_ptr);
@@ -157,17 +389,19 @@ proto_http_init_callback (Protocol *proto_ptr)
 	InitFenceStateDescriptorRecyclerTypePool();
 
 	InitAttachmentDescriptorRecyclerTypePool();
-	InitialiseAttachmentsHashTable ();
-	InitialiseBasicAuthLruCache ();
+	InitialiseAttachmentsHashTable();
+	InitialiseBasicAuthLruCache();
 
-	RegisterFenceUserPreferencesSource ();
-	RegisterUserPreferencesSource ();
+	RegisterFenceUserPreferencesSource();
+	RegisterUserPreferencesSource();
+
+//  TemporaryInitialiseBulkRedisFenceOps();
 
 	return NULL;
 }
 
 UFSRVResult *
-proto_http_config_callback (ClientContextData *config_file_handler_ptr)
+proto_http_config_callback(ClientContextData *config_file_handler_ptr)
 {
 	lua_getglobal(config_file_handler_ptr, "intra_ufsrv_classname");
 	if (!lua_isstring((lua_State *)config_file_handler_ptr, -1)) {
@@ -183,25 +417,25 @@ proto_http_config_callback (ClientContextData *config_file_handler_ptr)
 }
 
 UFSRVResult *
-proto_http_init_listener (void)
+proto_http_init_listener(void)
 {
-	int socket;
+	int socket = -1;
 	static UFSRVResult res = {0};
 
-	if ((socket = SetupListeningSocket(masterptr->main_listener_address, masterptr->listen_on_port, SOCK_TCP, SOCKOPT_IP4|SOCKOPT_REUSEADDRE))) {
+	if ((socket = SetupListeningSocket(masterptr->main_listener_address, masterptr->listen_on_port, SOCK_TCP, SOCKOPT_IP4|SOCKOPT_REUSEADDRE)) > 0) {
 		Socket *s_ptr = calloc(1, sizeof(Socket));
 
 		s_ptr->type = SOCK_MAIN_LISTENER;
 		s_ptr->sock = socket;
-		strcpy (s_ptr->address, masterptr->main_listener_address);
-		strcpy (s_ptr->haddress, masterptr->main_listener_address);
+		strcpy(s_ptr->address, masterptr->main_listener_address);
+		strcpy(s_ptr->haddress, masterptr->main_listener_address);
 
 		syslog(LOG_INFO, "%s: Successfully created Main Listener on %s:%d (fd=%d)...", __func__, masterptr->main_listener_address, masterptr->listen_on_port, s_ptr->sock);
 
 		res.result_user_data = s_ptr;
 		res.result_type = RESULT_TYPE_SUCCESS;
 	} else {
-		syslog(LOG_INFO, "%s: ERROR: COUL NOT create Command Console port %d (%s)...", __func__, masterptr->listen_on_port, strerror(errno));
+		syslog(LOG_INFO, "%s: ERROR: COULD NOT create Command Console port %d (%s)...", __func__, masterptr->listen_on_port, strerror(errno));
 		res.result_user_data = NULL;
 		res.result_type = RESULT_TYPE_ERR;
 	}
@@ -221,7 +455,7 @@ UFSRVResult *
 proto_http_main_listener_callback(Socket *sock_ptr_listener, ClientContextData *context_ptr)
 {
 
-	UfsrvMainListener (sock_ptr_listener, (Socket *)context_ptr); //this never really returns
+	UfsrvMainListener(sock_ptr_listener, (Socket *)context_ptr); //this never really returns
 
 	return _ufsrv_result_generic_success;
 
@@ -244,10 +478,10 @@ proto_http_init_session_callback(ClientContextData *ctx_data_ptr, unsigned call_
 
 	if (call_flags == 0) {//brand new, heap based instance
 		http_ptr = calloc(1, sizeof(HttpSession));
-		SESSION_PROTOCOLSESSION(sesn_ptr) = (ProtocolSessionData *)http_ptr;
+    SESSION_PROTOCOL_SESSION_DATA(sesn_ptr) = (ProtocolSessionData *)http_ptr;
 	} else {
 		http_ptr = calloc(1, sizeof(HttpSession));
-		SESSION_PROTOCOLSESSION(sesn_ptr) = (ProtocolSessionData *)http_ptr;
+    SESSION_PROTOCOL_SESSION_DATA(sesn_ptr) = (ProtocolSessionData *)http_ptr;
 
 		//TODO: at the moment the session object needs to be recreated regardless of recycler origin. Future optimisation
 		//this is done is SuspendSession() as an overriding behaviour
@@ -277,7 +511,7 @@ UFSRVResult *
 proto_http_reset_session_callback(InstanceHolderForSession *instance_sesn_ptr, unsigned callflags)
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
-	HttpSession *http_ptr = (HttpSession *)SESSION_PROTOCOLSESSION(sesn_ptr);
+	HttpSession *http_ptr = (HttpSession *)SESSION_PROTOCOL_SESSION_DATA(sesn_ptr);
 
 	if (callflags == 0) {
 #if 0
@@ -322,9 +556,9 @@ proto_http_reset_session_callback(InstanceHolderForSession *instance_sesn_ptr, u
 				HTTPSESN_JSONDATA(http_ptr) = NULL;
 			}
 
-			if (SESSION_PROTOCOLSESSION(sesn_ptr)) {
-				free(SESSION_PROTOCOLSESSION(sesn_ptr));
-				SESSION_PROTOCOLSESSION(sesn_ptr) = NULL;
+			if (SESSION_PROTOCOL_SESSION_DATA(sesn_ptr)) {
+				free(SESSION_PROTOCOL_SESSION_DATA(sesn_ptr));
+        SESSION_PROTOCOL_SESSION_DATA(sesn_ptr) = NULL;
 			}
 		}
 	}
@@ -347,10 +581,15 @@ UFSRVResult *proto_http_post_hanshake_callback (InstanceHolderForSession *instan
  
 }
 
+#include <ufsrv_core/http/http_request_handler.h>
+#include <ufsrv_core/http/h_handler.h>
+
+static onion_connection_status onion_request_process(InstanceHolderForSession *, onion_request *req);
+
 bool IsConnectionKeepAlive(Session *sesn_ptr)
 {
-	onion_request *req=SESSION_HTTPSESN_REQUEST_PTR(sesn_ptr);
-	onion_response *res=SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr);
+	onion_request *req  = SESSION_HTTPSESN_REQUEST_PTR(sesn_ptr);
+	onion_response *res = SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr);
 
 			// keep alive only on HTTP/1.1.
 	syslog(LOG_DEBUG, "%s: keep alive [req wants] %d && ([skip] %d || [lenght ok] %d==%d || [chunked] %d)", __func__,
@@ -363,6 +602,66 @@ bool IsConnectionKeepAlive(Session *sesn_ptr)
 
 }
 
+static onion_connection_status
+onion_request_process(InstanceHolderForSession *instance_sesn_ptr, onion_request *req) {
+
+  Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
+  //AA-
+  //onion_response *res=onion_response_new(req);
+  //AA+ container object is statically allocated, we just initialise it
+  onion_response_initialise(sesn_ptr);
+  if (!req->path) {
+    onion_request_polish(req);
+  }
+
+  onion_handler *h = HTTP_PROTOCOL_ROOTAUTHHANDLER(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))));
+  onion_connection_status hs = onion_handler_handle(instance_sesn_ptr, h, req, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr)); //returns <0 on error, 0 (not found or processed), or 2
+
+  if (hs == OCS_INTERNAL_ERROR || hs == OCS_NOT_IMPLEMENTED || hs == OCS_NOT_PROCESSED || hs == OCS_FORBIDDEN) {
+    if (hs == OCS_INTERNAL_ERROR)		req->flags |= OR_INTERNAL_ERROR;
+    if (hs == OCS_NOT_IMPLEMENTED)	req->flags |= OR_NOT_IMPLEMENTED;
+    if (hs == OCS_NOT_PROCESSED)		req->flags |= OR_NOT_FOUND;
+    if (hs == OCS_FORBIDDEN)				req->flags |= OR_FORBIDDEN;
+
+    onion_handler *eh = HTTP_PROTOCOL_ERRORHANDLER(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))));
+    hs = onion_handler_handle(instance_sesn_ptr, eh, req, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr));//this will always return OCS_PROCESSED (2)
+  }
+
+  //AA-
+#if 0
+  if (hs==OCS_YIELD){
+		// Remove from the poller, and yield thread to poller. From now on it will be processed somewhere else (longpoll thread).
+		onion_poller *poller=onion_get_poller(req->connection.listen_point->server);
+		onion_poller_slot *slot=onion_poller_get(poller, req->connection.fd);
+		onion_poller_slot_set_shutdown(slot, NULL, NULL);
+
+		return hs;
+	}
+#endif
+
+  //AA-
+  //we do that seperately in reset lifecycle
+
+  int rs = onion_response_free(instance_sesn_ptr, SESSION_HTTPSESN_RESPONSE_PTR(sesn_ptr));
+
+  //No error (but we could still need more data)
+  if (hs >= 0 && rs == OCS_KEEP_ALIVE) {
+    // if keep alive, reset struct to get the new petition.
+    onion_request_clean(req);
+  } else {
+#ifdef __FULL_DEBUG
+    syslog(LOG_DEBUG, "%s (pid:'%lu' o:'%p'): NOT PERFORMING onion_request_clean() hs:'%d' rs:'%d'", __func__, pthread_self(), sesn_ptr, hs, rs);
+#endif
+  }
+
+  return hs > 0 ? rs : hs; //(if hs>0 ie. OCS_PROCESSED|NEED MOREDATA: rs is either close connection or KEPEEP alive)
+
+
+  //AA+
+  //return hs;
+
+}
+
 /**
  *  Handler returns the following:
  *  Procesed: the request was matched and processed -> connection will be closed
@@ -372,7 +671,7 @@ bool IsConnectionKeepAlive(Session *sesn_ptr)
 UFSRVResult *proto_http_msg_callback(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned frame_offset, size_t len)
 {
 	ssize_t amount_read;
-	int rescode;
+	int rescode = RESCODE_PROG_NULL_POINTER;
 
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
@@ -467,7 +766,7 @@ UFSRVResult *proto_http_msg_out_callback(InstanceHolderForSession *instance_sesn
 
 				case OCS_PROCESSED:
 					SESSION_HTTPSESN_SENDFILECTX(sesn_ptr).file_fd = 0;
-					_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_SUCCESS, RESULT_CODE_SESN_SOFTSPENDED)//ask to suspend session
+					_RETURN_RESULT_SESN(sesn_ptr, sesn_ptr, RESULT_TYPE_SUCCESS, RESCODE_SESN_SOFTSPENDED)//ask to suspend session
 
 				case OCS_NOT_PROCESSED:
 				case OCS_INTERNAL_ERROR:
@@ -579,12 +878,12 @@ proto_http_service_timeout_callback(InstanceHolderForSession *instance_sesn_ptr,
 	} else {
 		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu'}: UNABLE TO ASCERTAIN THE STATE OF ORPHAN SESSION: Forcibly suspending...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr));
 
-		if (SuspendSession (instance_sesn_ptr, SOFT_SUSPENSE)) suspended_flag = true;
+		if (SuspendSession(instance_sesn_ptr, SOFT_SUSPENSE)) suspended_flag = true;
 	}
 
-	if (recycle_flag)	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESULT_CODE_SESN_HARDSPENDED)
+	if (recycle_flag)	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_SESN_HARDSPENDED)
 
-	if (suspended_flag)	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESULT_CODE_SESN_SOFTSPENDED)
+	if (suspended_flag)	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_SESN_SOFTSPENDED)
 
 	_return_noop:
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_NOOP, RESCODE_PROG_NULL_POINTER)
@@ -666,21 +965,32 @@ proto_http_close_callback(InstanceHolderForSession *instance_sesn_ptr)
 }
 
 UFSRVResult *
-proto_http_msgqueue_topics_callback (UFSRVResult *res_ptr)
+proto_http_msgqueue_topics_callback(UFSRVResult *res_ptr)
 {
 
 	return NULL;
 
 }
 
+UFSRVResult *
+proto_http_generate_session_id_callback(UFSRVResult *res_ptr, ClientContextData *context_data)
+{
+  unsigned long session_id = GenerateSessionIdGlobally();
+  if (session_id == 0) {
+    _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROTOCOL_DATA)
+  } else {
+    _RETURN_RESULT_RES(res_ptr, session_id, RESULT_TYPE_SUCCESS, RESCODE_PROTOCOL_DATA)
+  }
+}
+
 static UFSRVResult *_FenceCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *, const unsigned char *rawmsg_b64encoded);
 static UFSRVResult *_MessageCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *, const unsigned char *);
 static UFSRVResult *_SessionCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
 static UFSRVResult *_UserCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
-static UFSRVResult *_CallCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
-static UFSRVResult *_ReceiptCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
-static UFSRVResult *_SyncCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
-static UFSRVResult *_LocationCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
+static UFSRVResult *_CallCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
+static UFSRVResult *_ReceiptCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
+static UFSRVResult *_SyncCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
+static UFSRVResult *_LocationCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded);
 
 /**
  * 	@brief: The main interface for ufsrvapi class servers to notify stateful ufsrv class servers about an endpoint command.
@@ -699,7 +1009,7 @@ static UFSRVResult *_LocationCommandIntraMarshal (Session *sesn_ptr, UfsrvInstan
  *	@param rawmsg_b64encoded: text-encoded wire message as originally encoded by sender for json transmission
  * 	@param sesn_ptr: Session is in ephemeral state ie not connected to end client, but has backend context loaded
  */
-UFSRVResult *UfsrvApiIntraBroadcastMessage (Session *sesn_ptr, WireProtocolData *data, UfsrvMsgCommandType msgcmd_type, enum BroadcastSemantics broadcast_semantics, const unsigned char *rawmsg_b64encoded)
+UFSRVResult *UfsrvApiIntraBroadcastMessage(Session *sesn_ptr, WireProtocolData *data, UfsrvMsgCommandType msgcmd_type, enum BroadcastSemantics broadcast_semantics, const unsigned char *rawmsg_b64encoded)
 {
 	UfsrvInstanceDescriptor ufsrv_instance	=	{0};
 
@@ -752,7 +1062,7 @@ UFSRVResult *UfsrvApiIntraBroadcastMessage (Session *sesn_ptr, WireProtocolData 
  *
  */
 static UFSRVResult *
-_FenceCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded)
+_FenceCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, UfsrvCommandWire *ufsrvcmd_ptr, WireProtocolData *data, const unsigned char *rawmsg_b64encoded)
 {
 	if (unlikely(IS_EMPTY(ufsrvcmd_ptr)) || unlikely(IS_EMPTY(ufsrvcmd_ptr->fencecommand)))
 	{
@@ -773,7 +1083,7 @@ _FenceCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr
 	msgqueue_msg.ufsrv_req_id	=	ufsrv_ptr->reqid; 						msgqueue_msg.has_ufsrv_req_id	=	1;
 	msgqueue_msg.command_type	=	MSGCMD_FENCE;									msgqueue_msg.has_command_type	=	1;
 	msgqueue_msg.broadcast_semantics	=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA; msgqueue_msg.has_broadcast_semantics	=1;
-  MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
+  ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
   msgqueue_msg.has_ufsrvuid = 1;
 
 	size_t 		packed_sz	=	message_queue_message__get_packed_size(&msgqueue_msg);
@@ -860,7 +1170,7 @@ _MessageCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_pt
 		msgqueue_msg.ufsrv_req_id					=	ufsrv_ptr->reqid; 						msgqueue_msg.has_ufsrv_req_id=1;
 		msgqueue_msg.command_type					=	MSGCMD_MESSAGE;								msgqueue_msg.has_command_type	=	1;
 		msgqueue_msg.broadcast_semantics	=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA; msgqueue_msg.has_broadcast_semantics	=1;
-    MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
+    ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
     msgqueue_msg.has_ufsrvuid = 1;
 
 		size_t 	packed_sz		=	message_queue_message__get_packed_size(&msgqueue_msg);
@@ -874,14 +1184,14 @@ _MessageCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_pt
 																									0, command_buf);
 
 #ifdef __UF_TESTING
-		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', reqid:'%lu', target_id:'%lu', origin:'%d', cid:'%lu'}: Publishing Message intra-message...", __func__, pthread_self(), sesn_ptr, msgqueue_msg.ufsrv_req_id, target_id, masterptr->serverid, SESSION_ID(sesn_ptr));
+		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', reqid:'%lu', ctx_id:'%lu', origin:'%d', cid:'%lu'}: Publishing Message intra-message...", __func__, pthread_self(), sesn_ptr, msgqueue_msg.ufsrv_req_id, target_id, masterptr->serverid, SESSION_ID(sesn_ptr));
 #endif
 
 		redis_ptr = (*mq_ptr->send_command)(sesn_ptr, "PUBLISH " _INTRACOMMAND_MSG " %b", packed_msg, packed_sz);
 
 		if (IS_PRESENT(redis_ptr)) {
 			if (unlikely((redis_ptr->type == REDIS_REPLY_ERROR))) {
-				syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', target_id:'%lu', origin:'%d', cid:'%lu', error:'%s'}: ERROR: COULD NOT INTRA-PUBLISH MESSAGE", __func__, pthread_self(), sesn_ptr, target_id, masterptr->serverid, SESSION_ID(sesn_ptr), redis_ptr->str);
+				syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', ctx_id:'%lu', origin:'%d', cid:'%lu', error:'%s'}: ERROR: COULD NOT INTRA-PUBLISH MESSAGE", __func__, pthread_self(), sesn_ptr, target_id, masterptr->serverid, SESSION_ID(sesn_ptr), redis_ptr->str);
 				freeReplyObject(redis_ptr);
 
 				_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER);
@@ -917,19 +1227,19 @@ _SessionCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_pt
 
 		msgqueue_msg.session								=	(SessionMessage *)data;
 		msgqueue_msg.origin									=	masterptr->serverid;
-		msgqueue_msg.target_ufsrv						=	ufsrv_ptr->serverid_by_user; 	msgqueue_msg.has_target_ufsrv=1;
-		msgqueue_msg.ufsrv_req_id						=	ufsrv_ptr->reqid; 						msgqueue_msg.has_ufsrv_req_id=1;
+		msgqueue_msg.target_ufsrv						=	ufsrv_ptr->serverid_by_user; 	msgqueue_msg.has_target_ufsrv = 1;
+		msgqueue_msg.ufsrv_req_id						=	ufsrv_ptr->reqid; 						msgqueue_msg.has_ufsrv_req_id = 1;
 		msgqueue_msg.command_type						=	MSGCMD_SESSION;								msgqueue_msg.has_command_type	=	1;
-		msgqueue_msg.broadcast_semantics		=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA_WITH_INTER_SEMANTICS; msgqueue_msg.has_broadcast_semantics	=1;
+		msgqueue_msg.broadcast_semantics		=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA_WITH_INTER_SEMANTICS; msgqueue_msg.has_broadcast_semantics	= 1;
 
 		size_t packed_sz										=	message_queue_message__get_packed_size(&msgqueue_msg);
 		uint8_t packed_msg[packed_sz];
-		message_queue_message__pack (&msgqueue_msg, packed_msg);
+		message_queue_message__pack(&msgqueue_msg, packed_msg);
 
-		unsigned char command_buf[packed_sz+MBUF];
-		StoreStagedMessageCacheRecordForIntraCommand (sesn_ptr,
-																									&((IncomingMessageDescriptor){MSGCMD_SESSION, sesncmd_ptr->header->when, SESSION_USERID(sesn_ptr), sesncmd_ptr->header->cid, (char *)packed_msg, packed_sz, ufsrv_ptr}),
-																									0, command_buf);
+		unsigned char command_buf[packed_sz + MBUF];
+		StoreStagedMessageCacheRecordForIntraCommand(sesn_ptr,
+																								 &((IncomingMessageDescriptor){MSGCMD_SESSION, sesncmd_ptr->header->when, SESSION_USERID(sesn_ptr), sesncmd_ptr->header->cid, (char *)packed_msg, packed_sz, ufsrv_ptr}),
+																								 0, command_buf);
 
 #ifdef __UF_TESTING
 		syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', origin:'%d', uname:'%s'}: Publishing intra-Session message...", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), masterptr->serverid, SESSION_USERNAME(sesn_ptr));
@@ -937,10 +1247,8 @@ _SessionCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_pt
 
 		redis_ptr=(*mq_ptr->send_command)(sesn_ptr, "PUBLISH " _INTRACOMMAND_SESSION " %b", packed_msg, packed_sz);
 
-		if (redis_ptr)
-		{
-			if (unlikely((redis_ptr->type==REDIS_REPLY_ERROR)))
-			{
+		if (redis_ptr) {
+			if (unlikely((redis_ptr->type == REDIS_REPLY_ERROR))) {
 				syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', origin:'%d', uname:'%s', error:'%s'}: ERROR: COULD NOT INTRA-PUBLISH MESSAGE", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), masterptr->serverid, SESSION_USERNAME(sesn_ptr), redis_ptr->str);
 				freeReplyObject(redis_ptr);
 
@@ -978,7 +1286,7 @@ _UserCommandIntraMarshal(Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr, 
 		msgqueue_msg.ufsrv_req_id					=	ufsrv_ptr->reqid; 						msgqueue_msg.has_ufsrv_req_id=1;
 		msgqueue_msg.command_type					=	MSGCMD_USER;									msgqueue_msg.has_command_type	=	1;
 		msgqueue_msg.broadcast_semantics	=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA; msgqueue_msg.has_broadcast_semantics	=1;
-    MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
+    ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
     msgqueue_msg.has_ufsrvuid = 1;
 
 		size_t 	packed_sz		=	message_queue_message__get_packed_size(&msgqueue_msg);
@@ -1036,7 +1344,7 @@ _CallCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr,
 		msgqueue_msg.ufsrv_req_id					=	ufsrv_ptr->reqid; 						msgqueue_msg.has_ufsrv_req_id=1;
 		msgqueue_msg.command_type					=	MSGCMD_CALL;									msgqueue_msg.has_command_type	=	1;
 		msgqueue_msg.broadcast_semantics	=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA; msgqueue_msg.has_broadcast_semantics	=1;
-    MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
+    ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
     msgqueue_msg.has_ufsrvuid = 1;
 
 		size_t 	packed_sz		=	message_queue_message__get_packed_size(&msgqueue_msg);
@@ -1094,7 +1402,7 @@ _ReceiptCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_p
 		msgqueue_msg.ufsrv_req_id					=	ufsrv_ptr->reqid; 						msgqueue_msg.has_ufsrv_req_id	=	1;
 		msgqueue_msg.command_type					=	MSGCMD_RECEIPT;								msgqueue_msg.has_command_type	=	1;
 		msgqueue_msg.broadcast_semantics	=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA; msgqueue_msg.has_broadcast_semantics	=1;
-    MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
+    ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
     msgqueue_msg.has_ufsrvuid = 1;
 
 		size_t 	packed_sz		=	message_queue_message__get_packed_size(&msgqueue_msg);
@@ -1153,7 +1461,7 @@ _LocationCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_
     msgqueue_msg.has_command_type = 1;
     msgqueue_msg.broadcast_semantics = MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA;
     msgqueue_msg.has_broadcast_semantics = 1;
-    MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
+    ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
     msgqueue_msg.has_ufsrvuid = 1;
 
     size_t packed_sz = message_queue_message__get_packed_size(&msgqueue_msg);
@@ -1216,7 +1524,7 @@ _SyncCommandIntraMarshal (Session *sesn_ptr, UfsrvInstanceDescriptor *ufsrv_ptr,
 		msgqueue_msg.ufsrv_req_id					=	ufsrv_ptr->reqid; 						msgqueue_msg.has_ufsrv_req_id	=	1;
 		msgqueue_msg.command_type					=	MSGCMD_SYNC;									msgqueue_msg.has_command_type	=	1;
 		msgqueue_msg.broadcast_semantics	=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTRA; msgqueue_msg.has_broadcast_semantics	=1;
-    MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
+    ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(msgqueue_msg.ufsrvuid), true);
     msgqueue_msg.has_ufsrvuid = 1;
 
 		size_t 	packed_sz		=	message_queue_message__get_packed_size(&msgqueue_msg);

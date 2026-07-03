@@ -37,10 +37,7 @@ CREATE TABLE `accounts` (
       (insert(
               insert(
                       insert(
-                              insert(lower(hex(uuid)),9,0,'-'),
-                              14,0,'-'),
-                      19,0,'-'),
-              24,0,'-')
+                              insert(lower(hex(uuid)), 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-')
       ) VIRTUAL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `id_UNIQUE` (`id`),
@@ -79,6 +76,7 @@ CREATE TABLE `attachments` (
   `id_events` bigint(20) DEFAULT NULL,
   `thumbnail` blob,
   `timestamp` datetime DEFAULT CURRENT_TIMESTAMP,
+  `flags` tinyint unsigned DEFAULT '0',
   PRIMARY KEY (`id`),
   UNIQUE KEY `blob_id_UNIQUE` (`blob_id`),
   KEY `attachments_fid_index` (`fid`),
@@ -95,6 +93,7 @@ DROP TABLE IF EXISTS `fences`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `fences` (
   `fid` bigint(20) NOT NULL,
+  `fkey` binary(32) DEFAULT NULL,
   `data` json DEFAULT NULL,
   PRIMARY KEY (`fid`),
   UNIQUE KEY `fid_UNIQUE` (`fid`),
@@ -131,10 +130,10 @@ DROP TABLE IF EXISTS `messages`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `messages` (
-  `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT,
-  `id_events` INT(11) UNSIGNED NOT NULL,
+  `id` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id_events` BIGINT(20) UNSIGNED NOT NULL,
   `fid` bigint(20) DEFAULT '0',
-  `type` tinyint(4) NOT NULL,
+  `type` smallint(6) NOT NULL,
   `status` tinyint(4),
   `rawmsg` text NOT NULL,
   `timestamp` bigint(20) NOT NULL,
@@ -182,7 +181,8 @@ CREATE TABLE `events` (
     `eid` BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
     `ctxid` BIGINT(20) UNSIGNED,
     `cmd_type` tinyint(4) NOT NULL DEFAULT '0',
-    `event_type` tinyint(4) NOT NULL DEFAULT '0',
+    `event_type` smallint(6) NOT NULL DEFAULT '0',
+    `status` tinyint(4) NOT NULL DEFAULT '0',
     `rawmsg` text,
     `timestamp` bigint(20) NOT NULL,
     `originator` bigint(20) NOT NULL,
@@ -195,12 +195,10 @@ DROP TABLE IF EXISTS `flagged_events`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `flagged_events` (
-                          `id` INT(11) UNSIGNED NOT NULL,
+                          `id` BIGINT(20) UNSIGNED NOT NULL,
                           `timestamp` bigint(20) NOT NULL,
                           `originator` bigint(20) NOT NULL,
-                          FOREIGN KEY fk_id(id)
-                              REFERENCES events(id)
-                              ON DELETE CASCADE,
+                          FOREIGN KEY fk_id(id) REFERENCES events(id) ON DELETE CASCADE,
                           UNIQUE KEY `id_originator_unique_index`(`id`, `originator`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -244,6 +242,124 @@ CREATE TABLE `pending_devices` (
   UNIQUE KEY `id_UNIQUE` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Donations table
+-- INSERT INTO donations_badges (cat, name, description) VALUES ('S', 'Sustainer', 'Sustainer level support.');
+--
+DROP TABLE IF EXISTS `donations_badges`;
+CREATE TABLE `donations_badges` (
+   `badge_id` INT(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '',
+   `category` CHAR(3) NOT NULL COMMENT 'Badge category',
+   `name` varchar(150) NOT NULL COMMENT 'Describe\'s name',
+   `description` varchar(255) NOT NULL COMMENT 'Describe badge',
+   `sprites` varchar(255) DEFAULT '"sprites6":["l", "m","h","x","xx","xxx"]' COMMENT '',
+   PRIMARY KEY (`badge_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=COMPACT;
+
+--  INSERT INTO donations_subscription_levels (badge_id, name, currencies) VALUES ('1', 'Sustainer', '{"USD":10, "AUD":15}');
+DROP TABLE IF EXISTS `donations_subscription_levels_catalogue`;
+CREATE TABLE `donations_subscription_levels_catalogue` (
+    `level_id` INT(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '',
+    `badge_id` INT(20) UNSIGNED NOT NULL COMMENT 'Badge earned for this subscription level',
+    `name` varchar(150) NOT NULL COMMENT 'Describe level',
+    `currencies` json NOT NULL COMMENT 'Supported currencies and applicable amounts in each',
+    `state` SMALLINT NOT NULL COMMENT 'Current state of this subscription level: active(1)|paused(2)|canceled(3)',
+    `product_id_processor` VARCHAR(150) NOT NULL COMMENT 'payment processor product id',
+    `price_id_processor` VARCHAR(150) NOT NULL COMMENT 'payment processor price id',
+    `when` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'creation timestamp ',
+    PRIMARY KEY (`level_id`),
+    CONSTRAINT `donations_levels_to_badges_fk_1` FOREIGN KEY (`badge_id`) REFERENCES `donations_badges` (`badge_id`) ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=COMPACT;
+
+--  INSERT INTO donations_subscriptions_pipeline (user_id, level_id, currency_code, state) VALUES ('314', '1', 'AUD', '1');
+DROP TABLE IF EXISTS `donations_subscriptions_pipeline`;
+CREATE TABLE `donations_subscriptions_pipeline` (
+     `id` INT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+     `user_id` INT(20) UNSIGNED NOT NULL COMMENT 'User sequence id as derived from ufsruid',
+     `state` SMALLINT NOT NULL COMMENT 'Current state of this subscription level for the user: see enum SubscriptionState',
+     `state_processor` SMALLINT NOT NULL COMMENT 'Transient state, representing payment processor workflow state: see enum SubscriptionProcessorState',
+     `token` varchar(150)  COMMENT 'Payment processor token (aka client secret) used with initiating this subscription',
+     `customer_id_processor` varchar(150) NOT NULL COMMENT 'Payment processor associated customer id',
+     `idempotency_key` varchar(150)  COMMENT '',
+     `when_processor` datetime NOT NULL COMMENT 'Payment processor associated timestamp for state transitions',
+     `when` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Timestamp at which state changed',
+     PRIMARY KEY (`id`),
+     CONSTRAINT `donations_subscriptions_pipeline_to_accounts_fk` FOREIGN KEY (`user_id`) REFERENCES `accounts` (`id`) ON UPDATE CASCADE -- prevents deleting user's account before deleting corresponding subscriptions
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=COMPACT;
+
+-- Actual finalised subscriptions following pipeline transitions
+DROP TABLE IF EXISTS `donations_subscriptions`;
+CREATE TABLE `donations_subscriptions` (
+    `subscription_id` INT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+    `user_id` INT(20) UNSIGNED NOT NULL COMMENT 'User sequence id as derived from ufsruid',
+    `subscriber_id` VARCHAR(150) NOT NULL COMMENT 'internal subscriber id',
+    `level_id` INT(20) UNSIGNED NOT NULL COMMENT 'subscription level chosen by user',
+    `currency_code` CHAR(3) NOT NULL COMMENT 'Currency chosen for this subscription',
+    `amount` MEDIUMINT UNSIGNED NOT NULL COMMENT 'cost of unit subscription',
+    `payment_method` SMALLINT NOT NULL DEFAULT '1' COMMENT 'payment method used with payment. See enum PaymentMethod',
+    `payment_method_token` VARCHAR(150) COMMENT 'payment processor specific token',
+    `state` SMALLINT NOT NULL COMMENT 'Current state of this subscription level for the user: see enum SubscriptionState',
+    `state_processor` SMALLINT NOT NULL COMMENT 'Transient state, representing payment processor workflow state: see enum SubscriptionProcessorState',
+    `subscription_id_processor` VARCHAR(150)  COMMENT 'Subscription id associated with payment processor ',
+    `token` varchar(150)  COMMENT 'Payment processor token (aka client secret) used with initiating this subscription',
+    `processor_id` SMALLINT NOT NULL COMMENT 'identifier for payment processor as per enum PaymentProcessor',
+    `customer_id_processor` varchar(150) NOT NULL COMMENT 'Payment processor associated customer id',
+    `when_processor` datetime NOT NULL COMMENT 'Payment processor associated timestamp for state transitions',
+    `when` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Timestamp at which state changed',
+    PRIMARY KEY (`subscription_id`),
+    UNIQUE KEY `donations_subscriptions_unique_index`(`user_id`, `subscriber_id`, `customer_id_processor`, `processor_id`),
+    CONSTRAINT `donations_subscriptions_to_levels_fk` FOREIGN KEY (`level_id`) REFERENCES `donations_subscription_levels_catalogue` (`level_id`) ON UPDATE CASCADE,
+    CONSTRAINT `donations_subscriptions_to_accounts_fk` FOREIGN KEY (`user_id`) REFERENCES `accounts` (`id`) ON UPDATE CASCADE -- prevents deleting user's account before deleting corresponding subscriptions
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=COMPACT;
+-- END DONATIONS
+
+--
+-- Table structure for admin roles
+--
+--  INSERT INTO user_system_roles (user_id, admin_level, active_status) VALUES ('307', 'super_admin', 'active');
+DROP TABLE IF EXISTS `user_system_roles`;
+CREATE TABLE `user_system_roles` (
+   `role_id` INT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+   `user_id` INT(20) UNSIGNED NOT NULL COMMENT 'User sequence id as derived from ufsruid',
+   `admin_level` ENUM('unset', 'devops', 'admin', 'super_admin') DEFAULT 'unset', -- align with ufsrv's enum SystemAdminLevels
+   `active_status` ENUM('unset', 'active', 'paused', 'revoked') DEFAULT 'unset', -- align with ufsrv's enum SystemAdminActiveStatus
+   `roles` json DEFAULT NULL COMMENT 'Expanded role configuration',
+   `when` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Timestamp at which state changed',
+   PRIMARY KEY (`role_id`),
+   CONSTRAINT `user_system_roles_to_accounts_fk` FOREIGN KEY (`user_id`) REFERENCES `accounts` (`id`) ON UPDATE CASCADE -- prevents deleting user's account before deleting corresponding subscriptions
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=COMPACT;
+-- END
+
+--
+-- Table structure for release announcements
+--
+-- insert into release_manifest (android_min_version) values('8802');
+DROP TABLE IF EXISTS `release_manifest`;
+CREATE TABLE `release_manifest` (
+     `release_id` INT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+     `uuid` CHAR(36) UNIQUE NOT NULL DEFAULT uuid(),
+     `android_min_version` varchar(255)  NOT NULL COMMENT 'Minimum version for android based clients',
+     `ios_min_version` varchar(255) COMMENT 'Minimum version for ios based clients',
+     `cat_id` varchar(255) DEFAULT NULL COMMENT 'category id',
+     `when` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Timestamp at which state changed',
+     PRIMARY KEY (`release_id`, `uuid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=COMPACT;
+
+-- insert into release_announcements (`uuid`, `title`, `body`, `image`, `image_width`, `image_height`) values('fe77b3eb-bf44-11f0-b129-5600041ef5c2', 'Welcome to unfacd!', 'When we make improvements to your experience and implement new features, we''ll let you know about them here. But don''t worry, this chat is muted by default. We''re here to tell you what''s new, not blow up your notifications.\n\nIf you''d prefer to not get these messages, you can block the chat and we won''t be offended. ', 'intro_v2.png', '1920', '1080');
+-- insert into release_announcements (`uuid`, `title`, `body`, `image`, `image_width`, `image_height`, `call_to_action`) values('05613236-bf45-11f0-b129-5600041ef5c2', 'Share your support', 'Now, you can gift a profile badge to a friend by donating to unfacd.\n\nYour friend can choose to display a UFO on their profile and you can check \"support private communications nonprofit\" off your to-do list.\n\nTap the button below to try it out or go to Settings >> Donate to unfacd >> Gift a Badge\n\nThank you for supporting unfacd!', 'gift-release-notes.png', '1920', '1080', 'Gift a Badge');
+DROP TABLE IF EXISTS `release_announcements`;
+CREATE TABLE `release_announcements` (
+    `uuid` CHAR(36) UNIQUE NOT NULL,
+    `body` varchar(1024)  NOT NULL COMMENT 'Main body of announcement',
+    `title` varchar(255) NOT NULL COMMENT 'Descriptive title for announcement',
+    `image` varchar(255)  COMMENT 'base path where image is stored',
+    `image_height` TINYTEXT COMMENT 'Image height in pixels eg 1024',
+    `image_width` TINYTEXT COMMENT 'Image width in pixels eg 1024',
+    `call_to_action` varchar(255)  COMMENT '',
+    CONSTRAINT `release_announcements_to_release_manifest_fk` FOREIGN KEY (`uuid`) REFERENCES `release_manifest` (`uuid`) ON UPDATE CASCADE -- prevents deleting manifest before deleting corresponding release announcement
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=COMPACT;
+-- END
 
 --
 -- Table structure for table `ufsrv_geogroups`

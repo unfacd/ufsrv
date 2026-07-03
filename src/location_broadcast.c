@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,20 +20,17 @@
 #endif
 
 #include <main.h>
-#include <ufsrv_core/user/users_protobuf.h>
-#include <ufsrv_core/location/location.h>
+#include <ufsrvmsg_core/user/users_protobuf.h>
+#include <ufsrvmsg_core/location/location.h>
 #include <location_command_controller.h>
-#include <net.h>
 #include <nportredird.h>
-#include <ufsrvwebsock/include/protocol_websocket_session.h>
 #include <location_broadcast.h>
-#include <ufsrv_core/location/location.h>
-#include <fence_proto.h>
+#include <ufsrvmsg_core/fence/fence_proto.h>
 #include <sessions_delegator_type.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
-#include <ufsrv_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
-#include <hiredis.h>
-#include <ufsrvuid.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <ufsrvmsg_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
+#include <uflib/ufsrvuid.h>
+#include "ufsrv_core/include/delegator_session_worker_thread.h"
 
 extern ufsrv *const masterptr;
 extern SessionsDelegator *const sessions_delegator_ptr;
@@ -89,7 +86,7 @@ _PrepareBroadcastMessageForLocation (BroadcastLocationEnvelopeForMessage *envelo
 	envelope_ptr->header->when												=	event_ptr->when; 					envelope_ptr->header->has_when=1;
 	envelope_ptr->header->eid													=	event_ptr->eid; 					envelope_ptr->header->has_eid=1;
 	envelope_ptr->header->cid													=	SESSION_ID(sesn_ptr); 		envelope_ptr->header->has_cid=1;
-  MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid=1;
+  ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid=1;
 }
 
 /**
@@ -119,7 +116,7 @@ InterBroadcastLocationAddressByServer (Session *sesn_ptr, ClientContextData *con
 	//_GENERATE_ENVELOPE_INITIALISATION(); //replaces above
 
 	//IMPORTANT: LocationDescription/ufsrvid copied by reference (country, locality etc...) keep object in scope until finished
-	MakeLocationDescriptionInProto ((const LocationDescription *)context_ptr, false, false, &location_record);
+  ProvideLocationDescriptionInProto((const LocationDescription *) context_ptr, false, false, &location_record);
 	location_record.source							=	LOCATION_RECORD__SOURCE__BY_SERVER;
 	location_command.location		        =	&location_record;
 	header.command											=		LOCATION_COMMAND__COMMAND_TYPES__ADDRESS; //should this be LOCATION_COMMAND__COMMAND_TYPES__LOCATION?
@@ -147,7 +144,7 @@ InterBroadcastLocationAddressByUser (Session *sesn_ptr, ClientContextData *conte
 	//_GENERATE_ENVELOPE_INITIALISATION(); //replaces above
 
 	//IMPORTANT: LocationDescription/ufsrvid copied by reference (country, locality etc...) keep object in scope until finished
-	MakeLocationDescriptionInProto ((const LocationDescription *)context_ptr, false, false, &location_record);
+  ProvideLocationDescriptionInProto((const LocationDescription *) context_ptr, false, false, &location_record);
 	location_record.source							=	LOCATION_RECORD__SOURCE__BY_USER;
 	location_command.location		        =	&location_record;
 	header.command											=	LOCATION_COMMAND__COMMAND_TYPES__ADDRESS;
@@ -292,7 +289,9 @@ _HandleInterBroadcastBaseLoc (ClientContextData *context_ptr, MessageQueueMessag
 	if (unlikely(IS_EMPTY(mqm_ptr->location->location)))								goto return_empty_location_record;
 	if (unlikely(!IS_STR_LOADED(mqm_ptr->location->location->baseloc)))	goto return_invalid_baseloc;
 
-	UpdateBaseLocAssignment (sesn_ptr_local_user, (const char *)mqm_ptr->location->location->baseloc, 0);//only locally
+  UpdateHomebaseGeoLocDynamicAssignment(sesn_ptr_local_user, (const char *) mqm_ptr->location
+                                                                                   ->location
+                                                                                   ->baseloc, 0);//only locally
 
 	return_success:
 	_RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_LOCATION_CHANGED)
@@ -320,6 +319,7 @@ HandleIntraBroadcastForLocation (MessageQueueMessage *mqm_ptr, UFSRVResult *res_
 	int				rc					= 0;
 	long long timer_start	=	GetTimeNowInMicros();
 	long long timer_end;
+  WorkersConfigDescriptor *jobworkers_config  = GetJobWorkersConfigurationDescriptor();
 
 	if ((rc = VerifyLocationCommandForIntra(_WIRE_PROTOCOL_DATA(mqm_ptr->wire_data->ufsrvcommand->locationcommand))) < 0)	goto return_final;
 
@@ -338,7 +338,7 @@ HandleIntraBroadcastForLocation (MessageQueueMessage *mqm_ptr, UFSRVResult *res_
                                              CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION);
 
   bool lock_already_owned = false;
-  GetSessionForThisUserByUserId (sesn_ptr_carrier, userid, &lock_already_owned, sesn_call_flags);
+  GetSessionForThisUserByUserId(sesn_ptr_carrier, userid, &lock_already_owned, sesn_call_flags);
   InstanceHolderForSession *instance_sesn_ptr_local_user = (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr_carrier);
 
   if (unlikely(IS_EMPTY(instance_sesn_ptr_local_user)))	goto return_error_unknown_uname;
@@ -373,7 +373,7 @@ HandleIntraBroadcastForLocation (MessageQueueMessage *mqm_ptr, UFSRVResult *res_
 
   return_final:
   timer_end = GetTimeNowInMicros();
-  statsd_timing(pthread_getspecific(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.msg.elapsed_time", (timer_end-timer_start));
+  statsd_timing(pthread_getspecific(jobworkers_config->ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.msg.elapsed_time", (timer_end-timer_start));
   return rc;
 
 }

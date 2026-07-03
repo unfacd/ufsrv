@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,27 +20,32 @@
 #endif
 #include <main.h>
 #include <thread_context_type.h>
-#include <utils.h>
+#include <uflib/utils.h>
 #include <message.h>
 #include <ufsrv_core/cache_backend/redis.h>
 #include <include/guardian_record_descriptor.h>
 
 extern __thread ThreadContext ufsrv_thread_context;
 
-inline static UFSRVResult *_GetAllStagedMessageCacheRecordsIndexForUser (Session *sesn_ptr, unsigned long userid);
-inline static UFSRVResult *_DeleteStagedMessageCacheRecordsForUser (Session *sesn_ptr, unsigned long userid, time_t now_in_millis_in, redisReply *);
-inline static UFSRVResult *_DeleteStagedMessagesLock (Session *sesn_ptr, unsigned long userid);
-inline static UFSRVResult *_InstateStagedMessagesLock (Session *sesn_ptr, unsigned long userid);
-inline static UFSRVResult *_GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr_carrier, unsigned long userid, CollectionDescriptor *collection_ptr, bool);
-inline static size_t 			_GetAllStagedMessageCacheRecordsForUser (Session *sesn_ptr, redisReply *redis_ptr_raw_messages, unsigned long userid, redisReply **replies_out);
+inline static UFSRVResult *_GetAllStagedMessageCacheRecordsIndexForUser(Session *sesn_ptr, unsigned long userid);
+inline static UFSRVResult *_DeleteStagedMessageCacheRecordsForUser(Session *sesn_ptr, unsigned long userid, time_t now_in_millis_in, redisReply *);
+inline static UFSRVResult *_DeleteStagedMessagesLock(Session *sesn_ptr, unsigned long userid);
+inline static UFSRVResult *_InstateStagedMessagesLock(Session *sesn_ptr, unsigned long userid);
+inline static UFSRVResult *_GetStagedMessageCacheRecordsForUserInJson(Session *sesn_ptr_carrier, unsigned long userid, CollectionDescriptor *collection_ptr, bool);
+inline static size_t 			_GetAllStagedMessageCacheRecordsForUser(Session *sesn_ptr, redisReply *redis_ptr_raw_messages, unsigned long userid, redisReply **replies_out);
 
 UFSRVResult *_DbBackendGetMessageStatus (unsigned long eid);
+
+/** \addtogroup staged_messages
+ *  Operations that handle the management of staged messages
+ *  @{
+ */
 
 /**
  * 	@brief: For each individual, ready to be sent, user-addressable message we store an index entry and hash entry for the actual message ( protobuf packed message)
  */
 UFSRVResult *
-StoreStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *tmsg_ptr, unsigned long userid)
+StoreStagedMessageCacheRecordForUser(Session *sesn_ptr, TransmissionMessage *tmsg_ptr, unsigned long userid)
 {
 	int	rescode	= RESCODE_PROG_NULL_POINTER;
 
@@ -50,30 +55,25 @@ StoreStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *tm
 	PersistanceBackend	*pers_ptr	= sesn_ptr->usrmsg_cachebackend;
 
 	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), "MULTI");
-	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_EVENT_RECORD_ADD, userid, GetTimeNowInMillis(), tmsg_ptr->fid, tmsg_ptr->eid);
-	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_MSG_RECORD_ADD, userid, tmsg_ptr->fid, tmsg_ptr->eid,tmsg_ptr->len, tmsg_ptr->msg_packed,tmsg_ptr->len);
+	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_EVENT_RECORD_ADD, userid, GetTimeNowInMillis(), tmsg_ptr->fid, tmsg_ptr->gid);
+	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_MSG_RECORD_ADD, userid, tmsg_ptr->fid, tmsg_ptr->gid, tmsg_ptr->len, tmsg_ptr->msg_packed,tmsg_ptr->len);
 	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), "EXEC");
 
-	size_t		commands_processed=4,
-						commands_successful=4;
+	size_t		commands_processed = 4,
+						commands_successful = 4;
 
 	{
 		size_t 			i;
 		redisReply	*replies[commands_processed];
 
-		//TODO: we need error recover for intermediate errors
-		for (i=0; i<commands_processed; i++)
-		{
-			if ((RedisGetReply(sesn_ptr, pers_ptr, (void*)&replies[i])) != REDIS_OK)
-			{
+		//TODO: we need error recovery for intermediate errors
+		for (i=0; i<commands_processed; i++) {
+			if ((RedisGetReply(sesn_ptr, pers_ptr, (void  *)&replies[i])) != REDIS_OK) {
 				commands_successful--;
 
-				if ((replies[i] != NULL))
-				{
+				if ((replies[i] != NULL)) {
 					syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', uid:'%lu', idex:'%lu'): ERROR PROCESSING MULTI SET COMMAND. ERROR: '%s'", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), userid, i, replies[i]->str);
-				}
-				else
-				{
+				} else {
 					syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', i:'%lu'): ERROR COULD ISSUE GET COMMAND: BACKEND CONNECTIVITY ERROR", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), i);
 				}
 			}
@@ -82,7 +82,7 @@ StoreStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *tm
 		}
 	}
 
-	if (commands_successful!=commands_processed)	{rescode=RESCODE_BACKEND_DATA_PARTIALSET; goto return_final;}
+	if (commands_successful != commands_processed)	{rescode = RESCODE_BACKEND_DATA_PARTIALSET; goto return_final;}
 
 	return_success:
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA_SETCREATED);
@@ -100,7 +100,7 @@ StoreStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *tm
  * 	@brief: Remove individual cache record from staged storage index and hash
  */
 UFSRVResult *
-DeleteStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *tmsg_ptr, unsigned long userid)
+DeleteStagedMessageCacheRecordForUser(Session *sesn_ptr, StagedMessageDescriptor *staged_message_descriptor_ptr)
 {
 	int 		rescode										= RESCODE_PROG_NULL_POINTER;
 
@@ -110,12 +110,12 @@ DeleteStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *t
 	redisReply 					*redis_ptr;
 
 	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), "MULTI");
-	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_MSG_RECORD_DEL, userid, tmsg_ptr->fid, tmsg_ptr->eid);
-	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_EVENT_RECORD_REM, userid, tmsg_ptr->fid, tmsg_ptr->eid);
+	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_MSG_RECORD_DEL, staged_message_descriptor_ptr->userid, staged_message_descriptor_ptr->fid, staged_message_descriptor_ptr->gid);
+	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_EVENT_RECORD_REM, staged_message_descriptor_ptr->userid, staged_message_descriptor_ptr->fid, staged_message_descriptor_ptr->gid);
 	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), "EXEC");
 
-	size_t		commands_processed=4,
-						commands_successful=4;
+	size_t		commands_processed = 4,
+						commands_successful= 4;
 
 	//TODO: error recovery not done well...
 	{
@@ -123,18 +123,13 @@ DeleteStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *t
 			redisReply	*replies[commands_processed];
 
 			//TODO: we need error recover for intermediate errors
-			for (i=0; i<commands_processed; i++)
-			{
-				if ((RedisGetReply(sesn_ptr, pers_ptr, (void*)&replies[i])) != REDIS_OK)
-				{
+			for (i=0; i<commands_processed; i++) {
+				if ((RedisGetReply(sesn_ptr, pers_ptr, (void*)&replies[i])) != REDIS_OK) {
 					commands_successful--;
 
-					if ((replies[i] != NULL))
-					{
-						syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', uid:'%lu', idex:'%lu'): ERROR PROCESSING MULTI SET COMMAND. ERROR: '%s'", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), userid, i, replies[i]->str);
-					}
-					else
-					{
+					if ((replies[i] != NULL)) {
+						syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', uid:'%lu', idex:'%lu'): ERROR PROCESSING MULTI SET COMMAND. ERROR: '%s'", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), staged_message_descriptor_ptr->userid, i, replies[i]->str);
+					} else {
 						syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', i:'%lu'): ERROR COULD ISSUE GET COMMAND: BACKEND CONNECTIVITY ERROR", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), i);
 					}
 				}
@@ -143,7 +138,7 @@ DeleteStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *t
 			}
 		}
 
-		if (commands_successful!=commands_processed)	{rescode=RESCODE_BACKEND_DATA_PARTIALSET; goto return_final;}
+		if (commands_successful!=commands_processed)	{rescode = RESCODE_BACKEND_DATA_PARTIALSET; goto return_final;}
 
 		return_success:
 		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA_SETCREATED);
@@ -158,7 +153,7 @@ DeleteStagedMessageCacheRecordForUser (Session *sesn_ptr, TransmissionMessage *t
 }
 
 UFSRVResult *
-GetStageMessageCacheBackendListSize (Session *sesn_ptr, unsigned long userid)
+GetStageMessageCacheBackendListSize(Session *sesn_ptr, unsigned long userid)
 {
 	unsigned 						rescode			=	RESCODE_BACKEND_DATA;
 	PersistanceBackend	*pers_ptr		=	THREAD_CONTEXT_USRMSG_CACHEBACKEND;
@@ -197,13 +192,13 @@ GetStageMessageCacheBackendListSize (Session *sesn_ptr, unsigned long userid)
 }
 
 /**
- * 	@brief: Main interface for retrieving queued messages for users
+ * 	@brief Main interface for retrieving queued messages for users
  * 	@returns json_object *: raw json containing reply
  * 	@dynamic_memory redisReply *: INSTANTIATES and DEALLOCATES LOCALLY
  * 	@dynamic_memory json_object *: EXPORTS
  */
 UFSRVResult *
-GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr, unsigned long userid)
+GetStagedMessageCacheRecordsForUserInJson(Session *sesn_ptr, unsigned long userid, enum StagedSetPersistance staged_set_persistence)
 {
 	if (unlikely(IS_EMPTY(sesn_ptr)))			goto return_generic_error;
 
@@ -218,9 +213,7 @@ GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr, unsigned long user
 	}
 
 	if (SESSION_RESULT_TYPE_ERROR(sesn_ptr)) {
-#ifdef __UF_TESTING
 		syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', userid:'%lu'): ERROR: COULD NOT OBTAIN LOCK ON RESOURCE", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),  userid);
-#endif
 		rescode = RESCODE_BACKEND_RESOURCE_LOCKED;
 		goto return_final;
 	}
@@ -236,16 +229,20 @@ GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr, unsigned long user
 		rescode = SESSION_RESULT_CODE(sesn_ptr);//remember it before it gets overwritten
 
 		if (rescode == RESCODE_BACKEND_DATA) {
-			redisReply *replies_index[redis_ptr->elements];
+			redisReply *replies_index[redis_ptr->elements]; memset(replies_index, '\0', sizeof(*replies_index) * redis_ptr->elements); //todo potential buffer overflow
 
 			size_t records_returned_sz = _GetAllStagedMessageCacheRecordsForUser(sesn_ptr, redis_ptr, userid, replies_index);
+
+      syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', userid:'%lu', queue_sz:'%lu'): Fetched stored message queue for user...", __func__, pthread_self(), sesn_ptr, userid, records_returned_sz);
 
 			if (records_returned_sz > 0) {
 				_GetStagedMessageCacheRecordsForUserInJson(sesn_ptr, userid, &((CollectionDescriptor){(collection_t **)replies_index, records_returned_sz}), true);
 
 				if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr))		jobj_messages = (json_object *)SESSION_RESULT_USERDATA(sesn_ptr);//returned to caller
 
-				_DeleteStagedMessageCacheRecordsForUser(sesn_ptr, userid, time_now_in_millis, redis_ptr);
+        if (staged_set_persistence == DELETE_ALL_STAGED_SETS) {
+          _DeleteStagedMessageCacheRecordsForUser(sesn_ptr, userid, time_now_in_millis, redis_ptr);
+        }
 			}
 		}
 
@@ -295,17 +292,104 @@ GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr, unsigned long user
 }
 
 /**
- * 	@brief: Helper function, returning json-formatted records of user staged messages
- * 	@param collection_ptr: A collection containing raw redis records
- * 	@dynamic_memory redisReply *: IMPORTS AND DEALLOCATES elements in array of redisReply *
- * 	@dynamic_memory json_object *: EXPORTS json_oject *. Caller responsible for DEALLOCATION
- * 	@returns: where there is no error and the data setset is empty this still returned as SUCESS and caller must retrieve
+ * 	@brief Main interface for deleting queued messages for users
+ * 	@returns size of staged messages index (in UFSRVResult's data field as size_t)
+ * 	@dynamic_memory redisReply *: INSTANTIATES and DEALLOCATES LOCALLY
+ * 	@dynamic_memory json_object *: EXPORTS
+ */
+UFSRVResult *
+DeleteStagedMessageCacheRecordsForUser(Session *sesn_ptr, unsigned long userid)
+{
+  int 		rescode							= RESCODE_PROG_NULL_POINTER;
+  time_t	time_now_in_millis	=	GetTimeNowInMillis();
+  size_t  staged_messages_idx_sz = 0;
+
+  int counter =  100;
+  while(counter) {
+    _InstateStagedMessagesLock(sesn_ptr, userid);
+    if (SESSION_RESULT_TYPE_ERROR(sesn_ptr) && SESSION_RESULT_CODE_EQUAL(sesn_ptr, RESCODE_BACKEND_RESOURCE_LOCKED)) DoBusyWait(counter--);
+    else break;
+  }
+
+  if (SESSION_RESULT_TYPE_ERROR(sesn_ptr)) {
+    syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', userid:'%lu'): ERROR: COULD NOT OBTAIN LOCK ON CACHEBACKEND RESOURCE", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),  userid);
+    rescode = RESCODE_BACKEND_RESOURCE_LOCKED;
+    goto return_final;
+  }
+
+  redisReply 	*redis_ptr;
+  json_object *jobj_messages = NULL;
+
+  _GetAllStagedMessageCacheRecordsIndexForUser(sesn_ptr, userid);
+
+  if (SESSION_RESULT_TYPE_SUCCESS(sesn_ptr)) {
+    //we get this even if zero result set. We manage memroy here
+    redis_ptr = (redisReply *)SESSION_RESULT_USERDATA(sesn_ptr);
+    rescode = SESSION_RESULT_CODE(sesn_ptr);//remember it before it gets overwritten
+    staged_messages_idx_sz = redis_ptr->elements;
+
+    if (rescode == RESCODE_BACKEND_DATA) {
+      _DeleteStagedMessageCacheRecordsForUser(sesn_ptr, userid, time_now_in_millis, redis_ptr);
+
+    }
+
+    _DeleteStagedMessagesLock(sesn_ptr, userid);
+
+    //we have to use rescode, because the call above wil overwrite it
+    if (rescode == RESCODE_BACKEND_DATA_EMPTYSET)	goto return_error_empty_set;
+    //else fall through to return_success
+  } else {
+    _DeleteStagedMessagesLock(sesn_ptr, userid);
+    rescode = SESSION_RESULT_CODE(sesn_ptr);
+    goto return_final;
+  }
+
+  return_success:
+  freeReplyObject(redis_ptr);
+  _RETURN_RESULT_SESN(sesn_ptr, (void *)(uintptr_t)staged_messages_idx_sz, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA)
+
+  return_error_backend_connection:
+  syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu'): ERROR COULD ISSUE GET COMMAND: BACKEND CONNECTIVITY ERROR", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr));
+  goto return_final;
+
+  return_error_reply:
+  syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', userid:'%lu'): ERROR: REDIS RESULTSET for RESPONSE. Error: '%s'", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr),  userid, redis_ptr->str);
+  goto return_free;
+
+  return_error_nil_set:
+  syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p, cid'%lu', userid:'%lu'): ERROR: NIL REPLY",  __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), userid);
+  goto return_free;
+
+  return_error_empty_set:
+#ifdef __UF_TESTING
+  syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p, cid'%lu', userid:'%lu'): NOTICE: RECEIVED EMPTY SET",  __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), userid);
+#endif
+  goto return_free;
+
+  return_free:
+  freeReplyObject(redis_ptr);
+
+  return_final:
+  _RETURN_RESULT_SESN(sesn_ptr, (void *)(uintptr_t)staged_messages_idx_sz, RESULT_TYPE_ERR, rescode)
+
+  return_generic_error:
+  syslog(LOG_DEBUG, LOGSTR_NULL_PARAM, __func__, pthread_self(), LOGCODE_PROTO_MISSING_PARAM, "Target Session *");
+  return _ufsrv_result_generic_error;
+
+}
+
+/**
+ * 	@brief Helper function, returning json-formatted records of user staged messages which have been previously retrieved. Each payload size is demarked by the first ':' in the payload string.
+ * 	@param collection_ptr A collection containing raw redis records
+ * 	@dynamic_memory redisReply * IMPORTS AND DEALLOCATES elements in array of redisReply *
+ * 	@dynamic_memory json_object * EXPORTS json_oject *. Caller responsible for DEALLOCATION
+ * 	@returns where there is no error and the data setset is empty this still returned as SUCESS and caller must retrieve
  * 	and deallocate redisReply *
  */
 inline static UFSRVResult *
-_GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr_carrier, unsigned long userid, CollectionDescriptor *collection_ptr, bool flag_delete_item)
+_GetStagedMessageCacheRecordsForUserInJson(Session *sesn_ptr_carrier, unsigned long userid, CollectionDescriptor *collection_ptr, bool flag_delete_item)
 {
-	int rescode;
+	int rescode = RESCODE_BACKEND_DATA;
 
 	if (collection_ptr->collection_sz == 0)	{rescode = RESCODE_BACKEND_DATA_EMPTYSET; goto return_error_empty_set;}
 
@@ -358,7 +442,7 @@ _GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr_carrier, unsigned 
 					unsigned char envelope_b64buf[GetBase64BufferAllocationSize(envelope_payload_sz)];
 					if (base64_encode((const unsigned char *)envelope_payload, envelope_payload_sz, envelope_b64buf)) {
 						jobj_envelope = json_object_new_object();
-						json_object_object_add (jobj_envelope,"message", json_object_new_string((const char *)envelope_b64buf));
+						json_object_object_add(jobj_envelope,"message", json_object_new_string((const char *)envelope_b64buf));
 						json_object_array_add(jobj_messages_array, jobj_envelope);
 
 						processed_sz++;
@@ -369,12 +453,12 @@ _GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr_carrier, unsigned 
 					web_socket_message__free_unpacked(websocket_msg_ptr, NULL);
 				}//websocket present
 			} else {
-				syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', userid:'%lu', idx:'%lu', packed_sz:'%lu'): ERROR: ERRENUOUS PACKED MSG SIZE", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), userid, i, strlen((char *)packed_sz_str));
+				syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', userid:'%lu', idx:'%lu', packed_sz:'%lu'): ERROR: ERRONEOUS PACKED MSG SIZE", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), userid, i, strlen((char *)packed_sz_str));
 			}
 
 			if (flag_delete_item)	freeReplyObject(redis_ptr_indexed);
 		} else {
-			syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', userid:'%lu', idx:'%lu'): ERROR: COULD NOT PARSE PACKED MSG SIZE", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), userid, i);
+			syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', userid:'%lu', idx:'%lu'): ERROR: COULD NOT PARSE PACKED MSG SIZE: NO SEPARATOR ':'", __func__, pthread_self(), sesn_ptr_carrier, SESSION_ID(sesn_ptr_carrier), userid, i);
 		}
 	}
 
@@ -398,13 +482,14 @@ _GetStagedMessageCacheRecordsForUserInJson (Session *sesn_ptr_carrier, unsigned 
 }
 
 /**
- * 	@brief: processor for the outcome of _GetAllStagedMessageCacheRecordsIndexForUser()
- * 	dynmic_memroy: EXPORTS redisreply * in provided collection storage replies_out. User responsible for deallocating individual replies
- * 	@returns: raw protobuf messages stored for user
+ * 	@brief processor for the outcome of _GetAllStagedMessageCacheRecordsIndexForUser().
+ * 	HGET STAGED_OUTMSG:307 "434135037797990409:1160"
+ * 	dynmic_memroy EXPORTS redisreply * in provided collection storage replies_out. User responsible for deallocating individual replies
+ * 	@returns raw protobuf messages stored for user
  *
  */
 inline static size_t
-_GetAllStagedMessageCacheRecordsForUser (Session *sesn_ptr, redisReply *redis_ptr_raw_messages, unsigned long userid, redisReply **replies_out)
+_GetAllStagedMessageCacheRecordsForUser(Session *sesn_ptr, redisReply *redis_ptr_raw_messages, unsigned long userid, redisReply **replies_out)
 {
 	if (redis_ptr_raw_messages->elements == 0)	return 0;
 
@@ -420,7 +505,7 @@ _GetAllStagedMessageCacheRecordsForUser (Session *sesn_ptr, redisReply *redis_pt
 	redisReply	**replies = replies_out;
 
 	for (i=0; i<redis_ptr_raw_messages->elements; i++) {
-		if ((RedisGetReply(sesn_ptr, pers_ptr, (void*)&replies[commands_processed])) != REDIS_OK) {
+		if ((RedisGetReply(sesn_ptr, pers_ptr, (void *)&replies[commands_processed])) != REDIS_OK) {
 			syslog(LOG_DEBUG, "%s {pid:'%lu', o:'%p', cid:'%lu', cmd_idx:'%lu', uid:'%lu'}: ERROR: REDIS COMMAND IN MULTI SET FAILED", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), i, userid);
 
 			//TODO: we should probably abort if we ever get a NULL
@@ -440,14 +525,14 @@ _GetAllStagedMessageCacheRecordsForUser (Session *sesn_ptr, redisReply *redis_pt
 }
 
 /**
- * 	@brief: Returns index of all messages currently stored for user in the cache backend. Another
- * 	operation is need to actually retrieve the message payload for each indexed message in thelist
+ * 	@brief Returns index of all messages currently stored for user in the cache backend. Another
+ * 	operation is needed to actually retrieve the message payload for each indexed message in the list.
  *
  * 	@dynamic_memory redisReply *: EXPORTS
  * 	@returns:raw redis collection even ehere restultset is zer except if that was related to error.
  */
 inline static UFSRVResult *
-_GetAllStagedMessageCacheRecordsIndexForUser (Session *sesn_ptr, unsigned long userid)
+_GetAllStagedMessageCacheRecordsIndexForUser(Session *sesn_ptr, unsigned long userid)
 {
 	int 		rescode										= RESCODE_PROG_NULL_POINTER;
 
@@ -458,12 +543,12 @@ _GetAllStagedMessageCacheRecordsIndexForUser (Session *sesn_ptr, unsigned long u
 
 	redis_ptr = (*pers_ptr->send_command)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_EVENT_RECORD_GETALL, userid);
 
-	if (unlikely(IS_EMPTY(redis_ptr))) 	{rescode=RESCODE_BACKEND_CONNECTION; 		goto return_error_backend_connection;}
+	if (unlikely(IS_EMPTY(redis_ptr))) 	{rescode = RESCODE_BACKEND_CONNECTION; 		goto return_error_backend_connection;}
 	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_error_reply;
 	if (redis_ptr->type == REDIS_REPLY_NIL)		goto return_error_nil;
 
 	if (redis_ptr->elements == 0) {
-		rescode=RESCODE_BACKEND_DATA_EMPTYSET;
+		rescode = RESCODE_BACKEND_DATA_EMPTYSET;
 
 #ifdef __UF_FULLDEBUG
 			  	 syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p, cid:'%lu', uid:'%lu'): NOTICE: EMPTY SET FOR USER STAGED MESSAGES",  __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), userid);
@@ -502,21 +587,19 @@ _GetAllStagedMessageCacheRecordsIndexForUser (Session *sesn_ptr, unsigned long u
 }
 
 /**
- * 	@brief: Deletes all current staged messages for user, both the index and the hash records.
- * 	@param: container for redisReply **, containing raw redis records from the STAGED_OUTMSG_EVENTS zindex in teh form of <%fid>:<%eid>. check REDIS_CMD_STAGED_OUTMSG_EVENT_RECORD_ADD.
+ * 	@brief Deletes all current staged messages for user, both the index and the hash records.
+ * 	@param container for redisReply **, containing raw redis records from the STAGED_OUTMSG_EVENTS zindex in the form of <%fid>:<%eid>. check REDIS_CMD_STAGED_OUTMSG_EVENT_RECORD_ADD.
  *
  * 	@dynamic_memory redisReply *: IMPORTS BUT DOES DEALLOCATE
  * 	@dynamic_memroy redisReply *: INSTANTIATES AND DEALLOCATES from cachbackend retrieval
  */
 inline static UFSRVResult *
-_DeleteStagedMessageCacheRecordsForUser (Session *sesn_ptr, unsigned long userid, time_t now_in_millis_in, redisReply *redis_ptr_indexed_set)
+_DeleteStagedMessageCacheRecordsForUser(Session *sesn_ptr, unsigned long userid, time_t now_in_millis_in, redisReply *redis_ptr_indexed_set)
 {
-	time_t now_in_millis=now_in_millis_in==0?GetTimeNowInMillis():now_in_millis_in;
-	int 		rescode										= RESCODE_PROG_NULL_POINTER;
+	time_t now_in_millis = now_in_millis_in == 0? GetTimeNowInMillis() : now_in_millis_in;
+	int 	rescode				 = RESCODE_PROG_NULL_POINTER;
 
-	if (unlikely(IS_EMPTY(sesn_ptr)))			return _ufsrv_result_generic_error;//goto return_generic_error;
-	if (IS_EMPTY(redis_ptr_indexed_set) || redis_ptr_indexed_set->elements<=0)
-	{
+	if (IS_EMPTY(redis_ptr_indexed_set) || redis_ptr_indexed_set->elements <= 0) {
 			syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p, cid:'%lu', userid:'%lu'): ERROR: EMPTY INDEX SET",  __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), userid);
 
 			_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, rescode);
@@ -524,36 +607,33 @@ _DeleteStagedMessageCacheRecordsForUser (Session *sesn_ptr, unsigned long userid
 	}
 
 	{
-	size_t i=0;
-	size_t command_buf_sz=0;
+	size_t i = 0;
+	size_t command_buf_sz = 0;
 	size_t command_buf_szs[redis_ptr_indexed_set->elements];
 
-	for (i=0; i<redis_ptr_indexed_set->elements; i++)
-	{
-		command_buf_sz+=({command_buf_szs[i]=strlen((char *)redis_ptr_indexed_set->element[i]->str);});
+	for (i=0; i<redis_ptr_indexed_set->elements; i++) {
+		command_buf_sz += ({command_buf_szs[i] = strlen((char *)redis_ptr_indexed_set->element[i]->str);});
 		//command_buf_sz+=strlen((char *)redis_ptr_indexed_set->element[i]->str);
 	}
 
-	if (command_buf_sz==0)
-	{
+	if (command_buf_sz == 0) {
 		//return
 	}
 
 	//hdel buket 1 2
-	size_t command_header_sz=strlen(REDIS_CMD_STAGED_OUTMSG_MSG_COMMAND_HEADER)+UINT64_LONGEST_STR_SZ+1; //1 for space after userid
+	size_t command_header_sz = strlen(REDIS_CMD_STAGED_OUTMSG_MSG_COMMAND_HEADER) + UINT64_LONGEST_STR_SZ + 1; //1 for space after userid
 	char *command_buf_walker_ptr;
-	char command_buf[command_header_sz+command_buf_sz+redis_ptr_indexed_set->elements+1];//we need to allocate extra single space between hashnames
-	memset (command_buf, '\0', sizeof(command_buf));
+	char command_buf[command_header_sz + command_buf_sz + redis_ptr_indexed_set->elements + 1];//we need to allocate extra single space between hashnames
+	memset(command_buf, '\0', sizeof(command_buf));
 
-	command_buf_walker_ptr=command_buf;
+	command_buf_walker_ptr = command_buf;
 
 	sprintf(command_buf, REDIS_CMD_STAGED_OUTMSG_MSG_COMMAND_HEADER "%lu ", userid);
-	command_buf_walker_ptr+=strlen(command_buf);
+	command_buf_walker_ptr += strlen(command_buf);
 
-	for (i=0; i<redis_ptr_indexed_set->elements; i++)
-	{
+	for (i=0; i<redis_ptr_indexed_set->elements; i++) {
 		sprintf(command_buf_walker_ptr, "%s ", (char *)redis_ptr_indexed_set->element[i]->str);
-		command_buf_walker_ptr+=command_buf_szs[i]+1;
+		command_buf_walker_ptr += command_buf_szs[i] + 1;
 	}
 
 #ifdef __UF_TESTING
@@ -568,8 +648,8 @@ _DeleteStagedMessageCacheRecordsForUser (Session *sesn_ptr, unsigned long userid
 	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGED_OUTMSG_EVENT_RECORD_EXPIRE, userid, now_in_millis);
 	(*pers_ptr->send_command_multi)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), "EXEC");
 
-	size_t		commands_processed=4,
-						commands_successful=4;
+	size_t		commands_processed = 4,
+						commands_successful= 4;
 
 	//TODO: error recovery not done well...
 	{
@@ -577,18 +657,13 @@ _DeleteStagedMessageCacheRecordsForUser (Session *sesn_ptr, unsigned long userid
 			redisReply	*replies[commands_processed];
 
 			//TODO: we need error recover for intermediate errors
-			for (i=0; i<commands_processed; i++)
-			{
-				if ((RedisGetReply(sesn_ptr, pers_ptr, (void*)&replies[i])) != REDIS_OK)
-				{
+			for (i=0; i<commands_processed; i++) {
+				if ((RedisGetReply(sesn_ptr, pers_ptr, (void*)&replies[i])) != REDIS_OK) {
 					commands_successful--;
 
-					if ((replies[i] != NULL))
-					{
-						syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', uid:'%lu', idex:'%lu'): ERROR PROCESSING MULTI SET COMMAND. ERROR: '%s'", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), userid, i, replies[i]->str);
-					}
-					else
-					{
+					if ((replies[i] != NULL)) {
+						syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', uid:'%lu', idx:'%lu'): ERROR PROCESSING MULTI SET COMMAND. ERROR: '%s'", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), userid, i, replies[i]->str);
+					} else {
 						syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', i:'%lu'): ERROR COULD ISSUE GET COMMAND: BACKEND CONNECTIVITY ERROR", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), i);
 					}
 				}
@@ -597,7 +672,7 @@ _DeleteStagedMessageCacheRecordsForUser (Session *sesn_ptr, unsigned long userid
 			}
 		}
 
-		if (commands_successful!=commands_processed)	{rescode=RESCODE_BACKEND_DATA_PARTIALSET; goto return_final;}
+		if (commands_successful != commands_processed)	{rescode = RESCODE_BACKEND_DATA_PARTIALSET; goto return_final;}
 
 		return_success:
 		_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_BACKEND_DATA_SETCREATED);
@@ -653,16 +728,16 @@ _DeleteStagedMessageCacheRecordsForUser (Session *sesn_ptr, unsigned long userid
 }
 
 inline static UFSRVResult *
-_InstateStagedMessagesLock (Session *sesn_ptr, unsigned long userid)
+_InstateStagedMessagesLock(Session *sesn_ptr, unsigned long userid)
 {
 	if (unlikely(IS_EMPTY(sesn_ptr)))	goto return_generic_error;
 
-	int rescode=RESCODE_PROG_NULL_POINTER;
-	redisReply *redis_ptr=(*sesn_ptr->usrmsg_cachebackend->send_command)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGEDINMSG_PLOCK, userid, "L", 60L);
+	int rescode = RESCODE_PROG_NULL_POINTER;
+	redisReply *redis_ptr = (*sesn_ptr->usrmsg_cachebackend->send_command)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGEDINMSG_PLOCK, userid, "L", 60L);
 
-	if (unlikely(IS_EMPTY(redis_ptr))) 		{rescode=RESCODE_BACKEND_CONNECTION; 		goto return_error_backend_connection;}
-	if (redis_ptr->type==REDIS_REPLY_ERROR)	goto return_error_reply;
-	if (redis_ptr->type==REDIS_REPLY_NIL)	{rescode=RESCODE_BACKEND_RESOURCE_LOCKED; goto return_error_nil_set;}
+	if (unlikely(IS_EMPTY(redis_ptr))) 		{rescode = RESCODE_BACKEND_CONNECTION; 		goto return_error_backend_connection;}
+	if (redis_ptr->type == REDIS_REPLY_ERROR)	goto return_error_reply;
+	if (redis_ptr->type == REDIS_REPLY_NIL)	{rescode = RESCODE_BACKEND_RESOURCE_LOCKED; goto return_error_nil_set;}
 
 	return_success:
 	//should be string value "OK"
@@ -696,17 +771,17 @@ _InstateStagedMessagesLock (Session *sesn_ptr, unsigned long userid)
 }
 
 inline static UFSRVResult *
-_DeleteStagedMessagesLock (Session *sesn_ptr, unsigned long userid)
+_DeleteStagedMessagesLock(Session *sesn_ptr, unsigned long userid)
 {
 	if (unlikely(IS_EMPTY(sesn_ptr)))	goto return_generic_error;
 
-	int rescode=RESCODE_PROG_NULL_POINTER;
+	int rescode = RESCODE_PROG_NULL_POINTER;
 
-	redisReply *redis_ptr=(*sesn_ptr->usrmsg_cachebackend->send_command)(sesn_ptr,  SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGEDINMSG_DEL_PLOCK, REDIS_SCRIPT_SHA1_DEL_LOCK, userid);
+	redisReply *redis_ptr = (*sesn_ptr->usrmsg_cachebackend->send_command)(sesn_ptr,  SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_STAGEDINMSG_DEL_PLOCK, REDIS_SCRIPT_SHA1_DEL_LOCK, userid);
 
-	if (unlikely(IS_EMPTY(redis_ptr))) 		{rescode=RESCODE_BACKEND_CONNECTION; 		goto return_error_backend_connection;}
-	if (redis_ptr->type==REDIS_REPLY_ERROR)																				goto return_error_reply;
-	if (redis_ptr->type==REDIS_REPLY_NIL)	{rescode=RESCODE_BACKEND_DATA_EMPTYSET; goto return_error_nil_set;}
+	if (unlikely(IS_EMPTY(redis_ptr))) 		{rescode = RESCODE_BACKEND_CONNECTION; 		goto return_error_backend_connection;}
+	if (redis_ptr->type == REDIS_REPLY_ERROR)																				goto return_error_reply;
+	if (redis_ptr->type == REDIS_REPLY_NIL)	{rescode = RESCODE_BACKEND_DATA_EMPTYSET; goto return_error_nil_set;}
 
 	return_success:
 	freeReplyObject(redis_ptr);
@@ -736,15 +811,17 @@ _DeleteStagedMessagesLock (Session *sesn_ptr, unsigned long userid)
 
 }
 
+/** @} */
+
 ///////////// TRANSMITTED / STAGED INTRA MESSAGES \\\\\\\\\\\\\\\\\
 
 /**
  * 	Capture incoming messages directed at users from other users in a staging place until confirmed delivered by the sending service
- * 	@return: the actual named payload as stored in redis. This canbe used to perform named retrieval of this specific record.
+ * 	@return the actual named payload as stored in redis. This canbe used to perform named retrieval of this specific record.
  * 	@dynamic_memory char *: EXPORTS IF NOT provided by user
  */
 UFSRVResult *
-StoreStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  unsigned long call_flags, unsigned char *command_buf_in)
+StoreStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  unsigned long call_flags, unsigned char *command_buf_in)
 {
 	int 		rescode										= RESCODE_PROG_NULL_POINTER;
 
@@ -759,7 +836,7 @@ StoreStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessage
 	if (IS_EMPTY(command_buf_in))	command_buf = calloc(command_buf_sz, sizeof(unsigned char));
 	else													command_buf = command_buf_in;
 
-	redis_ptr=(*pers_ptr->send_command)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_INTRAMESSAGE_RECORD_ADD,
+	redis_ptr = (*pers_ptr->send_command)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), REDIS_CMD_INTRAMESSAGE_RECORD_ADD,
 																			msg_desc_ptr->instance_descriptor_ptr->server_class, msg_desc_ptr->instance_descriptor_ptr->ufsrv_geogroup,
 																			msg_desc_ptr->instance_descriptor_ptr->reqid,
 																			msg_desc_ptr->instance_descriptor_ptr->reqid, msg_desc_ptr->msg_type, msg_desc_ptr->rawmsg, msg_desc_ptr->rawmsg_sz);
@@ -791,21 +868,22 @@ StoreStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessage
 }
 
 /**
- * 	@brief: A main filtering point for interfacing transmitted INTRA messages stored in staging
+ * 	@brief A main filtering point for interfacing transmitted INTRA messages stored in staging
  */
 UFSRVResult *
-HandleStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *payload_name, enum StoredMessageOptions msg_opts)
+HandleStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *payload_name, enum StoredMessageOptions msg_opts)
 {
 	if (unlikely(IS_EMPTY(sesn_ptr)))				goto return_error;
 
 	if (msg_opts == MSGOPT_GET_REM_FIRST)
 			return GetRemStagedMessageCacheRecordForIntraCommand(sesn_ptr, msg_desc_ptr,  payload_name, msg_opts);
 	if (msg_opts == MSGOPT_GET_FIRST || msg_opts == MSGOPT_GET_LAST || msg_opts == MSGOPT_GETALL || msg_opts == MSGOPT_GETNAMED)
-			return GetStagedMessageCacheRecordForIntraCommand (sesn_ptr, msg_desc_ptr, payload_name, msg_opts);
-	if (msg_opts == MSGOPT_REMOVE) ;//TODO IMPLEMENT
+			return GetStagedMessageCacheRecordForIntraCommand(sesn_ptr, msg_desc_ptr, payload_name, msg_opts);
+	if (msg_opts == MSGOPT_REMOVE)
+    ;//TODO IMPLEMENT
 
 	return_error:
-	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER);
+	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 }
 
 /**
@@ -815,7 +893,7 @@ HandleStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessag
  * 	@dynamic_memory redisreply *: EXPORTS
  */
 UFSRVResult *
-GetRemStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr_carrier, ParsedMessageDescriptor *msg_desc_ptr,  const char *payload_name, enum StoredMessageOptions msg_opts)
+GetRemStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr_carrier, ParsedMessageDescriptor *msg_desc_ptr,  const char *payload_name, enum StoredMessageOptions msg_opts)
 {
 	int 		rescode										= RESCODE_PROG_NULL_POINTER;
 
@@ -843,7 +921,7 @@ GetRemStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr_carrier, Parsed
 	(*pers_ptr->send_command_multi)(sesn_ptr_carrier, SESSION_USRMSG_CACHEBACKEND(sesn_ptr_carrier), "EXEC");
 
 	#define COMMAND_SET_SIZE	4
-	#define EXEC_COOMAND_IDX (COMMAND_SET_SIZE-1)
+	#define EXEC_COOMAND_IDX (COMMAND_SET_SIZE - 1)
 
 	size_t					commands_successful	= COMMAND_SET_SIZE;
 	redisReply			*replies[COMMAND_SET_SIZE]; memset (replies, 0, sizeof(replies));
@@ -913,40 +991,36 @@ GetRemStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr_carrier, Parsed
  * 	@dynamic_meory redisReply *: EXPORTS
  */
 UFSRVResult *
-GetStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr, const char *payload_name, enum StoredMessageOptions msg_opts)
+GetStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr, const char *payload_name, enum StoredMessageOptions msg_opts)
 {
-	int 		rescode										= RESCODE_PROG_NULL_POINTER;
+  int rescode	= RESCODE_PROG_NULL_POINTER;
+  const char 					*command_template;
+  PersistanceBackend	*pers_ptr	= sesn_ptr->usrmsg_cachebackend;
+  redisReply 					*redis_ptr;
 
-	if (unlikely(IS_EMPTY(sesn_ptr)))			goto return_generic_error;
+  if (msg_opts == MSGOPT_GET_FIRST)						command_template = REDIS_CMD_INTRAMESSAGE_LIST_GET_EARLIEST;
+  else if (msg_opts == MSGOPT_GET_LAST)				command_template = REDIS_CMD_INTRAMESSAGE_LIST_GET_LAST;
+  else if (msg_opts == MSGOPT_GETALL)					command_template = REDIS_CMD_INTRAMESSAGE_LIST_GETALL;
+  else if (msg_opts == MSGOPT_GETNAMED)
+  {
+    if (unlikely(!IS_STR_LOADED(payload_name)))		goto return_final;
+    command_template = REDIS_CMD_INTRAMESSAGE_LIST_GET_NAMED;
+  }
+  else goto return_final;
 
-	const char 					*command_template;
-	PersistanceBackend	*pers_ptr	= sesn_ptr->usrmsg_cachebackend;
-	redisReply 					*redis_ptr;
+  if (msg_opts == MSGOPT_GETNAMED) {
+    size_t	command_buf_sz = strlen(payload_name) + strlen(command_template) + 10;
+    char 		command_buf[command_buf_sz];
 
-	if (msg_opts==MSGOPT_GET_FIRST)						command_template=REDIS_CMD_INTRAMESSAGE_LIST_GET_EARLIEST;
-	else if (msg_opts==MSGOPT_GET_LAST)				command_template=REDIS_CMD_INTRAMESSAGE_LIST_GET_LAST;
-	else if (msg_opts==MSGOPT_GETALL)					command_template=REDIS_CMD_INTRAMESSAGE_LIST_GETALL;
-	else if (msg_opts==MSGOPT_GETNAMED)
-	{
-		if (unlikely(!IS_STR_LOADED(payload_name)))		goto return_final;
-		command_template=REDIS_CMD_INTRAMESSAGE_LIST_GET_NAMED;
-	}
-	else goto return_final;
-
-	if (msg_opts == MSGOPT_GETNAMED) {
-		size_t	command_buf_sz=strlen(payload_name)+strlen(command_template)+10;
-		char 		command_buf[command_buf_sz];
-
-		snprintf(command_buf, command_buf_sz, command_template,
-						 msg_desc_ptr->instance_descriptor_ptr->server_class, msg_desc_ptr->instance_descriptor_ptr->ufsrv_geogroup);
+		snprintf(command_buf, command_buf_sz, command_template, msg_desc_ptr->instance_descriptor_ptr->server_class, msg_desc_ptr->instance_descriptor_ptr->ufsrv_geogroup);
 		redis_ptr = (*pers_ptr->send_command)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), command_buf);
 	} else {
 		redis_ptr = (*pers_ptr->send_command)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), command_template,
 				msg_desc_ptr->instance_descriptor_ptr->server_class, msg_desc_ptr->instance_descriptor_ptr->ufsrv_geogroup);
 	}
 
-	if (unlikely(IS_EMPTY(redis_ptr))) {rescode=RESCODE_BACKEND_CONNECTION; goto return_error_backend_connection;}
-	if (redis_ptr->elements>1 && IS_STR_LOADED(redis_ptr->element[0]->str))	goto return_success;
+	if (unlikely(IS_EMPTY(redis_ptr))) {rescode = RESCODE_BACKEND_CONNECTION; goto return_error_backend_connection;}
+	if (redis_ptr->elements > 1 && IS_STR_LOADED(redis_ptr->element[0]->str))	goto return_success;
 
 	//must have encountered error in reply
 	syslog(LOG_DEBUG, "%s (pid:'%lu', o:'%p', cid:'%lu', redis_error:'%s'): ERROR COULD ISSUE GET COMMAND", __func__, pthread_self(), sesn_ptr, SESSION_ID(sesn_ptr), IS_PRESENT(redis_ptr->str)?redis_ptr->str:"unspecified error");
@@ -973,7 +1047,7 @@ GetStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDe
  * 	TODO: This is not finalised yet
  */
 UFSRVResult *
-RemoveStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *payload_name, unsigned long call_flags)
+RemoveStagedMessageCacheRecordForIntraCommand(Session *sesn_ptr, IncomingMessageDescriptor *msg_desc_ptr,  const char *payload_name, unsigned long call_flags)
 {
 	int 		rescode										= RESCODE_PROG_NULL_POINTER;
 
@@ -984,16 +1058,16 @@ RemoveStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessag
 	redisReply 					*redis_ptr;
 
 	{
-		size_t	command_buf_sz=strlen(payload_name)+MBUF;
-		char 		command_buf[command_buf_sz+1];
+		size_t	command_buf_sz = strlen(payload_name) + MBUF;
+		char 		command_buf[command_buf_sz + 1];
 
 		snprintf(command_buf, command_buf_sz, REDIS_CMD_INTRAMESSAGE_RECORD_REM,
 						 	 	 	 	 	 	 	 	 	 	 	 	 	 	 msg_desc_ptr->instance_descriptor_ptr->server_class, msg_desc_ptr->instance_descriptor_ptr->ufsrv_geogroup,
 																				 payload_name);
-		redis_ptr=(*pers_ptr->send_command)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), command_buf);
+		redis_ptr = (*pers_ptr->send_command)(sesn_ptr, SESSION_USRMSG_CACHEBACKEND(sesn_ptr), command_buf);
 	}
 
-	if (unlikely(IS_EMPTY(redis_ptr))) {rescode=RESCODE_BACKEND_CONNECTION; goto return_error_backend_connection;}
+	if (unlikely(IS_EMPTY(redis_ptr))) {rescode = RESCODE_BACKEND_CONNECTION; goto return_error_backend_connection;}
 
 	return_success:
 	_RETURN_RESULT_SESN(sesn_ptr, NULL, RESULT_TYPE_SUCCESS, rescode);
@@ -1012,7 +1086,7 @@ RemoveStagedMessageCacheRecordForIntraCommand (Session *sesn_ptr, IncomingMessag
 }
 
 int
-DbBackendInsertMessageRecord (const ParsedMessageDescriptor *msg_descriptor_ptr)
+DbBackendInsertMessageRecord(const ParsedMessageDescriptor *msg_descriptor_ptr)
 {
 #define SQL_INSERT_NEW_INCOMING_MESSAGE "INSERT INTO messages (id_events, fid, type, rawmsg, timestamp, originator, originator_device) VALUES ('%lu', '%lu', '%u', '%s', '%lu', '%lu', '%d')"
 
@@ -1028,7 +1102,7 @@ DbBackendInsertMessageRecord (const ParsedMessageDescriptor *msg_descriptor_ptr)
     syslog(LOG_DEBUG, "%s (pid:'%lu', th_ctx:'%p'): ERROR: COULD NOT EXECUTE QUERY: '%s'", __func__, pthread_self(), THREAD_CONTEXT_PTR, sql_query_str);
   }
 
-  free (sql_query_str);
+  free(sql_query_str);
 
   return sql_result;
 
@@ -1042,7 +1116,7 @@ DbBackendInsertMessageRecord (const ParsedMessageDescriptor *msg_descriptor_ptr)
  * @return
  */
 int
-DbBackendUpdateMessageStatus (unsigned long gid, unsigned  long uid_flagged_by, enum EventStatus status)
+DbBackendUpdateMessageStatus(unsigned long gid, unsigned  long uid_flagged_by, enum EventStatus status)
 {
 #define SQL_UPDATE_MESSAGE_STATUS 	 "UPDATE messages SET status = '%d' WHERE id_events = '%lu'"
 
@@ -1058,7 +1132,7 @@ DbBackendUpdateMessageStatus (unsigned long gid, unsigned  long uid_flagged_by, 
     syslog(LOG_DEBUG, "%s {th_ctx:'%p', event_rowid:'%lu'}: ERROR: COULD EXECUTE QUERY: '%s'", __func__, THREAD_CONTEXT_PTR, gid, sql_query_str);
   }
 
-  free (sql_query_str);
+  free(sql_query_str);
 
   return sql_result;
 
@@ -1066,7 +1140,7 @@ DbBackendUpdateMessageStatus (unsigned long gid, unsigned  long uid_flagged_by, 
 }
 
 UFSRVResult *
-_DbBackendGetMessageStatus (unsigned long eid)
+_DbBackendGetMessageStatus(unsigned long eid)
 {
 #define SQL_GET_MESSAGE_STATUS "SELECT status FROM messages WHERE eid = '%lu'"
 #define COLUMN_STATUS(x)	    ((struct _h_type_int *)result.data[0][0].t_data)->value
@@ -1084,12 +1158,12 @@ _DbBackendGetMessageStatus (unsigned long eid)
   if (sql_result != H_OK) {
     syslog(LOG_DEBUG, "%s {th_ctx:'%p', eid:'%lu'}: ERROR: COULD EXECUTE QUERY: '%s'", __func__, THREAD_CONTEXT_PTR, eid, sql_query_str);
 
-    free (sql_query_str);
+    free(sql_query_str);
 
     THREAD_CONTEXT_RETURN_RESULT_ERROR(NULL, RESCODE_BACKEND_DATA)
   }
 
-  free (sql_query_str);
+  free(sql_query_str);
 
   //we should ever only find 1 or zero really
   if (result.nb_rows > 0) {
@@ -1122,7 +1196,7 @@ _DbBackendGetMessageStatus (unsigned long eid)
  * @return
  */
 char *
-GenerateGuardianNonce (Session *sesn_ptr, const char *value)
+GenerateGuardianNonce(Session *sesn_ptr, const char *value)
 {
   char *attachment_nonce = BackEndGenerateNonce(sesn_ptr, CONFIGDEFAULT_GUARDIAN_NONCE_EXPIRY, CONFIGDEFAULT_GUARDIAN_NONCE_PREFIX, value);
 
@@ -1131,7 +1205,7 @@ GenerateGuardianNonce (Session *sesn_ptr, const char *value)
 }
 
 unsigned long
-IsGuardianLinkNonceValid (const char *nonce, unsigned long supplied_value)
+IsGuardianLinkNonceValid(const char *nonce, unsigned long supplied_value)
 {
   PersistanceBackend *pers_ptr;
   redisReply *redis_ptr;
@@ -1186,7 +1260,7 @@ IsGuardianLinkNonceValid (const char *nonce, unsigned long supplied_value)
  * @return
  */
 UFSRVResult *
-DbBackendInsertGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr, bool force_data)
+DbBackendInsertGuardianRecord(const GuardianRecordDescriptor *descriptor_ptr, bool force_data)
 {
 #define SQL_INSERT_NEW_GUARDIAN_RECORD "INSERT INTO guardians (guardian, originator, status, gid, timestamp, data) VALUES ('%lu', '%lu', '%u', '%lu', '%llu', '%s') ON DUPLICATE KEY UPDATE timestamp = '%llu', gid = '%lu'"
 #define SQL_INSERT_NEW_GUARDIAN_RECORD_NO_DATA "INSERT INTO guardians (guardian, originator, status, gid, timestamp) VALUES ('%lu', '%lu', '%u', '%lu', '%llu') ON DUPLICATE KEY UPDATE timestamp = '%llu', gid = '%lu'"
@@ -1235,7 +1309,7 @@ DbBackendInsertGuardianRecord (const GuardianRecordDescriptor *descriptor_ptr, b
  * @return
  */
 UFSRVResult *
-DbBackendGetGuardianRecord (GuardianRecordDescriptor *descriptor_ptr)
+DbBackendGetGuardianRecord(GuardianRecordDescriptor *descriptor_ptr)
 {
 #define SQL_GET_GUARDIAN_RECORD "SELECT * FROM guardians WHERE  guardian = '%lu' AND originator = '%lu'"
 #define SQL_GET_GUARDIAN_RECORD_WITH_STATUS "SELECT * FROM guardians WHERE  guardian = '%lu' AND originator = '%lu' AND status = '%u'"
@@ -1351,7 +1425,7 @@ DbBackendGetGuardianRecord (GuardianRecordDescriptor *descriptor_ptr)
  * @return
  */
 UFSRVResult *
-DbBackendGetGuardianRecords (GuardianRecordDescriptor *descriptor_ptr_guardian, CollectionDescriptor *collection_ptr_out)
+DbBackendGetGuardianRecords(GuardianRecordDescriptor *descriptor_ptr_guardian, CollectionDescriptor *collection_ptr_out)
 {
 #define SQL_GET_GUARDIAN_RECORD "SELECT * FROM guardians WHERE  guardian = '%lu'"
 #define SQL_GET_GUARDIAN_RECORD_WITH_STATUS "SELECT * FROM guardians WHERE  guardian = '%lu' AND status = '%u'"
@@ -1924,7 +1998,7 @@ DbBackendInsertUserMessageByProto (Session *sesn_ptr, MessageCommand *msg_cmd_pt
 
 			json_object_object_add (jobj_account, "number", json_object_new_string(username));
 			//TODO: supplied in another stream. but is currently saved at device level, so this maybe bogus entry
-			json_object_object_add (jobj_account, "identity_key", json_object_new_string(CONFIG_DEFAULT_PREFS_STRING_VALUE));
+			json_object_object_add (jobj_account, ACCOUNT_JSONATTR_IDENTITY_KEY, json_object_new_string(CONFIG_DEFAULT_PREFS_STRING_VALUE));
 			json_object_object_add (jobj_account, "authenticated_device", jobj_device);
 
 			//attach master device to array of devices

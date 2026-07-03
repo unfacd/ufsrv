@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,11 +18,12 @@
 #ifndef SRC_INCLUDE_API_ENDPOINT_V1_FENCE_H_
 #define SRC_INCLUDE_API_ENDPOINT_V1_FENCE_H_
 
-#include <recycler/instance_type.h>
+#include <uflib/recycler/instance_type.h>
 
 #define API_ENDPOINT_V1(x) int x (InstanceHolder *instance_sesn_ptr)
 
 API_ENDPOINT_V1(FENCE);
+API_ENDPOINT_V1(FENCE_INFO);
 API_ENDPOINT_V1(FENCE_NEARBY);
 API_ENDPOINT_V1(FENCE_SEARCH);
 API_ENDPOINT_V1(FENCE_CERTIFICATE);

@@ -25,18 +25,20 @@
 #define CONFIG_SESSION_INSERVICE_MAX_TIMEOUT			20 //in seconds session is considred stale if its state in marked as inservice for longer than this amount of time
 //#define CONFIG_USE_OPTIK_LOCK											0
 
-#define CONFIG_LOCKLESS_UFSRV_WORKER_QUEUE_SIZE		512	//bounded job queue per thread
-#define CONFIG_LOCKLESS_SESSION_WORKER_QUEUE_SIZE	512	//bounded job queue per thread
+#define CONFIG_LOCKLESS_UFSRV_WORKER_QUEUE_SIZE		512	//bounded job queue msg capacity per thread
+#define CONFIG_LOCKLESS_SESSION_WORKER_QUEUE_SIZE	512	//bounded job queue msg capacity per thread
 
 //buffer size of the the ne connections pipe and the threshold at which the pipe is read from
 #define CONFIG_NEW_CONNECTIONS_PIPE_SIZE							1024
 #define CONFIG_NEW_CONNECTIONS_PIPE_DRAIN_THREASHOLD	1000
 #define CONFIG_MMSG_MAX_PACKET_SIZE 									8192 //for recvmmsg
+#define CONFIG_MMSG_MAX_PACKET_SIZE_UDP               1472 //assuming an ethernet MTU of 1500 bytes
+#define _CONFIGDEFAULT_RECVMMSG_MAX_PACKET_SZ         32 //howmany packets to read at once inside recvmmsg()
 
 #define CONFIG_FILE_NAME "ufsrv.conf"
 #define MASTER_LOG_FILE_NAME "ufsrv.log"
 #define CONFIG_DIR "/etc/ufsrv"
-#define CONFIG_PID_DIR "/var/run/ufsrv"
+#define CONFIG_PID_DIR "/var/run"
 #define _TMP_DIR	"/tmp"
 #define MAXHOSTLEN  165
 #define CONFIG_MAX_VERIFICATION_CODE_FORMATTED_SZ			7	//xxxx-xxxx
@@ -48,33 +50,42 @@
 #define _CONFIGDEFAULT_DEFAULT_UFSRVGEOGROUP					3		//fallback ufsrv geogroup to use if user doesn have valid group
 #define CONFIG_UFSRV_UID															1		//system uid for ufrsv owned assets
 
-#define CONFIG_DBBACKEND_DBNAME "ufsrv"
+#define CONFIG_DONATIONS_SUBSCRIBER_ID_SZ							32
+
+#define CONFIG_DBBACKEND_DBNAME                       "ufsrv"
 #define CONFIG_E164_NUMBER_UFSRV_COUNTRY_PREFIX				"+800"
-#define CONFIG_UNSPECIFIED_E164_NUMBER               "+8000000000000" //ensure client is using the same
+#define CONFIG_UNSPECIFIED_E164_NUMBER                "+8000000000000" //ensure client is using the same
 #define CONFIG_E164_NUMBER_VALUE_MAX                  9999999999//10 digits
 #define CONFIG_E164_NUMBER_VALUE_DIGITS_COUNT         10 //excluding country prefix
 #define CONFIG_E164_NUMBER_SZ_MAX                     20 //15 digits number + 5 country code
-#define CONFIG_EMAIL_ADDRESS_SZ_MAX                   254 //https://tools.ietf.org/html/rfc5321#section-4.5.3
+#define CONFIG_EMAIL_ADDRESS_SZ_MAX                   254 //https://tools.ietf.org/html/rfc5321#section-4.5.3 (can be up to 320: RFC 5321 and RFC 5322)
 
 #define _CONFIGDEFAULT_INTRA_UFSRV_CLASSNAME		      "ufsrv"	//classname for the class of servers that handle intra commands
 #define CONFIG_MAX_FENCE_NAME_SIZE										128
+#define CONFIG_MAX_FENCE_DESCRIPTION_SIZE							1024
 #define CONFIG_MAX_NICKNAME_SIZE											64
 #define CONFIG_MAX_FAVATAR_SIZE												128 //fence avatar reference
 #define CONFIG_MAX_INVITE_SET_SIZE										128	//user can include that many invitees per one command invocation
 #define CONFIGDEFAULT_MAX_IMAGE_BLURHASH_SZ           512
 #define CONFIGDEFAULT_MAX_IMAGE_CAPTION_SZ           1024
 #define _CONFIGDEFAULT_ATTACHMENT_NONCE_EXPIRY				1800	//(seconds) 30 minutes to allow for slow uploads
+#define CONFIGDEFAULT_ATTACHMENT_NONCE_PREFIX         "_ATTACHMENT"
+
 #define _CONFIGDEFAULT_MESSAGE_MAX_ATTACHMENTS_SZ 		10	//max attachments allowed in one message
+#define CONFIGDEFAULT_FENCE_LIST_MAX_SZ 		          10	//max number of fences ina collection able to be processed in a FenceCommand message
 
 #define _CONFIGDEFAULT_GEOLOC_FUZZFACTOR							500.0		//meters radius
+#define CONFIG_DEFAULT_GEOLOC_MAX_SZ                  1024 //max allowed geo location string (country,region,area)
 #define CONFIG_FENCE_PERMISSIONS_PFACTOR 							6 //64 buckets initial size factor for hopscotch hash table size (this will be raised to power of 2)
-#define CONFIG_THREAD_LOCKED_OBJECTS_STORE_PFACTOR 							6 //64 buckets initial size factor for hopscotch hash table size (this will be raised to power of 2)
+#define CONFIG_THREAD_LOCKED_OBJECTS_STORE_PFACTOR 		6 //64 buckets initial size factor for hopscotch hash table size (this will be raised to power of 2)
 
 #define CONFIG_FENCE_PERMISSIONS_KEYOFFSET(x, y)			offsetof(x, y)
 #define CONFIG_PREFERENCE_PREFIX											"pref_"
 #define CONFIG_DEFAULT_BOOLPREFS_VALUE                192 //turns on offsets 0 an 1
 #define CONFIG_DEFAULT_PREFS_INT_VALUE                0
 #define CONFIG_DEFAULT_PREFS_STRING_VALUE             "*"
+#define CONFIG_DEFAULT_PREFS_CHAR_VALUE               '*'
+#define CONFIG_DEFAULT_PREFS_REGO_LOCK                -1 //default value for registration lock (for validating repeat registrations/installations)
 #define CONFIG_USER_PROFILEKEY_MAX_SIZE								32 //profile key binary size raw binary size
 #define CONFIG_USER_PROFILEKEY_MAX_SIZE_ENCODED				57 //CONFIG_USER_PROFILEKEY_MAX_SIZE+1)/3)*5, no terminating '\0'
 #define CONFIG_USER_ACCESS_TOKEN_MAX_SIZE							16 //access token binary size
@@ -82,6 +93,9 @@
 
 #define CONFIGDEFAULT_GUARDIAN_NONCE_EXPIRY				    300	//(seconds)
 #define CONFIGDEFAULT_GUARDIAN_NONCE_PREFIX				    "_GUARDIAN"
+
+#define CONFIGDEFAULT_LINKJOIN_NONCE_PREFIX           "_LINKJOIN"
+#define CONFIGDEFAULT_LINKJOIN_NONCE_EXPIRY				    60	//(seconds) 1 minute
 
 #define CONFIG_WEBSOCKET_HANDSHAKE_MIN_SZ             92
 #define CONFIG_WEBSOCKET_HANDSHAKE_MAX_SZ             512
@@ -107,7 +121,7 @@
 
 //maximum allowed msg size for an intromessage
 #define _CONFIGDEFAULT_INTROMESSAGE_MSGSZ_MAX     1024
-
+#define CONFIG_DEFAULT_LOOPBACKADDRESS "127.0.0.1"
 #define _CONFIGDEFAULT_BACKENDCACHE_PORT_SESSION	21000
 #define _CONFIGDEFAULT_BACKENDCACHE_HOST_SESSION	"127.0.0.1"
 #define _CONFIGDEFAULT_BACKENDCACHE_PORT_USRMSG		22000
@@ -124,6 +138,8 @@
 #define _CONFIGDEFAULT_SESSION_TIMEOUT_CHECK_FREQUENCY	60000000 //in micro seconds 1 min
 #define _CONFIGDEFAULT_FENCE_ORPHANED_CHECK_FREQUENCY		120000000	//2min //300000000 //in micoro seconds 5 min
 
+#define _CONFIGDEFAULT_GPC_AUTHENTICATOR_CHECK_FREQUENCY		3000000000	//50 minutes in micro seconds
+
 #define _CONFIGDEFAULT_ETAG_SIZE					32
 
 #define _CONFIGDEFAULT_IDLETIME_THRESHOLD 	5 //number of seconds elapsed without heartbeat from client before connection is deemed disconnected
@@ -132,10 +148,13 @@
 
 #define _CONFIG_CACHE_BACKEND_RECONNECT_SLEEP         100000000 //in nano second -> 100ms
 #define _CONFIG_CACHE_BACKEND_REPLY_TIMEOUT_USEC      0//500000 //0.5sec
-#define _CONFIG_CACHE_BACKEND_REPLY_TIMEOUT_SEC       5
+#define _CONFIG_CACHE_BACKEND_REPLY_TIMEOUT_SEC       0//5
 
 //default value for maximum io session worker threads to spawn. corresponding configfile value: .session_workers_thread_pool'
 #define _CONFIGDEFAULT_MAX_SESSION_WORKERS 2
+
+//default value for listner worker threads
+#define _CONFIGDEFAULT_MAX_LISTENER_WORKERS 1
 
 //default value for maximum ufserver worker threads to spawn. corresponding configfile value: ufsrv_workers_thread_pool
 #define _CONFIGDEFAULT_MAX_UFSRV_WORKERS 3
@@ -165,7 +184,6 @@
 #define _CONFIGDEFAULT_DEFAULT_UFSRVMEDIA_STORAGE_LOCATION "/ufsrv_media/"
 
 //131071
-#define _CONFIGDEFAULT_HASHTABLE_SZ							65521
 #define _CONFIDEFAULT_HASHTABLE_BASICAUTH_SZ		2//10009//this should be configurable load time as well
 #define _CONFIDEFAULT_HASHTABLE_ATTACHMENTS_SZ	65521//10009//this should be configurable load time as well
 
@@ -196,6 +214,8 @@
 #define _BASICAUTH_PREFIX	"_BASICAUTH"
 #define _BASICAUTH_CACHE_EXPIRY	86400UL //one day
 
+#define CONFIG_DEFAULT_UNSET_LOCATION ":::0.000000:0.000000"
+
 //set underwhich all registered nicknames are kept for quick lookup
 #define _NAMESPACE_BACKEND_NICKNAMES_DIRECTORY	"_NICKNAMES_DIRECTORY"
 
@@ -203,11 +223,17 @@
 #define _NAMESPACE_BACKEND_ACCOUNTS_DIRECTORY	"ACCOUNTS_DIRECTORY"
 
 //when user makes a PUT request for endpoint /V1/Attachment, this request heade must be present
-#define _ATTACHMENT_HEADER_NONCE  "X-UFSRV-ATTACHMENT-NONCE"
-#define _ZKGROUP_AUTHORIZATION    "X-Group-Authorization"
-#define HTTP_HEADER_COOKIE        "X-Ufsrv-Cookie"
+#define _ATTACHMENT_HEADER_NONCE    "X-UFSRV-ATTACHMENT-NONCE"
+#define _ZKGROUP_AUTHORIZATION      "X-Group-Authorization"
+#define HTTP_HEADER_COOKIE          "X-Ufsrv-Cookie"
+#define HTTP_HEADER_TIMESTAMP       "X-Unfacd-Timestamp"
+#define HTTP_HEADER_INTEGRITY_TOKEN "X-Integrity-Token"
+#define HTTP_HEADER_AUTHORIZATION   "Authorization"
+#define HTTP_HEADER_PENDING_COOKIE  "X-Unfacd-Pending-Cookie"
 
-#define __VALGRIND_DRD 1
+#ifndef __VALGRIND_DRD
+# define __VALGRIND_DRD 1
+#endif
 #define __VALGRIND_MEMCHECK	1
 /* configuration */
 

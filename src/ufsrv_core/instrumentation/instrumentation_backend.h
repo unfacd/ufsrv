@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -18,12 +18,12 @@
 #ifndef INCLUDE_INSTRUMENTATION_BACKEND_H_
 #define INCLUDE_INSTRUMENTATION_BACKEND_H_
 
-#include <standard_c_includes.h>
-#include <standard_defs.h>
-#include "instrumentation_backend_type.h"
+#include <uflib/standard_c_includes.h>
+#include <uflib/standard_defs.h>
+#include <instrumentation/instrumentation_backend_type.h>
 
-int InstrumentationBackendServerInit (const char *host, int port);
-InstrumentationBackend *InstrumentationBackendInit (const char *ns);
+int InstrumentationBackendServerInit(const char *host, int port);
+InstrumentationBackend *InstrumentationBackendInit(const char *ns, InstrumentationBackend *instrum_backend_provided);
 void InstrumentationBackendReset(InstrumentationBackend *);
 int statsd_send(InstrumentationBackend *link, const char *message);
 

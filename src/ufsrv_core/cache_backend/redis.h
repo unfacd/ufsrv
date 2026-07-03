@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -19,9 +19,9 @@
 #define SRC_INCLUDE_REDIS_H_
 
 #include <session_type.h>
-#include <backendconfig_type.h>
+#include "ufsrv_core/include/backendconfig_type.h"
 #include "redis_backend_type.h"
-#include <utils.h>
+#include <uflib/utils.h>
 
 #if 0
 	struct RedisBackend	{
@@ -54,7 +54,7 @@
 #define REDIS_SCRIPT_SHA1_DEL_LOCK	"3d84bffbe72d4ec06e345cb3db2eae1345524faf"
 
 unsigned DisconnectRedisBackend(Session *, int);
-RedisBackend *InitialiseRedisBackend (RedisBackend *, struct BackendConfig *);
+RedisBackend *BuildConnectionHandleForRedisBackend (RedisBackend *in_per_ptr, struct BackendConfig *cfg);
 void PrintPersistanceError (Session *sesn_ptr, char *user_str);
 void *RedisSendCommandSessionless (void *ptr, const char *format, ...);
 void *RedisSendSessionCommand(Session *sesn_ptr_this, CacheBackend *pers_ptr_in, const char *format, ...);
