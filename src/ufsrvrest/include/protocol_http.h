@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,16 +20,15 @@
 
 #include <ufsrvresult_type.h>
 #include<transmission_message_type.h>
-#include <redirection.h>
 #include <ufsrvwebsock/include/WebSocketMessage.pb-c.h>
 #include <session.h>
 #include <session_service.h>
-#include <ufsrv_core/protocol/protocol.h>
+#include <ufsrvmsg_core/protocol/protocol.h>
 #include <nportredird.h>
 #include <json/json.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast_type.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvcmd_broadcast_type.h>
 #include "protocol_http_type.h"
-#include <ufsrv_core/msgqueue_backend/ufsrv_msgcmd_type_enum.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrv_msgcmd_type_enum.h>
 
 bool IsConnectionKeepAlive (Session *);
 
@@ -50,6 +49,7 @@ UFSRVResult *proto_http_error_callback (InstanceHolderForSession *, unsigned);
 UFSRVResult *proto_http_recycler_error_callback (InstanceHolderForSession *, unsigned);
 UFSRVResult *proto_http_close_callback (InstanceHolderForSession *);
 UFSRVResult *proto_http_msgqueue_topics_callback (UFSRVResult *res_ptr);
+UFSRVResult *proto_http_generate_session_id_callback(UFSRVResult *res_ptr, ClientContextData *context_data);
 
 UFSRVResult *UfsrvApiIntraBroadcastMessage (Session *sesn_ptr_this, WireProtocolData *data, UfsrvMsgCommandType msgcmd_type, enum BroadcastSemantics, const unsigned char *);
 

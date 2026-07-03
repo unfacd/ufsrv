@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -22,19 +22,20 @@
 #include <main.h>
 #include <thread_context_type.h>
 #include <incoming_message_descriptor_type.h>
-#include <ufsrv_core/user/user_preferences.h>
-#include <ufsrv_core/user/users_protobuf.h>
+#include <ufsrvmsg_core/user/user_preferences.h>
+#include <ufsrvmsg_core/user/users_protobuf.h>
 #include <ufsrv_core/cache_backend/persistance.h>
 #include <nportredird.h>
 #include <ufsrvwebsock/include/protocol_websocket_session.h>
 #include <message.h>
 #include <sessions_delegator_type.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvcmd_broadcast.h>
-#include <ufsrvuid.h>
-#include <message_command_controller.h>
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvcmd_broadcast.h>
+#include <uflib/ufsrvuid.h>
+#include "ufsrvwebsock/command_controllers/message_command_controller.h"
 #include <message_command_broadcast.h>
 #include <command_controllers.h>
-#include <ufsrv_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
+#include <ufsrvmsg_core/msgqueue_backend/UfsrvMessageQueue.pb-c.h>
+#include "ufsrv_core/include/delegator_session_worker_thread.h"
 
 
 extern ufsrv *const masterptr;
@@ -60,17 +61,19 @@ typedef struct BroadcastMessageGuardianDescriptor {
 
 ////// INTER \\\\\\
 
-static UFSRVResult *_PrepareForInterBroadcastHandlingMessageReported (MessageQueueMessage *mqm_ptr, FenceSessionPair *fence_sesn_pair_ptr, UFSRVResult *res_ptr);
-static UFSRVResult *_PrepareForInterBroadcastHandlingGuardian (MessageQueueMessage *mqm_ptr, BroadcastMessageGuardianDescriptor *descriptor_ptr, UFSRVResult *res_ptr);
-static UFSRVResult *_HandleInterBroadcastUserMessageSay (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastUserMessageIntro (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastUserMessageReported (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastUserMessageGuardianRequest (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastUserMessageGuardianLink (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
-static UFSRVResult *_HandleInterBroadcastUserMessageGuardianUnlink (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_PrepareForInterBroadcastHandlingMessageReported(MessageQueueMessage *mqm_ptr, FenceSessionPair *fence_sesn_pair_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_PrepareForInterBroadcastHandlingMessageRevoked(MessageQueueMessage *mqm_ptr, FenceSessionPair *fence_sesn_pair_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_PrepareForInterBroadcastHandlingGuardian(MessageQueueMessage *mqm_ptr, BroadcastMessageGuardianDescriptor *descriptor_ptr, UFSRVResult *res_ptr);
+static UFSRVResult *_HandleInterBroadcastUserMessageSay(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserMessageIntro(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserMessageReported(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserMessageRevoked(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserMessageGuardianRequest(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserMessageGuardianLink(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
+static UFSRVResult *_HandleInterBroadcastUserMessageGuardianUnlink(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags);
 
 inline static void
-_PrepareBroadcastMessageForMessage (BroadcastMessageEnvelopeForMessage *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg);
+_PrepareBroadcastMessageForMessage(BroadcastMessageEnvelopeForMessage *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg);
 
 //TODO: needs updating
 #define _GENERATE_ENVELOPE_INITIALISATION() \
@@ -86,7 +89,7 @@ _PrepareBroadcastMessageForMessage (BroadcastMessageEnvelopeForMessage *envelope
 
 
 inline static void
-_PrepareBroadcastMessageForMessage (BroadcastMessageEnvelopeForMessage *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
+_PrepareBroadcastMessageForMessage(BroadcastMessageEnvelopeForMessage *envelope_ptr, Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
 {
 	envelope_ptr->msgqueue_msg->command_type					=	UFSRV_MSG;	envelope_ptr->msgqueue_msg->has_command_type = 1;
 	envelope_ptr->msgqueue_msg->broadcast_semantics	=	MESSAGE_QUEUE_MESSAGE__BROADCAST_SEMANTICS__INTER; envelope_ptr->msgqueue_msg->has_broadcast_semantics	=	1;
@@ -97,7 +100,7 @@ _PrepareBroadcastMessageForMessage (BroadcastMessageEnvelopeForMessage *envelope
 	envelope_ptr->header->when												=	event_ptr->when; 					envelope_ptr->header->has_when = 1;
 	envelope_ptr->header->eid													=	SESSION_EID(sesn_ptr);		envelope_ptr->header->has_eid = 1;
 	envelope_ptr->header->cid													=	SESSION_ID(sesn_ptr); 		envelope_ptr->header->has_cid = 1;
-	MakeUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid = 1;
+  ProvideUfsrvUidInProto(&SESSION_UFSRVUIDSTORE(sesn_ptr), &(envelope_ptr->header->ufsrvuid), true); envelope_ptr->header->has_ufsrvuid = 1;
 
 }
 
@@ -108,7 +111,7 @@ _PrepareBroadcastMessageForMessage (BroadcastMessageEnvelopeForMessage *envelope
  * 	@ param context_ptr: MessageCommand * as provided to the original handler
  */
 UFSRVResult *
-InterBroadcastUserMessage (Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
+InterBroadcastUserMessage(Session *sesn_ptr, ClientContextData *context_ptr, FenceEvent *event_ptr, enum _CommandArgs command_arg)
 {
 	MessageQueueMessage 			msgqueue_msg					=	MESSAGE_QUEUE_MESSAGE__INIT;
 	CommandHeader							header								=	COMMAND_HEADER__INIT;
@@ -120,7 +123,7 @@ InterBroadcastUserMessage (Session *sesn_ptr, ClientContextData *context_ptr, Fe
 				.header									=	&header,
 		};
 
-	_PrepareBroadcastMessageForMessage (&envelope, sesn_ptr, context_ptr, event_ptr, command_arg);
+	_PrepareBroadcastMessageForMessage(&envelope, sesn_ptr, context_ptr, event_ptr, command_arg);
 
 	//_GENERATE_ENVELOPE_INITIALISATION(); //replaces above
 
@@ -144,7 +147,7 @@ InterBroadcastUserMessage (Session *sesn_ptr, ClientContextData *context_ptr, Fe
 }
 
 UFSRVResult *
-InterBroadcastUserMessageReported (CommandBaseContext *cmd_base_ctx, enum _CommandArgs command_arg)
+InterBroadcastUserMessageReported(CommandBaseContext *cmd_base_ctx, enum _CommandArgs command_arg)
 {
   MessageCommandContext *cmd_ctx_ptr = (MessageCommandContext *) cmd_base_ctx;
 
@@ -160,7 +163,23 @@ InterBroadcastUserMessageReported (CommandBaseContext *cmd_base_ctx, enum _Comma
 }
 
 UFSRVResult *
-InterBroadcastGuardianRequest (CommandBaseContext *cmd_base_ctx, enum _CommandArgs command_arg)
+InterBroadcastUserMessageRevoked(CommandBaseContext *cmd_base_ctx, enum _CommandArgs command_arg)
+{
+  MessageCommandContext *cmd_ctx_ptr = (MessageCommandContext *) cmd_base_ctx;
+
+  _GENERATE_ENVELOPE_INITIALISATION(); //replaces above
+  _PrepareBroadcastMessageForMessage(&envelope, CMDCTX_SESN_ORIGINATOR(cmd_ctx_ptr), CMDCTX_DATA_MESSAGE(cmd_ctx_ptr)->ufsrvcommand->msgcommand, (FenceEvent *)CMDCTX_EVENT(cmd_ctx_ptr), command_arg);
+
+  MessageCommand	*msgcmd_ptr	=	CMDCTX_DATA_MESSAGE(cmd_ctx_ptr)->ufsrvcommand->msgcommand;
+  //actual delta
+  message_command.revoked		  =	msgcmd_ptr->revoked;
+  message_command.n_revoked	  =	msgcmd_ptr->n_revoked;
+
+  return (UfsrvInterBroadcastMessage(CMDCTX_SESN_ORIGINATOR(cmd_ctx_ptr), &msgqueue_msg, msgqueue_msg.command_type));
+}
+
+UFSRVResult *
+InterBroadcastGuardianRequest(CommandBaseContext *cmd_base_ctx, enum _CommandArgs command_arg)
 {
   MessageCommandContext *cmd_ctx_ptr = (MessageCommandContext *) cmd_base_ctx;
   _GENERATE_ENVELOPE_INITIALISATION();
@@ -173,7 +192,7 @@ InterBroadcastGuardianRequest (CommandBaseContext *cmd_base_ctx, enum _CommandAr
 }
 
 int
-HandleInterBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long callflags)
+HandleInterBroadcastForUserMessage(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long callflags)
 {
 	int 										rescode	= 0;
   FenceSessionPair	fence_sesn_pair				=	{0};
@@ -193,6 +212,10 @@ HandleInterBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *r
           &&MESSAGE_COMMAND__COMMAND_TYPES__GUARDIAN_REQUEST,
           &&MESSAGE_COMMAND__COMMAND_TYPES__GUARDIAN_LINK,
           &&MESSAGE_COMMAND__COMMAND_TYPES__GUARDIAN_UNLINK,
+          &&MESSAGE_COMMAND__COMMAND_TYPES__EFFECT,
+          &&MESSAGE_COMMAND__COMMAND_TYPES__REACTION,
+          &&MESSAGE_COMMAND__COMMAND_TYPES__REVOKE,
+          &&MESSAGE_COMMAND__COMMAND_TYPES__INTRO_USER_RESPONSE
   }; //ALIGN WITH PROTOBUF
 
   goto *command_types[command_header_ptr->command];
@@ -213,6 +236,7 @@ HandleInterBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *r
   _PrepareForInterBroadcastHandlingMessageReported(mqm_ptr, &fence_sesn_pair, res_ptr);
   if (_RESULT_TYPE_ERROR(&result))	goto return_final;
   _HandleInterBroadcastUserMessageReported((ClientContextData *)&fence_sesn_pair, mqm_ptr, &result, callflags);
+  goto return_success;
 
   MESSAGE_COMMAND__COMMAND_TYPES__GUARDIAN_REQUEST:
   _PrepareForInterBroadcastHandlingGuardian(mqm_ptr, &guardian_descriptor, &result);
@@ -232,6 +256,19 @@ HandleInterBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *r
   _HandleInterBroadcastUserMessageGuardianUnlink((ClientContextData *)&fence_sesn_pair, mqm_ptr, &result, callflags);
   goto return_success_for_guardian;
 
+  MESSAGE_COMMAND__COMMAND_TYPES__EFFECT:
+  MESSAGE_COMMAND__COMMAND_TYPES__REACTION:
+  goto return_final;
+
+  MESSAGE_COMMAND__COMMAND_TYPES__REVOKE:
+  _PrepareForInterBroadcastHandlingMessageRevoked(mqm_ptr, &fence_sesn_pair, res_ptr);
+  if (_RESULT_TYPE_ERROR(&result))	goto return_final;
+  _HandleInterBroadcastUserMessageRevoked((ClientContextData *)&fence_sesn_pair, mqm_ptr, &result, callflags);
+  goto return_success;
+
+  MESSAGE_COMMAND__COMMAND_TYPES__INTRO_USER_RESPONSE:
+  goto return_final;
+
   MESSAGE_COMMAND__COMMAND_TYPES__CONTACTS:
   MESSAGE_COMMAND__COMMAND_TYPES__LIKE:
   MESSAGE_COMMAND__COMMAND_TYPES__FOLLOW:
@@ -240,17 +277,17 @@ HandleInterBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *r
   goto return_final;
 
   return_success:
-  if (IS_PRESENT(fence_sesn_pair.instance_f_ptr))	if (!fence_sesn_pair.fence_lock_already_owned)	FenceEventsUnLockCtx (THREAD_CONTEXT_PTR, FenceOffInstanceHolder(fence_sesn_pair.instance_f_ptr), THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
+  if (IS_PRESENT(fence_sesn_pair.instance_f_ptr))	if (!fence_sesn_pair.fence_lock_already_owned)	FenceEventsUnLockCtx(THREAD_CONTEXT_PTR, FenceOffInstanceHolder(fence_sesn_pair.instance_f_ptr), THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT));
   if (IS_PRESENT(fence_sesn_pair.instance_sesn_ptr)) {
     Session *sesn_ptr = SessionOffInstanceHolder(fence_sesn_pair.instance_sesn_ptr);
     SessionUnLoadEphemeralMode(sesn_ptr);
-    SessionUnLockCtx (THREAD_CONTEXT_PTR, sesn_ptr, __func__);
+    SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr, __func__);
   }
   return rescode;
 
   return_success_for_guardian:
-  if (!guardian_descriptor.ctx_sesn_ptr_guardian.lock_already_owned) SessionUnLockCtx (THREAD_CONTEXT_PTR, guardian_descriptor.ctx_sesn_ptr_guardian.sesn_ptr, __func__);
-  if (!guardian_descriptor.ctx_sesn_ptr_originator.lock_already_owned) SessionUnLockCtx (THREAD_CONTEXT_PTR, guardian_descriptor.ctx_sesn_ptr_originator.sesn_ptr, __func__);
+  if (!guardian_descriptor.ctx_sesn_ptr_guardian.lock_already_owned) SessionUnLockCtx(THREAD_CONTEXT_PTR, guardian_descriptor.ctx_sesn_ptr_guardian.sesn_ptr, __func__);
+  if (!guardian_descriptor.ctx_sesn_ptr_originator.lock_already_owned) SessionUnLockCtx(THREAD_CONTEXT_PTR, guardian_descriptor.ctx_sesn_ptr_originator.sesn_ptr, __func__);
   goto return_final;
 
   return_final:
@@ -259,7 +296,7 @@ HandleInterBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *r
 }
 
 static UFSRVResult *
-_HandleInterBroadcastUserMessageSay (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserMessageSay(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
   FenceSessionPair *pair_ptr				=	(FenceSessionPair *)context_ptr;
   FenceRecord *fence_record_ptr = mqm_ptr->message->fences[0];
@@ -271,11 +308,11 @@ _HandleInterBroadcastUserMessageSay (ClientContextData *context_ptr, MessageQueu
 
   //todo: what to do with time of event?
 
-  _RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
+  _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
 }
 
 static UFSRVResult *
-_HandleInterBroadcastUserMessageIntro (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserMessageIntro(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
   FenceSessionPair *pair_ptr				=	(FenceSessionPair *)context_ptr;
 
@@ -287,7 +324,7 @@ _HandleInterBroadcastUserMessageIntro (ClientContextData *context_ptr, MessageQu
 }
 
 static UFSRVResult *
-_HandleInterBroadcastUserMessageReported (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserMessageReported(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
   FenceSessionPair *pair_ptr				=	(FenceSessionPair *)context_ptr;
   Fence *f_ptr = FenceOffInstanceHolder(pair_ptr->instance_f_ptr);
@@ -297,7 +334,16 @@ _HandleInterBroadcastUserMessageReported (ClientContextData *context_ptr, Messag
 }
 
 static UFSRVResult *
-_HandleInterBroadcastUserMessageGuardianRequest (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserMessageRevoked(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+{
+  __unused FenceSessionPair *pair_ptr				=	(FenceSessionPair *)context_ptr;
+
+  _RETURN_RESULT_RES (res_ptr, NULL, RESULT_TYPE_SUCCESS, RESCODE_PROG_NULL_POINTER)
+}
+
+
+static UFSRVResult *
+_HandleInterBroadcastUserMessageGuardianRequest(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
   BroadcastMessageGuardianDescriptor *descriptor_ptr				=	(BroadcastMessageGuardianDescriptor *)context_ptr;
   GuardianRecord *guardian_record = mqm_ptr->message->guardian;
@@ -308,7 +354,7 @@ _HandleInterBroadcastUserMessageGuardianRequest (ClientContextData *context_ptr,
 }
 
 static UFSRVResult *
-_HandleInterBroadcastUserMessageGuardianLink (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserMessageGuardianLink(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
   BroadcastMessageGuardianDescriptor *descriptor_ptr				=	(BroadcastMessageGuardianDescriptor *)context_ptr;
   GuardianRecord *guardian_record = mqm_ptr->message->guardian;
@@ -322,7 +368,7 @@ _HandleInterBroadcastUserMessageGuardianLink (ClientContextData *context_ptr, Me
 }
 
 static UFSRVResult *
-_HandleInterBroadcastUserMessageGuardianUnlink (ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+_HandleInterBroadcastUserMessageGuardianUnlink(ClientContextData *context_ptr, MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
   BroadcastMessageGuardianDescriptor *descriptor_ptr				=	(BroadcastMessageGuardianDescriptor *)context_ptr;
   GuardianRecord *guardian_record = mqm_ptr->message->guardian;
@@ -359,7 +405,7 @@ _HandleInterBroadcastUserMessageGuardianUnlink (ClientContextData *context_ptr, 
  *	@locks Fence *
  */
 UFSRVResult *
-PrepareForMessageCommandInterBroadcastHandling (MessageQueueMessage *mqm_ptr, FenceSessionPair *fence_sesn_pair_ptr, UFSRVResult *res_ptr, int command)
+PrepareForMessageCommandInterBroadcastHandling(MessageQueueMessage *mqm_ptr, FenceSessionPair *fence_sesn_pair_ptr, UFSRVResult *res_ptr, int command)
 {
   Fence				*f_ptr;
   FenceRecord *fence_record_ptr	=	mqm_ptr->message->fences[0];
@@ -411,7 +457,7 @@ PrepareForMessageCommandInterBroadcastHandling (MessageQueueMessage *mqm_ptr, Fe
 
       //given NULL session, load backend context from ufsrvworker's
       unsigned  long uid = UfsrvUidGetSequenceId((const UfsrvUid *) mqm_ptr->message->header->ufsrvuid.data);
-      if (IS_PRESENT((instance_sesn_ptr_localuser = SessionInstantiateFromBackend (NULL, uid, SESSION_CALL_FLAGS)))) {
+      if (IS_PRESENT((instance_sesn_ptr_localuser = SessionInstantiateFromCacheBackendWithDbFallback(NULL, (const UfsrvUid *) mqm_ptr->message->header->ufsrvuid.data, SESSION_CALL_FLAGS)))) {
         sesn_ptr_localuser = SessionOffInstanceHolder(instance_sesn_ptr_localuser);
         SESSION_WHEN_SERVICE_STARTED(sesn_ptr_localuser) = time(NULL);
         SessionLoadEphemeralMode(sesn_ptr_localuser);
@@ -442,7 +488,7 @@ PrepareForMessageCommandInterBroadcastHandling (MessageQueueMessage *mqm_ptr, Fe
       InstanceHolderForSession *instance_sesn_ptr_carrier = InstantiateCarrierSession(NULL, WORKERTYPE_UFSRVWORKER, SESSION_CALLFLAGS_EMPTY);
       Session *sesn_ptr_carrier = SessionOffInstanceHolder(instance_sesn_ptr_carrier);
 #define FENCE_CALLFLAGS (FENCE_CALLFLAG_HASH_FENCE_LOCALLY|FENCE_CALLFLAG_ATTACH_USER_LIST_TO_FENCE|FENCE_CALLFLAG_KEEP_FENCE_LOCKED|FENCE_CALLFLAG_LOCK_FENCE_BLOCKING)
-      GetCacheRecordForFence(sesn_ptr_carrier, 0, fence_record_ptr->fid, UNSPECIFIED_UID, &fence_lock_already_owned, FENCE_CALLFLAGS);
+      InstateCacheRecordForFence(sesn_ptr_carrier, 0, fence_record_ptr->fid, UNSPECIFIED_UID, &fence_lock_already_owned, FENCE_CALLFLAGS);
       instance_f_ptr = (InstanceHolderForFence *)SESSION_RESULT_USERDATA(sesn_ptr_carrier);
 
       SessionReturnToRecycler(instance_sesn_ptr_carrier, (ContextData *) NULL, CALL_FLAG_CARRIER_INSTANCE);
@@ -491,7 +537,7 @@ PrepareForMessageCommandInterBroadcastHandling (MessageQueueMessage *mqm_ptr, Fe
 }
 
 static UFSRVResult *
-_PrepareForInterBroadcastHandlingMessageReported (MessageQueueMessage *mqm_ptr, FenceSessionPair *fence_sesn_pair_ptr, UFSRVResult *res_ptr)
+_PrepareForInterBroadcastHandlingMessageReported(MessageQueueMessage *mqm_ptr, FenceSessionPair *fence_sesn_pair_ptr, UFSRVResult *res_ptr)
 {
   if (IS_PRESENT(mqm_ptr->message->reported) && IS_PRESENT(mqm_ptr->message->reported[0])) {
     UFSRVResult *res_ptr_returned = FindFenceById(NULL, mqm_ptr->message->reported[0]->fid, FENCE_CALLFLAG_KEEP_FENCE_LOCKED | FENCE_CALLFLAG_LOCK_FENCE_BLOCKING);
@@ -517,8 +563,19 @@ _PrepareForInterBroadcastHandlingMessageReported (MessageQueueMessage *mqm_ptr, 
   _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
 }
 
+//not much state change
 static UFSRVResult *
-_PrepareForInterBroadcastHandlingGuardian (MessageQueueMessage *mqm_ptr, BroadcastMessageGuardianDescriptor *descriptor_ptr, UFSRVResult *res_ptr)
+_PrepareForInterBroadcastHandlingMessageRevoked(MessageQueueMessage *mqm_ptr, FenceSessionPair *fence_sesn_pair_ptr, UFSRVResult *res_ptr)
+{
+  if (IS_PRESENT(mqm_ptr->message->revoked) && IS_PRESENT(mqm_ptr->message->revoked[0])) {
+      _RETURN_RESULT_RES(res_ptr, fence_sesn_pair_ptr, RESULT_TYPE_SUCCESS, RESCODE_USER_SESN_LOCAL)
+  }
+
+  _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
+}
+
+static UFSRVResult *
+_PrepareForInterBroadcastHandlingGuardian(MessageQueueMessage *mqm_ptr, BroadcastMessageGuardianDescriptor *descriptor_ptr, UFSRVResult *res_ptr)
 {
 #define SESSION_CALL_FLAGS (CALL_FLAG_LOCK_SESSION|CALL_FLAG_HASH_SESSION_LOCALLY|					\
                           CALL_FLAG_HASH_UID_LOCALLY|CALL_FLAG_HASH_USERNAME_LOCALLY|			\
@@ -541,7 +598,7 @@ _PrepareForInterBroadcastHandlingGuardian (MessageQueueMessage *mqm_ptr, Broadca
       descriptor_ptr->ctx_sesn_ptr_guardian.lock_already_owned = lock_already_owned_guardian = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
       if (!IS_PRESENT(instance_sesn_ptr_originator)) {
-        instance_sesn_ptr_originator = SessionInstantiateFromBackend(NO_SESSION, UfsrvUidGetSequenceId((const UfsrvUid *)guardian_record_ptr->originator->ufsrvuid.data), SESSION_CALL_FLAGS);
+        instance_sesn_ptr_originator = SessionInstantiateFromCacheBackendWithDbFallback(NO_SESSION, (const UfsrvUid *) guardian_record_ptr->originator->ufsrvuid.data, SESSION_CALL_FLAGS);
         if (IS_EMPTY(instance_sesn_ptr_originator)) {
           if (!lock_already_owned_guardian) SessionUnLockCtx(THREAD_CONTEXT_PTR, SessionOffInstanceHolder(instance_sesn_ptr_guardian), __func__);
           _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
@@ -565,7 +622,7 @@ _PrepareForInterBroadcastHandlingGuardian (MessageQueueMessage *mqm_ptr, Broadca
       descriptor_ptr->ctx_sesn_ptr_originator.lock_already_owned = lock_already_owned_originator = (_RESULT_CODE_EQUAL(THREAD_CONTEXT_UFSRV_RESULT(THREAD_CONTEXT), RESCODE_PROG_LOCKED_BY_THIS_THREAD));
 
       if (!IS_PRESENT(instance_sesn_ptr_guardian)) {//must be true
-        instance_sesn_ptr_guardian = SessionInstantiateFromBackend(NO_SESSION, UfsrvUidGetSequenceId((const UfsrvUid *)guardian_record_ptr->guardian->ufsrvuid.data), SESSION_CALL_FLAGS);
+        instance_sesn_ptr_guardian = SessionInstantiateFromCacheBackendWithDbFallback(NO_SESSION, (const UfsrvUid *) guardian_record_ptr->guardian->ufsrvuid.data, SESSION_CALL_FLAGS);
         if (IS_EMPTY(instance_sesn_ptr_guardian)) {
           if (!lock_already_owned_originator) SessionUnLockCtx(THREAD_CONTEXT_PTR, SessionOffInstanceHolder(instance_sesn_ptr_originator), __func__);
           _RETURN_RESULT_RES(res_ptr, NULL, RESULT_TYPE_ERR, RESCODE_PROG_NULL_POINTER)
@@ -587,14 +644,15 @@ _PrepareForInterBroadcastHandlingGuardian (MessageQueueMessage *mqm_ptr, Broadca
 
 ///// INTRA	\\\\\\
 
-inline static int _VetrifyUserMessageCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked);
+inline static int _VetrifyUserMessageCommandForIntra(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked);
 
 int
-HandleIntraBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
+HandleIntraBroadcastForUserMessage(MessageQueueMessage *mqm_ptr, UFSRVResult *res_ptr, unsigned long call_flags)
 {
 	int				rc					= 0;
 	long long timer_start	=	GetTimeNowInMicros();
 	long long timer_end;
+  WorkersConfigDescriptor *jobworkers_config  = GetJobWorkersConfigurationDescriptor();
 
 	if ((rc = _VetrifyUserMessageCommandForIntra(mqm_ptr, false)) < 0)	goto return_final;
 
@@ -613,7 +671,7 @@ HandleIntraBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *r
 																					CALL_FLAG_ATTACH_FENCE_LIST_TO_SESSION|CALL_FLAG_REMOTE_SESSION);
 
 	bool lock_already_owned = false;
-	GetSessionForThisUserByUserId (sesn_ptr_carrier, userid, &lock_already_owned, sesn_call_flags);
+	GetSessionForThisUserByUserId(sesn_ptr_carrier, userid, &lock_already_owned, sesn_call_flags);
 	InstanceHolderForSession *instance_sesn_ptr_local_user = (InstanceHolderForSession *)SESSION_RESULT_USERDATA(sesn_ptr_carrier);
 
 	if (unlikely(IS_EMPTY(instance_sesn_ptr_local_user)))	goto return_error_unknown_uname;
@@ -629,9 +687,9 @@ HandleIntraBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *r
 
 	ParsedMessageDescriptor msg_descriptor = {0};
 	UFSRVResult *res_ptr_returned = CommandCallbackControllerMessageCommand(&(InstanceContextForSession){instance_sesn_ptr_local_user, sesn_ptr_local_user}, NULL, mqm_ptr->wire_data, &msg_descriptor);
-	if (_RESULT_CODE_EQUAL(res_ptr_returned, RESCODE_UFSRV_STORE_MSG)) {
-    DbBackendInsertMessageRecord ((const ParsedMessageDescriptor *)&msg_descriptor);
-    free (msg_descriptor.rawmsg);
+	if (_RESULT_CODE_EQUAL(res_ptr_returned, RESCODE_UFSRV_STORE_MSG)) {//stash away copy of public messages (which users can report on)
+    DbBackendInsertMessageRecord((const ParsedMessageDescriptor *)&msg_descriptor);
+    free(msg_descriptor.rawmsg);
 	}
 
 	SESSION_WHEN_SERVICED(sesn_ptr_local_user) = time(NULL);
@@ -649,11 +707,11 @@ HandleIntraBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *r
 	goto return_deallocate_carrier;
 
 	return_deallocate_carrier:
-	SessionReturnToRecycler (instance_sesn_ptr_carrier, (ContextData *)NULL, 0);
+	SessionReturnToRecycler(instance_sesn_ptr_carrier, (ContextData *)NULL, 0);
 
 	return_final:
 	timer_end = GetTimeNowInMicros();
-	statsd_timing(pthread_getspecific(sessions_delegator_ptr->ufsrv_thread_pool.ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.msg.elapsed_time", (timer_end-timer_start));
+	statsd_timing(pthread_getspecific(jobworkers_config->ufsrv_instrumentation_backend_key), "delegator.ufsrv.job.command.msg.elapsed_time", (timer_end-timer_start));
 	return rc;
 
 }
@@ -662,7 +720,7 @@ HandleIntraBroadcastForUserMessage (MessageQueueMessage *mqm_ptr, UFSRVResult *r
  * 	@brief: Verify the fitness of the FenceCommand message in the context of on INTRA broadcast
  */
 inline static int
-_VetrifyUserMessageCommandForIntra	(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked)
+_VetrifyUserMessageCommandForIntra(MessageQueueMessage *mqm_ptr, bool flag_free_unpacked)
 {
 	int rc = 1;
 	MessageCommand *msgcmd_ptr = mqm_ptr->wire_data->ufsrvcommand->msgcommand;

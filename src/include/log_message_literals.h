@@ -79,8 +79,8 @@ enum {
 
 #define LOGSTR_MAINLISTENER_ACCEPT_ERROR "%s {port:'%d, 'errno:'%d', error:'%s' e:'%d'}: ! ERROR: COULD NOT ACCEPT NEW CONNECTION"
 #define LOGSTR_MAINLISTENER_ACCEPT_QUEUED	"%s {cid_new='%lu', o='%p', fd='%d', queue_sz:'%lu', e:'%d'}: CONNECTIONS QUEUE: Added new connection"
-#define LOGSTR_MAINLISTENER_PIPE_WRITE_ERROR	"%s {errno:'%d', e:'%d'}: !ERROR: NEW CONNECTIONS PIPE: COULD NOT WRITE TO WORK DELEGATOR: HAS DELEATOR DIED?"
-#define LOGSTR_MAINLISTENER_PIPE_WRITE_BLOCKING	"%s {errno:'%d', e:'%d'}: !ERROR: NEW CONNECTIONS PIPE BLOCKED: COULD NOT WRITE TO WORK DELEGATOR: HAS DELEATOR DIED?"
+#define LOGSTR_MAINLISTENER_PIPE_WRITE_ERROR	"%s {errno:'%d', e:'%d'}: !ERROR: NEW CONNECTIONS PIPE: COULD NOT WRITE TO WORK DELEGATOR: HAS DELEGATOR DIED?"
+#define LOGSTR_MAINLISTENER_PIPE_WRITE_BLOCKING	"%s {errno:'%d', e:'%d'}: !ERROR: NEW CONNECTIONS PIPE BLOCKED: COULD NOT WRITE TO WORK DELEGATOR: HAS DELEGATOR DIED?"
 
 #define LOGSTR_FUNC_ENTERY "%s {pid:'%lu', o:'%p', cid:'%lu', e:'0'}: ENTERED: '%s'"
 #define LOGSTR_NULL_PARAM "%s {pid:'%lu', e:'%d'}: ERROR: NULL PARAMETER:'%s'"
@@ -152,14 +152,14 @@ enum {
 #define LOGSTR_BACKENDCACHE_NILL_REPLY	"%s {pid:'%lu', o:'%p', query:'%s', returned_type:'%d', e:'%d'}: Backend Cache: Empty Reply Set:  '%s'"
 #define LOGSTR_BACKENDCACHE_UNSPECIFIED_REPLY	"%s {pid:'%lu', o:'%p', query:'%s', returned_type:'%d', e:'%d'}: Backend Cache: '%s'"
 #define LOGSTR_BACKENDCACHE_REPLY	"%s {pid:'%lu', o:'%p', query_result:'%s', e:'%d'}: Backend Cache: '%s'"
-#define LOGSTR_BACKENDCACHE_SHARED_CONTACTS	"%s {pid:'%lu', o:'%p' idx:'%d', token:'%s', e:'%d'}: Backend Cache: '%s'"
-#define LOGSTR_BACKENDCACHE_SHARED_CONTACTS_REPORT	"%s {pid:'%lu', o:'%p' found:'%i', e:'%d'}: Backend Cache: '%s'"
+#define LOGSTR_BACKENDCACHE_SHARED_CONTACTS	"%s {pid:'%lu', o:'%p' idx:'%lu', token:'%s', e:'%d'}: Backend Cache: '%s'"
+#define LOGSTR_BACKENDCACHE_SHARED_CONTACTS_REPORT	"%s {pid:'%lu', o:'%p' found:'%lu', e:'%d'}: Backend Cache: '%s'"
 
 #define LOGSTR_BACKENDDB_QUERY_STRING	"%s {pid:'%lu', o:'%p', query:'%s', e:%d'}: Query: Generated Query string..."
 #define LOGSTR_BACKENDDB_CONNECTION_ERROR "%s (pid:'%lu', o:'%p', cid='%lu', query:'%s', e:'%d'}: ERROR: QUERY: COULD NOT EXECUTE"
-#define LOGSTR_BACKENDDB_EMPTY_RESULTSET "%s (pid:'%lu', o:'%p', cid='%lu', query:'%s', e:'%d'}: Query: Zero result-set returned"
+#define LOGSTR_BACKENDDB_EMPTY_RESULTSET "%s (pid:'%lu', o:'%p', cid:'%lu', query:'%s', e:'%d'}: Query: Zero result-set returned"
 
-#define LOGSTR_ACCOUNT_VERIFICATION_CODE_MISMATCH	"%s {pid:'%lu', o:'%p', cid:'%lu', stored:'%d', supplied:'%lu', e:'%d'}: VERIFICATION CODES DID NOT MATCH"
+#define LOGSTR_ACCOUNT_VERIFICATION_CODE_MISMATCH	"%s {pid:'%lu', stored:'%d', supplied:'%lu', e:'%d'}: VERIFICATION CODES DID NOT MATCH"
 #define LOGSTR_ACCOUNT_ATTCH_PATH_INVALID "%s {pid:'%lu', o:'%p', stored_path:'%s' user_path:'%s', e:'%d'}: ERROR: INCONSISTENT ATTACHEMENT PATH..."
 #define LOGCSTR_ACCOUNT_ATTCH_NO_MATCH	"%s {pid:'%lu', o:'%p', stored_path:'%s' user_path:'%s', e:'%d'}: ERROR: SUPPLIED ATTACHEMENT PATH DOES NOT MATCH STOTRED..."
 #define LOGCSTR_ACCOUNT_ATTCH_NO_REQUEST_NONCE	"%s {pid:'%lu', o'%p', attachment_id:'%s', e:'%d'}: ERROR: ATTCHMENT NONCE MISSING FROM REQUEST HEADER"
@@ -175,7 +175,7 @@ enum {
 #define LOGSTR_PROTO_COMMAND_TYPE_ERROR	"%s: {pid:'%lu', o:'%p', uname:'%s', command:'%s', req_type:'%d', e:'%d'}: Received unknown WebSocket Request type"
 #define LOGSTR_PROTO_COMMAND_UNPACK_ERROR	"%s: {pid:'%lu', o:'%p', uname:'%s', frame_offset:'%d', payload_len:'%lu', e:'%d'}: ERROR: COULD NOT UNPACK WebSocketMessage structure..."
 
-#define LOGSTR_FENCE_EVENET_ID_ERROR_BACKEND	"%s {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu', eid:'%lu', e:'%d'}: ERROR: BACKEND COULD NOT GENERATE FENCE EVENT ID"
+#define LOGSTR_FENCE_EVENET_ID_ERROR_BACKEND	"%s {pid:'%lu', fo:'%p', fid:'%lu', eid:'%lu', e:'%d'}: ERROR: BACKEND COULD NOT GENERATE FENCE EVENT ID"
 #define LOGSTR_FENCE_BACKEND_USERLIST_MISMATCH "%s {pid:'%lu', o:'%p', fo:'%p', fid:'%lu', fence_members_sz:'%d', e:'%d'}: CRITICAL ERROR: COULD NOT LOAD FENCE'S SESSION LIST FROM BACKEND: BUT LOCAL FENCE'S LIST IS NOT ZERO"
 #define LOGSTR_FENCE_MISSING_SESSION "%s {pid:'%lu', o:'%p', cid:'%lu', fo:'%p', fid:'%lu', e:'%d'}: ERROR: DATA INTEGRITY: FENCE IS PRESENT IN USER SESSION LIST WITH NO SESSION REFERENCE IN FENCE's SESSION LIST..."
 

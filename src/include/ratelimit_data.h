@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -19,7 +19,7 @@
 #ifndef SRC_INCLUDE_RATELIMIT_DATA_H_
 #define SRC_INCLUDE_RATELIMIT_DATA_H_
 
-#include <ufsrv_core/ratelimit/ratelimit_type.h>
+#include <ratelimit/ratelimit_type.h>
 
 const static RequestRateLimit RequestRateLimitSpecs[] = {
 		{
