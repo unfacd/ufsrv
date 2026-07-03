@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2019 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,10 +20,10 @@
 
 #include <ufsrvresult_type.h>
 #include <session_type.h>
-#include <ufsrvuid_type.h>
-#include <fence.h>
+#include <uflib/ufsrvuid_type.h>
+#include <ufsrvmsg_core/fence/fence.h>
 
-UFSRVResult *DeactivateUserAndPropogate (Session *sesn_ptr, UfsrvUid *, bool flag_nuke);
+UFSRVResult *DeactivateUserAndPropagate(Session *sesn_ptr_carrier, UfsrvUid *uid_ptr, bool is_nuke, bool is_simulated);
 int SendVerificationSms (Session *sesn_ptr, const char *, VerificationCode *vcode_ptr, bool android_sms_retriever_flag);
 int SendVerificationVoice (Session *sesn_ptr, const char *destination, VerificationCode *vcode_ptr);
 int SendVerificationEmail(Session *sesn_ptr, const char *to_email, const PendingAccount *);

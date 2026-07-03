@@ -10,17 +10,12 @@
 #endif
 
 #include <main.h>
-#include <net.h>
-#include <sessions_delegator_type.h>
 #include <netinet/in.h>
-#include <sys/ioctl.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
 #include <sys/un.h>
-#include <netdb.h>
 #include <sockets.h>
-#include <net/if.h>
 #include <network_socket_address.h>
 
 /**
@@ -72,7 +67,7 @@ NetworkSocketAddressInstantiate	(NetworkSocketAddress *socket_address_ptr, const
 {
 	int err;
 
-	err = ConvertSocketAddressToNetworkFormat (addr, socket_address_ptr);
+	err = ConvertSocketAddressToNetworkFormat(addr, socket_address_ptr);
 
 	if (err)	return err;
 
@@ -164,10 +159,9 @@ NetworkSocketAddressSetLocalFromFd (int sock_fd, NetworkSocketAddress *local)
 int
 NetworkSocketAddressSetPeerFromFd (int sock_fd, NetworkSocketAddress *socket_address_peer)
 {
-	InitNetworkSocketAddress (socket_address_peer, AF_UNSPEC);
+	InitNetworkSocketAddress(socket_address_peer, AF_UNSPEC);
 
-	if (getpeername(sock_fd, &socket_address_peer->u.sa, &socket_address_peer->len) < 0)
-	{
+	if (getpeername(sock_fd, &socket_address_peer->u.sa, &socket_address_peer->len) < 0) {
 		syslog (LOG_ERR, "%s (errno:'%d'): ERROR: \n", __func__, errno);
 		return errno;
 	}
@@ -257,7 +251,7 @@ void NetworkSocketAddressSetPort(NetworkSocketAddress *sa, uint16_t port)
  *   [::]:5060
  * </pre>
  */
-int sa_decode(NetworkSocketAddress *sa, const char *str, size_t len)
+int NetworkSocketAddressFromEncoded(NetworkSocketAddress *sa, const char *str, size_t len)
 {
 #if 0
 	struct pl addr, port, pl;
@@ -397,19 +391,19 @@ bool SocketAddressIsAttributeSet (const NetworkSocketAddress *sa, int flag)
 	switch (sa->u.sa.sa_family) {
 
 	case AF_INET:
-		if (flag & SA_ADDR)
+		if (flag & NSA_ADDR)
 			if (INADDR_ANY == sa->u.in.sin_addr.s_addr)
 				return false;
-		if (flag & SA_PORT)
+		if (flag & NSA_PORT)
 			if (0 == sa->u.in.sin_port)
 				return false;
 		break;
 
 	case AF_INET6:
-		if (flag & SA_ADDR)
+		if (flag & NSA_ADDR)
 			if (IN6_IS_ADDR_UNSPECIFIED(&sa->u.in6.sin6_addr))
 				return false;
-		if (flag & SA_PORT)
+		if (flag & NSA_PORT)
 			if (0 == sa->u.in6.sin6_port)
 				return false;
 		break;
@@ -440,18 +434,18 @@ uint32_t NetworkSocketAddressGetHashValue (const NetworkSocketAddress *sa, int f
 	switch (sa->u.sa.sa_family) {
 
 	case AF_INET:
-		if (flag & SA_ADDR)
+		if (flag & NSA_ADDR)
 			v += ntohl(sa->u.in.sin_addr.s_addr);
-		if (flag & SA_PORT)
+		if (flag & NSA_PORT)
 			v += ntohs(sa->u.in.sin_port);
 		break;
 
 	case AF_INET6:
-		if (flag & SA_ADDR) {
+		if (flag & NSA_ADDR) {
 			uint32_t *a = (uint32_t *)&sa->u.in6.sin6_addr;
 			v += a[0] ^ a[1] ^ a[2] ^ a[3];
 		}
-		if (flag & SA_PORT)
+		if (flag & NSA_PORT)
 			v += ntohs(sa->u.in6.sin6_port);
 		break;
 
@@ -502,20 +496,20 @@ bool NetworkSocketAddressCompare (const NetworkSocketAddress *l, const NetworkSo
 	switch (l->u.sa.sa_family) {
 
 	case AF_INET:
-		if (flag & SA_ADDR)
+		if (flag & NSA_ADDR)
 			if (l->u.in.sin_addr.s_addr != r->u.in.sin_addr.s_addr)
 				return false;
-		if (flag & SA_PORT)
+		if (flag & NSA_PORT)
 			if (l->u.in.sin_port != r->u.in.sin_port)
 				return false;
 		break;
 
 	case AF_INET6:
-		if (flag & SA_ADDR)
+		if (flag & NSA_ADDR)
 			if (memcmp(&l->u.in6.sin6_addr,
 				   &r->u.in6.sin6_addr, 16))
 				return false;
-		if (flag & SA_PORT)
+		if (flag & NSA_PORT)
 			if (l->u.in6.sin6_port != r->u.in6.sin6_port)
 				return false;
 		break;

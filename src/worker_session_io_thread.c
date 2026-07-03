@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2015-2020 unfacd works
+ * Copyright (C) 2015-2021 unfacd works
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -20,48 +20,45 @@
 #endif
 
 #include <main.h>
+#include <worker_session_io_thread.h>
 #include <thread_context_type.h>
-#include <recycler/recycler.h>
+#include <uflib/recycler/recycler.h>
 #include <sockets.h>
-#include <net.h>
 #include <session.h>
-#include <misc.h>
-#include <utils.h>
+#include <uflib/utils.h>
 #include <sys/prctl.h>//for naming thread
 #include <nportredird.h>
-#include <ufsrv_core/protocol/protocol.h>
-#include <ufsrv_core/protocol/protocol_io.h>
+#include <ufsrvmsg_core/protocol/protocol.h>
+#include <ufsrvmsg_core/protocol/protocol_io.h>
 #include <ufsrv_core/instrumentation/instrumentation_backend.h>
 #include <http_request.h>
-#include <delegator_session_worker_thread.h>
-#include <ufsrv_core/msgqueue_backend/ufsrvmsgqueue.h>
+#include "ufsrv_core/include/delegator_session_worker_thread.h"
+#include <ufsrvmsg_core/msgqueue_backend/ufsrvmsgqueue.h>
 #include <ufsrvresult_type.h>
 #include <ufsrv_core/cache_backend/persistance.h>
-#include <ufsrvcmd_user_callbacks.h>
-#include <ufsrv_core/ratelimit/ratelimit.h>
+#include <ratelimit/ratelimit.h>
 #include <uflib/adt/adt_hopscotch_hashtable.h>
 #include "hiredis/hiredis.h"
 
-static UFSRVResult *_p_ProcessSessionSocketMessage (InstanceHolderForSession *, SocketMessage *, int);
-static inline UFSRVResult *_HandleSessionWorkRequest (InstanceContextForSession *instance_ctx_ptr, SessionsDelegator *sd_ptr, unsigned long session_id_invoked);
-static inline UFSRVResult *_HandleSuccessfulWorkRequest (SessionsDelegator *sd_ptr, unsigned long session_id_invoked, UFSRVResult *res_ptr);
-static inline UFSRVResult *_HandleMessageForConnectedSession (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, int flag);
-inline static UFSRVResult *_HandlePostSuccessfulIncomingHandshake (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr);
-static inline UFSRVResult *_InvokeLifecycleCallbackPostHandshake (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr);
-static inline UFSRVResult *_InvokeLifecycleCallbackMsgOut (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned long);
-inline static bool WorkerDelegatorRaiseRecycleRequest	(InstanceHolderForSession *instance_sesn_ptr, Session *sesn_ptr_ipc);
-inline static void _HandleBusySessionLock (InstanceHolderForSession *);
+static UFSRVResult *_p_ProcessSessionSocketMessage(InstanceHolderForSession *, SocketMessage *, int);
+static inline UFSRVResult *_HandleSessionWorkRequest(InstanceContextForSession *instance_ctx_ptr, SessionsDelegator *sd_ptr, unsigned long session_id_invoked);
+static inline UFSRVResult *_HandleSuccessfulWorkRequest(SessionsDelegator *sd_ptr, unsigned long session_id_invoked, UFSRVResult *res_ptr);
+static inline UFSRVResult *_HandleMessageForConnectedSession(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, int flag);
+inline static UFSRVResult *_HandlePostSuccessfulIncomingHandshake(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr);
+static inline UFSRVResult *_InvokeLifecycleCallbackPostHandshake(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr);
+static inline UFSRVResult *_InvokeLifecycleCallbackMsgOut(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned long);
+inline static bool WorkerDelegatorRaiseRecycleRequest(InstanceHolderForSession *instance_sesn_ptr, Session *sesn_ptr_ipc);
+inline static void _HandleBusySessionLock(InstanceHolderForSession *);
 
-extern /*thread_local*/ __thread ThreadContext ufsrv_thread_context;
+extern __thread ThreadContext ufsrv_thread_context; //declared in delegator
 
 extern ufsrv *const masterptr;
 
 extern  const  Protocol *const protocols_registry_ptr;
 extern SessionsDelegator *const sessions_delegator_ptr;
 
-
-/*
- * 	@brief: this hides the implementation details of raising requests back to the Delegator. We use pthread_getspecific, but we coukd
+/**
+ * 	@brief: this hides the implementation details of raising requests back to the Delegator. We use pthread_getspecific, but we could
  * 	pass the pipe Session object directly, because it is known to the thread. To keep it more general, we fetch that value using key.
  * 	@param sesn_ptr_this: the Session for which we are requesting a rerun of the io cycle. ie. self. Session is transporting its address across
  * 	the ipc pipe
@@ -69,7 +66,7 @@ extern SessionsDelegator *const sessions_delegator_ptr;
  * 	we query it via thread local key.
  */
 inline static bool
-WorkerDelegatorRaiseRecycleRequest	(InstanceHolderForSession *instance_sesn_ptr_this, Session *sesn_ptr_ipc)
+WorkerDelegatorRaiseRecycleRequest(InstanceHolderForSession *instance_sesn_ptr_this, Session *sesn_ptr_ipc)
 {
 	extern SessionsDelegator *const sessions_delegator_ptr;
 	Session *sesn_ptr = NULL;
@@ -85,7 +82,7 @@ WorkerDelegatorRaiseRecycleRequest	(InstanceHolderForSession *instance_sesn_ptr_
 		SessionIncrementReference(instance_sesn_ptr_this, 1);//this is necessary to prevent session being killed mid-cycle by the Timeout manager. Decremented at WorkerDelegatorPipeGetSession()
 
 		//send the address through, we are in the same family
-		rc = write (sesn_ptr->ssptr->sock, (char *)&instance_sesn_ptr_this, sizeof(char *));
+		rc = write(sesn_ptr->ssptr->sock, (char *)&instance_sesn_ptr_this, sizeof(char *));
 		if (rc > 0) {
 #ifdef __UF_TESTING
 			syslog(LOG_DEBUG, LOGSTR_TSWORKER_WDP_SUCCESS_WRITE, __func__, pthread_self(), sesn_ptr_this, SESSION_ID(sesn_ptr_this), LOGCODE_TSWORKER_WDP_SUCCESS_WRITE);
@@ -108,17 +105,27 @@ WorkerDelegatorRaiseRecycleRequest	(InstanceHolderForSession *instance_sesn_ptr_
 
 #ifdef CONFIG_USE_LOCKLESS_SESSION_WORKERS_QUEUE
 
-void *
-ThreadWebSockets (void *ptr)
+
+sessionworker_thread_callback
+GetSessionWorkerThreadHandler(void)
 {
-	long long service_start,
-						service_end;
+  return  &ThreadWebSockets;
+}
+
+void *
+ThreadWebSockets(void *ptr)
+{
+	long long service_start = 0,
+						service_end   = 0;
 	UFSRVResult 			 ufsrv_result					= {0};
 	HttpRequestContext http_request_context = {0};
 	RequestRateLimitStatus ratelimit_status = {0};
-	HopscotchHashtableConfigurable locked_objects_store = {{0}};
+	HopscotchHashtableConfigurable locked_objects_store = {{0}, 0, 0, NULL};
 	WorkerThreadCreationContext *th_ctx_ptr = (WorkerThreadCreationContext *)ptr;
 	extern SessionsDelegator *const sessions_delegator_ptr;
+
+  ufsrv_thread_context.random_state = time(NULL) ^ getpid() ^ pthread_self(); //set to a seed value before rand_r is called for the first time
+
 
 	SessionsDelegator *const sd_ptr = sessions_delegator_ptr;
 	InstanceHolderForSession *instance_sesn_ptr_ipc = th_ctx_ptr->ipc_pipe; //worker-delegator ipc pipe fds
@@ -128,7 +135,7 @@ ThreadWebSockets (void *ptr)
 		#define MAX_NAME_LEN 15
 		char proc_name [MAX_NAME_LEN + 1];	/* Name must be <= 15 characters + a null */
 
-		strncpy (proc_name, "ufSessnWorker", MAX_NAME_LEN);
+		strncpy(proc_name, "ufSessnWorker", MAX_NAME_LEN);
 		proc_name [MAX_NAME_LEN] = 0;
 		prctl (PR_SET_NAME, (unsigned long)&proc_name);
 		#undef MAX_NAME_LEN
@@ -139,7 +146,7 @@ ThreadWebSockets (void *ptr)
 
 	pthread_setspecific(masterptr->threads_subsystem.ufsrv_thread_context_key, (void *)&ufsrv_thread_context);
 
-	hopscotch_init(&locked_objects_store.hashtable, CONFIG_THREAD_LOCKED_OBJECTS_STORE_PFACTOR);
+  hopscotch_init_with_offset(&locked_objects_store.hashtable, CONFIG_THREAD_LOCKED_OBJECTS_STORE_PFACTOR);
 	locked_objects_store.keylen = 0;
 	locked_objects_store.keylen = 64;
 	locked_objects_store.hash_func = (uint64_t (*)(uint8_t *, size_t))inthash_u64;
@@ -163,12 +170,11 @@ ThreadWebSockets (void *ptr)
 			_exit(-1);
 		}
 
-		syslog(LOG_DEBUG, "%s: SUCCESS (http_ptr:'%p'): Initialised HttpRequestContext for Session Worker thread: '%lu'...", __func__, &http_request_context, pthread_self())
-		;
+		syslog(LOG_DEBUG, "%s: SUCCESS (http_ptr:'%p'): Initialised HttpRequestContext for Session Worker thread: '%lu'...", __func__, &http_request_context, pthread_self());
 	//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	InstrumentationBackend *instr_ptr = NULL;
-	instr_ptr = InstrumentationBackendInit (NULL);//no namespace
+	instr_ptr = InstrumentationBackendInit(NULL, NULL);//no namespace
 	if (instr_ptr) {
 		pthread_setspecific(masterptr->threads_subsystem.ufsrv_instrumentation_backend_key, (void *)instr_ptr);//TODO: move key to delegator structure
     ufsrv_thread_context.instrumentation_backend = instr_ptr;
@@ -218,9 +224,8 @@ ThreadWebSockets (void *ptr)
 	syslog(LOG_INFO, "%s (%p): SUCCESS: Initialised Cache Backend Fence for Session Worker thread: '%lu'...", __func__, per_ptr_usrmsg, pthread_self());
 	//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-	struct _h_connection *db_ptr = NULL;
-	db_ptr = InitialiseDbBackend();
-	if (db_ptr) {
+  struct _h_connection *db_ptr = InitialiseDbBackend();
+	if (IS_PRESENT(db_ptr)) {
 		pthread_setspecific(masterptr->threads_subsystem.ufsrv_db_backend_key, (void *)db_ptr);//TODO: move key to delegator structure
     ufsrv_thread_context.db_backend = db_ptr;
 	} else {
@@ -234,25 +239,26 @@ ThreadWebSockets (void *ptr)
 	//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	MessageQueueBackend *mq_ptr = NULL;
-	mq_ptr = InitialiseMessageQueueBackend(NULL);
+	mq_ptr = BuildConnectionHandleForMessageQueueBackend(NULL);
 	if (mq_ptr) {
 		pthread_setspecific(masterptr->threads_subsystem.ufsrv_msgqueue_pub_key, (void *)mq_ptr);//TODO: move key to delegator structure
     ufsrv_thread_context.msgqueue_backend = mq_ptr;
+    syslog(LOG_INFO, "%s: SUCCESS Initialised MessageQueue Publisher backend for Session Worker thread: '%lu'...", __func__, pthread_self());
 	} else {
 		syslog(LOG_ERR, "%s: ERROR: COULD NOT INITIALISE MessageQueue Publisher for Session Worker thread: '%lu'...", __func__, pthread_self());
 		_exit (-1);
 	}
 
-	syslog(LOG_INFO, "%s: SUCCESS Initialised MessageQueue Publisher backend for Session Worker thread: '%lu'...", __func__, pthread_self());
-	syslog(LOG_INFO, "%s: --> Launching into main loop: pid:'%lu', ufsrv_th_ctx:'%p', th_ctx:'%p', idx:'%lu', queue:'%p'...", __func__, pthread_self(), &ufsrv_thread_context, th_ctx_ptr, th_ctx_ptr->idx, th_ctx_ptr->queue);
+  syslog(LOG_INFO, "%s (pid:'%lu', idx:'%lu'): SUCCESS Reached initialisation barrier: waiting for other sibling threads...", __func__, pthread_self(), th_ctx_ptr->idx);
+  pthread_barrier_wait(&sd_ptr->init_barrier);
+
+	syslog(LOG_INFO, "%s: --> Launching into main loop: pid:'%lu', ufsrv_th_ctx:'%p', th_ctx:'%p', idx:'%lu', queue:'%p', random_state: '%u'...", __func__, pthread_self(), &ufsrv_thread_context, th_ctx_ptr, th_ctx_ptr->idx, th_ctx_ptr->queue, ufsrv_thread_context.random_state);
 
 	#endif
 	//end init_block
 
-	while (1) {
+	while(1) {
 		unsigned long stat_atomic = 0;
-    //Session 	*sesn_ptr;
-//    InstanceHolderForSession *instance_sesn_ptr;
     InstanceContextForSession instance_context = {0};
 
 		syslog(LOG_DEBUG, "%s (pid:'%lu): --------- START MAIN LOOP ------- ", __func__, pthread_self());
@@ -267,7 +273,7 @@ ThreadWebSockets (void *ptr)
 		}
 
 //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-		while (!(LamportQueuePop(th_ctx_ptr->queue, (QueueClientData **)&(instance_context.instance_sesn_ptr))) && (sd_ptr->up_status==1)) {
+		while (!(LamportQueuePop(th_ctx_ptr->queue, (QueueClientData **)&(instance_context.instance_sesn_ptr))) && (sd_ptr->up_status == 1)) {
 #if __UF_FULLDEBUG
 			syslog(LOG_DEBUG, "ThreadWebSockets (3:2 pid:'%lu' lock:30:-1 ): Mutex automatically released: Blocking on condition: waiting for signal: queue_not_empty_cond", pthread_self());
 #endif
@@ -280,12 +286,10 @@ ThreadWebSockets (void *ptr)
 #endif
 
 		//lock now acquired automatically by pthreads.. we unlock at the end
-
-//		sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
     instance_context.sesn_ptr = SessionOffInstanceHolder(instance_context.instance_sesn_ptr);
 
 		if (sd_ptr->up_status == 0) {
-			syslog(LOG_INFO, "%s {pid:%lu}: SessionDelegator is shutting down: releasing mutext lock: exiting...", __func__, pthread_self());
+			syslog(LOG_INFO, "%s {pid:%lu}: SessionDelegator is shutting down: releasing mutex lock: exiting...", __func__, pthread_self());
 
 			WorkQueueUnLock(sd_ptr);
 			pthread_exit(NULL);
@@ -318,7 +322,7 @@ ThreadWebSockets (void *ptr)
 			syslog(LOG_NOTICE, LOGSTR_TSWORKER_FAULTYSESN,	__func__, pthread_self(), instance_context.sesn_ptr, SESSION_ID(instance_context.sesn_ptr), LOGCODE_TSWORKER_FAULTYSESN);
 
 			//>>>>>>>>>>>>>>>>>>>>>>>
-			SessionUnLockCtx (THREAD_CONTEXT_PTR, instance_context.sesn_ptr, __func__);
+			SessionUnLockCtx(THREAD_CONTEXT_PTR, instance_context.sesn_ptr, __func__);
 			//>>>>>>>>>>>>>>>>>>>>>>>
 
 			continue;
@@ -334,7 +338,7 @@ ThreadWebSockets (void *ptr)
 			syslog(LOG_NOTICE, "%s (pid:%lu, o:'%p', cid:%lu): RECEIVED EVENT FOR A SUSPENDED SESSION: WON'T UNSUSPENDING -> UNLOCKING and RETURNING...", __func__, pthread_self(), instance_context.sesn_ptr, SESSION_ID(instance_context.sesn_ptr));
 
       //>>>>>>>>>>>>>>>>>>>>>>>
-      SessionUnLockCtx (THREAD_CONTEXT_PTR, instance_context.sesn_ptr, __func__);
+      SessionUnLockCtx(THREAD_CONTEXT_PTR, instance_context.sesn_ptr, __func__);
       //>>>>>>>>>>>>>>>>>>>>>>>
 
 			continue; //back to cond_wait
@@ -347,7 +351,7 @@ ThreadWebSockets (void *ptr)
 			//statsd_inc(instance_context.sesn_ptr->instrumentation_backend, "worker.in_event.serviced", 1.0);
 
 			//>>>>>>>>>>>>>>>>>>>>>>>
-			SessionUnLockCtx (THREAD_CONTEXT_PTR, instance_context.sesn_ptr, __func__);
+			SessionUnLockCtx(THREAD_CONTEXT_PTR, instance_context.sesn_ptr, __func__);
 			//>>>>>>>>>>>>>>>>>>>>>>>
 
 			//back to cond_wait
@@ -360,7 +364,7 @@ ThreadWebSockets (void *ptr)
 		__session_in_service:
 		SESNSTATUS_SET(instance_context.sesn_ptr->stat, SESNSTATUS_INSERVICE);
 		service_start = GetTimeNowInMicros();
-		LoadSessionWorkerAccessContext (instance_context.sesn_ptr);
+		LoadSessionWorkerAccessContext(instance_context.sesn_ptr);
 
 #if __UF_FULLDEBUG
 		syslog(LOG_DEBUG, "%s (pid:%lu cid:%lu proto:'%d'): END COND_WAIT EVENT: Session retrieved: performing Session I/O work...",
@@ -384,7 +388,7 @@ ThreadWebSockets (void *ptr)
 
 				//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 				//this may return a suspended session
-				res_ptr = _HandleSessionWorkRequest (&instance_context, sd_ptr, session_id_invoked);//we always return a session back regardless
+				res_ptr = _HandleSessionWorkRequest(&instance_context, sd_ptr, session_id_invoked);//we always return a session back regardless
         InstanceHolderForSession *instance_sesn_ptr_aux = (InstanceHolderForSession *)res_ptr->result_user_data;
 
         if (unlikely(IS_EMPTY(instance_sesn_ptr_aux))) {
@@ -413,7 +417,7 @@ ThreadWebSockets (void *ptr)
 				}
 
 				if (SESNSTATUS_IS_SET(sesn_ptr_aux->stat, SESNSTATUS_RECYCLEREQUEST)) {
-					WorkerDelegatorRaiseRecycleRequest	(instance_sesn_ptr_aux, NULL);
+					WorkerDelegatorRaiseRecycleRequest(instance_sesn_ptr_aux, NULL);
 					//TODO: unset SESNSTATU_RECYCLE if fail
 				}
 
@@ -421,10 +425,10 @@ ThreadWebSockets (void *ptr)
 					size_t queue_sz = 0;
 
 					//quick atomic check as we don't hold the socketmessage queue lock, other threads may still have logged something
-					if ((queue_sz = __sync_add_and_fetch (&(SESSION_INSOCKMSG_QUEUE_SIZE(sesn_ptr_aux)), 0)) > 0) {
+					if ((queue_sz = __sync_add_and_fetch(&(SESSION_INSOCKMSG_QUEUE_SIZE(sesn_ptr_aux)), 0)) > 0) {
 						syslog(LOG_DEBUG, LOGSTR_TSWORKER_QUEUE_POST_REQUEST, __func__, pthread_self(),sesn_ptr_aux, SESSION_ID(sesn_ptr_aux), queue_sz, LOGCODE_TSWORKER_QUEUE_POST_REQUEST);
 
-						WorkerDelegatorRaiseRecycleRequest	(instance_sesn_ptr_aux, NULL);
+						WorkerDelegatorRaiseRecycleRequest(instance_sesn_ptr_aux, NULL);
 					}
 				}
 
@@ -433,7 +437,7 @@ ThreadWebSockets (void *ptr)
 				sesn_ptr_aux->when_serviced_end = time(NULL);//service_end/1000000UL;
 				statsd_timing(pthread_getspecific(masterptr->threads_subsystem.ufsrv_instrumentation_backend_key), "worker.session.service.elapsed_time", (service_end-service_start));
 
-				SessionUnLockCtx (THREAD_CONTEXT_PTR, sesn_ptr_aux, __func__);
+				SessionUnLockCtx(THREAD_CONTEXT_PTR, sesn_ptr_aux, __func__);
 
 #if 0
 				//at the moment this semantic is disabled. Kicking off session in this loop has proved problematic
@@ -914,7 +918,7 @@ ThreadWebSockets (void *ptr)
 #endif
 
 inline static void
-_HandleBusySessionLock (InstanceHolderForSession *instance_sesn_ptr)
+_HandleBusySessionLock(InstanceHolderForSession *instance_sesn_ptr)
 {
   Session *sesnptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
@@ -931,7 +935,7 @@ _HandleBusySessionLock (InstanceHolderForSession *instance_sesn_ptr)
 	}
 
 	//SESSION IS busy servicing or blocked: read back into main work events queue
-	if ((sesnptr)&&(((struct epoll_event *)(sesnptr->event_descriptor))->events & EPOLLIN)) {
+	if ((sesnptr) && (((struct epoll_event *)(sesnptr->event_descriptor))->events & EPOLLIN)) {
 		//__concurrent_session_read:
 		//we cannot check ratelimit status because we dont own the lock. had to be delegated to ufrvsowrker
 
@@ -1008,7 +1012,7 @@ _HandleSessionWorkRequest(InstanceContextForSession *instance_ctx_ptr, SessionsD
  * 	@locked sesn_ptr_processed: by main loop
  */
 static inline UFSRVResult *
-_HandleSuccessfulWorkRequest (SessionsDelegator *sd_ptr, unsigned long session_id_invoked, UFSRVResult *res_ptr)
+_HandleSuccessfulWorkRequest(SessionsDelegator *sd_ptr, unsigned long session_id_invoked, UFSRVResult *res_ptr)
 {
 	InstanceHolderForSession *instance_sesn_ptr_processed = (InstanceHolderForSession *)_RESULT_USERDATA(res_ptr);//session object is always returned, even if suspended
   Session *sesn_ptr_processed = SessionOffInstanceHolder(instance_sesn_ptr_processed);
@@ -1107,7 +1111,7 @@ _HandleSuccessfulWorkRequest (SessionsDelegator *sd_ptr, unsigned long session_i
 * @locks
 */
 static UFSRVResult *
-_p_ProcessSessionSocketMessage (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, int flag)
+_p_ProcessSessionSocketMessage(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, int flag)
 {
 	extern SessionsDelegator	*const sessions_delegator_ptr;
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
@@ -1236,20 +1240,20 @@ _InvokeLifecycleCallbackPostHandshake (InstanceHolderForSession *instance_sesn_p
 
 			default:
 				//could have fallen through to _exit_sucess: below
-				_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_SUCCESS, RESULT_CODE_USER_AUTHENTICATION)
+				_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_SUCCESS, RECODE_USER_AUTHENTICATION)
 		}
 	}
 
 	exit_success:
-	_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_SUCCESS, RESULT_CODE_USER_AUTHENTICATION)
+	_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_SUCCESS, RECODE_USER_AUTHENTICATION)
 }
 
 static inline UFSRVResult *
-_InvokeLifecycleCallbackMsgOut (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned long call_flags)
+_InvokeLifecycleCallbackMsgOut(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, unsigned long call_flags)
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
-	DispatchSocketMessageQueue (instance_sesn_ptr, sesn_ptr->message_queue_out.queue.nEntries);
+	DispatchSocketMessageQueue(instance_sesn_ptr, sesn_ptr->message_queue_out.queue.nEntries);
 
 	if (_PROTOCOL_CLLBACKS_MSG_OUT(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))))) {
 		UFSRVResult *res_ptr = _PROTOCOL_CLLBACKS_MSG_OUT_INVOKE(protocols_registry_ptr,
@@ -1268,7 +1272,7 @@ _InvokeLifecycleCallbackMsgOut (InstanceHolderForSession *instance_sesn_ptr, Soc
 
 			default:
 				//could have fallen through to _exit_sucess: below
-				if (_RESULT_CODE_EQUAL(res_ptr, RESULT_CODE_SESN_SOFTSPENDED))	SuspendSession(instance_sesn_ptr, SOFT_SUSPENSE);
+				if (_RESULT_CODE_EQUAL(res_ptr, RESCODE_SESN_SOFTSPENDED))	SuspendSession(instance_sesn_ptr, SOFT_SUSPENSE);
 				_RETURN_RESULT_SESN(sesn_ptr, instance_sesn_ptr, RESULT_TYPE_SUCCESS, RESCODE_IO_MSGDISPATCHED)
 		}
 	} else {
@@ -1291,7 +1295,7 @@ _InvokeLifecycleCallbackMsgOut (InstanceHolderForSession *instance_sesn_ptr, Soc
  * 	  Not feree'd here
  */
 inline static UFSRVResult *
-_HandlePostSuccessfulIncomingHandshake (InstanceHolderForSession *instance_sesn_ptr_transient, SocketMessage *sock_msg_ptr)
+_HandlePostSuccessfulIncomingHandshake(InstanceHolderForSession *instance_sesn_ptr_transient, SocketMessage *sock_msg_ptr)
 {
   Session *sesn_ptr_transient = SessionOffInstanceHolder(instance_sesn_ptr_transient);
 
@@ -1330,7 +1334,7 @@ _HandlePostSuccessfulIncomingHandshake (InstanceHolderForSession *instance_sesn_
 
 			if (_RESULT_TYPE_SUCCESS(res_ptr_backend)) {
 				InstanceHolderForSession *instance_sesn_ptr_processed = (InstanceHolderForSession *)_RESULT_USERDATA(res_ptr_backend);
-				return (_InvokeLifecycleCallbackPostHandshake (instance_sesn_ptr_processed, sock_msg_ptr));
+				return (_InvokeLifecycleCallbackPostHandshake(instance_sesn_ptr_processed, sock_msg_ptr));
 			} else {
 				return res_ptr_backend; //user not allowed through
 			}
@@ -1351,21 +1355,19 @@ _HandlePostSuccessfulIncomingHandshake (InstanceHolderForSession *instance_sesn_
 
   if (_RESULT_TYPE_SUCCESS(res_ptr_new_session)) {
     InstanceHolderForSession *instance_sesn_ptr_processed = (InstanceHolderForSession *)_RESULT_USERDATA(res_ptr_new_session);
-    return _InvokeLifecycleCallbackPostHandshake (instance_sesn_ptr_processed, sock_msg_ptr);
+    return _InvokeLifecycleCallbackPostHandshake(instance_sesn_ptr_processed, sock_msg_ptr);
   }
 
   return res_ptr_new_session; //contains error of sorts
 }
 
 static inline UFSRVResult *
-_HandleMessageForConnectedSession (InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, int flag)
+_HandleMessageForConnectedSession(InstanceHolderForSession *instance_sesn_ptr, SocketMessage *sock_msg_ptr, int flag)
 {
   Session *sesn_ptr = SessionOffInstanceHolder(instance_sesn_ptr);
 
 	if (_PROTOCOL_CLLBACKS_MSG(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))))) {
-		UFSRVResult *res_ptr = _PROTOCOL_CLLBACKS_MSG_INVOKE(protocols_registry_ptr,
-											PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))),
-											instance_sesn_ptr, sock_msg_ptr, flag, 0);
+		UFSRVResult *res_ptr = _PROTOCOL_CLLBACKS_MSG_INVOKE(protocols_registry_ptr, PROTO_PROTOCOL_ID(((Protocol *)SESSION_PROTOCOLTYPE(sesn_ptr))), instance_sesn_ptr, sock_msg_ptr, flag, 0);
 
 		switch (res_ptr->result_type)
 		{
